@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-79c19c41.js";
+            window.path_to_searchindex_js = "searchindex-adbc12ad.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a7fd8ba8.js"></script>
+        <script src="toc-db18f248.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,7 +177,289 @@
                     <main>
                         <h1 id="はじめに"><a class="header" href="#はじめに">はじめに</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="データフロー"><a class="header" href="#データフロー">データフロー</a></h1>
+<h1 id="テキスト推論データフロー"><a class="header" href="#テキスト推論データフロー">テキスト推論データフロー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-09</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
+<h2 id="フロー全体図"><a class="header" href="#フロー全体図">フロー全体図</a></h2>
+<pre class="mermaid">graph TD
+    subgraph フロントエンドプロセス
+        API["API Server / LLM"]
+        AsyncLLM["AsyncLLM&lt;br&gt;generate() / add_request()"]
+        IP["InputProcessor&lt;br&gt;process_inputs()"]
+        OP["OutputProcessor&lt;br&gt;process_outputs()"]
+        Client["EngineCoreClient&lt;br&gt;AsyncMPClient"]
+    end
+
+    subgraph バックエンドプロセス ["EngineCore プロセス"]
+        EC["EngineCore&lt;br&gt;step()"]
+        Sched["Scheduler&lt;br&gt;schedule()"]
+        KV["KVCacheManager&lt;br&gt;allocate_slots()"]
+        Exec["Executor&lt;br&gt;execute_model()"]
+        Worker["Worker"]
+        MR["GPUModelRunner&lt;br&gt;execute_model()"]
+    end
+
+    API --&gt;|"prompt, params"| AsyncLLM
+    AsyncLLM --&gt;|"prompt, params"| IP
+    IP --&gt;|"EngineCoreRequest"| AsyncLLM
+    AsyncLLM --&gt;|"EngineCoreRequest"| Client
+
+    Client --&gt;|"ZMQ ROUTER\nmsgpack"| EC
+    EC --&gt; Sched
+    Sched --&gt;|"allocate_slots()"| KV
+    Sched --&gt;|"SchedulerOutput"| EC
+    EC --&gt;|"SchedulerOutput"| Exec
+    Exec --&gt;|"MessageQueue\n共有メモリ"| Worker
+    Worker --&gt; MR
+    MR --&gt;|"ModelRunnerOutput"| Worker
+    Worker --&gt;|"ModelRunnerOutput"| Exec
+    Exec --&gt;|"ModelRunnerOutput"| EC
+    EC --&gt;|"update_from_output()"| Sched
+    Sched --&gt;|"EngineCoreOutputs"| EC
+
+    EC --&gt;|"ZMQ PUSH\nmsgpack"| Client
+    Client --&gt;|"EngineCoreOutputs"| OP
+    OP --&gt;|"RequestOutput"| AsyncLLM
+    AsyncLLM --&gt;|"RequestOutput"| API
+</pre>
+
+<h2 id="境界データ構造"><a class="header" href="#境界データ構造">境界データ構造</a></h2>
+<p>フローは以下の5つのデータ構造で区切られる。各構造はプロセス間またはコンポーネント間の境界を定義する。</p>
+<h3 id="enginecorerequest"><a class="header" href="#enginecorerequest">EngineCoreRequest</a></h3>
+<p>フロントエンド → バックエンドの境界。ユーザー入力を正規化した内部表現。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:55</code> (EngineCoreRequest)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>内部リクエストID（外部IDに8文字ランダムサフィックス付与）</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>トークナイズ済みプロンプト</td></tr>
+<tr><td><code>mm_features</code></td><td><code>list[MultiModalFeatureSpec] | None</code></td><td>マルチモーダル入力（テキスト推論ではNone）</td></tr>
+<tr><td><code>sampling_params</code></td><td><code>SamplingParams | None</code></td><td>サンプリングパラメータ（clone済み）</td></tr>
+<tr><td><code>eos_token_id</code></td><td><code>int | None</code></td><td>終了トークンID</td></tr>
+<tr><td><code>arrival_time</code></td><td><code>float</code></td><td>リクエスト到着時刻</td></tr>
+<tr><td><code>lora_request</code></td><td><code>LoRARequest | None</code></td><td>LoRAアダプタ情報</td></tr>
+<tr><td><code>priority</code></td><td><code>int</code></td><td>優先度（デフォルト0）</td></tr>
+<tr><td><code>data_parallel_rank</code></td><td><code>int | None</code></td><td>データ並列ランク指定</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>msgspec.Struct</code> を継承し、<code>array_like=True</code> + <code>omit_defaults=True</code> で効率的にmsgpackシリアライズされる。</p>
+<h3 id="scheduleroutput-todo"><a class="header" href="#scheduleroutput-todo">SchedulerOutput [TODO]</a></h3>
+<p>Scheduler → Executor の境界。スケジュール結果を含む。セッション2で詳細記述。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/output.py</code></p>
+<h3 id="modelrunneroutput-todo"><a class="header" href="#modelrunneroutput-todo">ModelRunnerOutput [TODO]</a></h3>
+<p>GPUModelRunner → EngineCore の境界。推論結果を含む。セッション3で詳細記述。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:160</code></p>
+<h3 id="enginecoreoutput"><a class="header" href="#enginecoreoutput">EngineCoreOutput</a></h3>
+<p>バックエンド → フロントエンドの境界。リクエスト単位の推論結果。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:130</code> (EngineCoreOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>対応するリクエストID</td></tr>
+<tr><td><code>new_token_ids</code></td><td><code>list[int]</code></td><td>新たに生成されたトークンID</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>FinishReason | None</code></td><td>完了理由（stop/length/abort/error）</td></tr>
+<tr><td><code>new_logprobs</code></td><td><code>LogprobsLists | None</code></td><td>生成トークンのlogprobs</td></tr>
+<tr><td><code>num_cached_tokens</code></td><td><code>int</code></td><td>プレフィックスキャッシュヒット数</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>EngineCoreOutputs</code>（複数形）がこれを<code>list[EngineCoreOutput]</code>としてバッチ化し、<code>scheduler_stats</code>やタイムスタンプと共にZMQ経由で送信される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:176</code> (EngineCoreOutputs)</p>
+<h3 id="requestoutput-todo"><a class="header" href="#requestoutput-todo">RequestOutput [TODO]</a></h3>
+<p>OutputProcessor → API の境界。ユーザーに返却される最終出力。セッション3で詳細記述。</p>
+<h2 id="上流パス-リクエスト受信--enginecore"><a class="header" href="#上流パス-リクエスト受信--enginecore">上流パス: リクエスト受信 → EngineCore</a></h2>
+<h3 id="エントリポイント-llm--asyncllm"><a class="header" href="#エントリポイント-llm--asyncllm">エントリポイント (LLM / AsyncLLM)</a></h3>
+<p>vLLMには同期パス（<code>LLM</code>）と非同期パス（<code>AsyncLLM</code>）の2つのエントリポイントがある。内部的にはどちらも<code>InputProcessor</code>と<code>EngineCoreClient</code>を使用する。</p>
+<h4 id="非同期パス主パス-asyncllm"><a class="header" href="#非同期パス主パス-asyncllm">非同期パス（主パス）: AsyncLLM</a></h4>
+<p>APIサーバー（OpenAI互換API等）が使用する主要パス。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/async_llm.py:71</code> (AsyncLLM)</p>
+<pre><code>AsyncLLM.generate(prompt, sampling_params, request_id)    # L537
+  │
+  ├─ add_request(request_id, prompt, params)               # L286
+  │   ├─ input_processor.process_inputs(prompt, params)    # L364
+  │   │   → EngineCoreRequest を生成
+  │   ├─ input_processor.assign_request_id(request)        # L378
+  │   │   → 内部IDを付与（外部ID + 8文字ランダムサフィックス）
+  │   ├─ output_processor.add_request(request, ...)        # L423
+  │   │   → フロントエンド側でリクエストを登録
+  │   └─ engine_core.add_request_async(request)            # L426
+  │       → ZMQ経由でバックエンドへ送信
+  │
+  └─ while not finished:                                    # L586
+      out = q.get_nowait() or await q.get()                # L589
+      yield out                                             # L596
+</code></pre>
+<p><code>generate()</code>はAsyncGeneratorで、バックグラウンドの<code>output_handler</code>タスクがEngineCoreからの出力を<code>RequestOutputCollector</code>キューにpushし、<code>generate()</code>がそれをyieldする。</p>
+<p><strong>output_handler（バックグラウンドタスク）</strong>:</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/async_llm.py:647</code> (_run_output_handler)</p>
+<pre><code>output_handler():                                           # L662
+  while True:
+    outputs = await engine_core.get_output_async()          # L666
+    for chunk in outputs.outputs:                           # L677
+      output_processor.process_outputs(chunk, ...)          # L681
+      → RequestOutputをキューにpush
+    if reqs_to_abort:
+      await engine_core.abort_requests_async(...)           # L693
+</code></pre>
+<h4 id="同期パス-llm"><a class="header" href="#同期パス-llm">同期パス: LLM</a></h4>
+<p>オフライン推論（バッチ処理）で使用される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/entrypoints/llm.py:396</code> (generate)</p>
+<pre><code>LLM.generate(prompts, sampling_params)                      # L396
+  → _run_completion(prompts, params)                        # L449
+    → _add_request(prompt, params) × N                      # L1850
+    │  ├─ input_processor.process_inputs(prompt, params)    # L1879
+    │  └─ llm_engine.add_request(request_id, request, ...)  # L1889
+    → _run_engine()                                         # L1900
+       while has_unfinished_requests():                     # L1918
+         step_outputs = llm_engine.step()                   # L1919
+</code></pre>
+<p>同期パスとの主な違い:</p>
+<ul>
+<li><code>LLM</code>は<code>_run_engine()</code>でポーリングループを回す（AsyncGeneratorではない）</li>
+<li><code>llm_engine</code>（=<code>AsyncLLM</code>のラッパー）の<code>step()</code>を直接呼ぶ</li>
+<li>プログレスバー（tqdm）でバッチ処理の進捗を表示</li>
+</ul>
+<h3 id="入力処理-inputprocessor"><a class="header" href="#入力処理-inputprocessor">入力処理 (InputProcessor)</a></h3>
+<p><code>InputProcessor</code>はユーザー入力（テキストプロンプト、パラメータ）を<code>EngineCoreRequest</code>に変換する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:56</code> (InputProcessor)</p>
+<pre><code>InputProcessor.process_inputs(request_id, prompt, params)   # L521
+  ├─ _validate_lora(lora_request)                           # L535
+  ├─ _validate_params(params)                               # L536
+  ├─ data_parallel_rank の範囲チェック                       # L542
+  ├─ arrival_time 設定（未指定なら time.time()）             # L548
+  │
+  ├─ input_preprocessor.preprocess(prompt, ...)             # L581
+  │   → テキストをトークナイズ（tokenizer.encode()）
+  │   → ProcessorInputs を返す
+  │
+  ├─ split_enc_dec_inputs(processed_inputs)                 # L597
+  │   → エンコーダ/デコーダ入力を分離
+  │
+  ├─ SamplingParams の正規化                                # L608-623
+  │   ├─ params.clone()                                     # L612
+  │   ├─ max_tokens 未設定時: max_model_len - seq_len       # L614-618
+  │   ├─ update_from_generation_config()                    # L619
+  │   └─ update_from_tokenizer()                            # L623
+  │
+  └─ EngineCoreRequest を構築して返す                        # L656-671
+</code></pre>
+<p>テキスト推論の場合、マルチモーダル関連処理（L630-654）はスキップされる（<code>mm_features</code>はNone）。</p>
+<h3 id="プロセス間通信-enginecoreclient--zmq-ipc"><a class="header" href="#プロセス間通信-enginecoreclient--zmq-ipc">プロセス間通信 (EngineCoreClient / ZMQ IPC)</a></h3>
+<p><code>EngineCoreClient</code>はフロントエンドプロセスとバックエンドプロセス（EngineCore）間のZMQ IPC通信を担当する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:63</code> (EngineCoreClient)</p>
+<h4 id="クライアント階層"><a class="header" href="#クライアント階層">クライアント階層</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>クラス</th><th>用途</th><th>トランスポート</th></tr>
+</thead>
+<tbody>
+<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td>—</td></tr>
+<tr><td><code>InprocClient</code></td><td>インプロセス（デバッグ用）</td><td>直接呼び出し</td></tr>
+<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセス（LLM用）</td><td>ZMQ同期</td></tr>
+<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセス（AsyncLLM用）</td><td>ZMQ非同期</td></tr>
+<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td>複数ZMQ</td></tr>
+<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td>複数ZMQ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:442</code> (MPClient)</p>
+<h4 id="zmqソケット構成"><a class="header" href="#zmqソケット構成">ZMQソケット構成</a></h4>
+<pre><code>フロントエンド                 バックエンド
+┌──────────────┐              ┌──────────────┐
+│ AsyncMPClient│              │ EngineCore   │
+│              │              │              │
+│ input_socket ├─── ROUTER ──→│ (受信)       │
+│ (zmq.ROUTER) │    msgpack   │              │
+│              │              │              │
+│ output_socket│←── PULL ─────┤ (送信)       │
+│ (zmq.PULL)   │    msgpack   │              │
+└──────────────┘              └──────────────┘
+</code></pre>
+<ul>
+<li><strong>シリアライゼーション</strong>: <code>MsgpackEncoder</code> / <code>MsgpackDecoder</code>（<code>msgspec</code>ライブラリ）
+<ul>
+<li><code>EngineCoreRequest</code>のシリアライズ → 入力ソケット経由で送信</li>
+<li><code>EngineCoreOutputs</code>のデシリアライズ ← 出力ソケット経由で受信</li>
+</ul>
+</li>
+<li><strong>非同期出力受信</strong>: <code>process_outputs_socket()</code>タスクがZMQソケットをポーリングし、受信したOutputsを<code>asyncio.Queue</code>にpush</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:822</code> (AsyncMPClient)</p>
+<h4 id="enginecore側のリクエスト受信"><a class="header" href="#enginecore側のリクエスト受信">EngineCore側のリクエスト受信</a></h4>
+<p><code>EngineCore.add_request()</code>はリクエストをバリデーションしてSchedulerに登録する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:288</code> (add_request)</p>
+<pre><code>EngineCore.add_request(request)                             # L288
+  ├─ request_id の型チェック                                 # L295
+  ├─ pooling_params のバリデーション                          # L300
+  ├─ kv_transfer_params の互換性チェック                      # L311
+  └─ scheduler.add_request(request)                          # L319
+</code></pre>
+<h4 id="enginecorestep-コアループ概要"><a class="header" href="#enginecorestep-コアループ概要">EngineCore.step() （コアループ概要）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code> (step)</p>
+<pre><code>EngineCore.step()                                            # L389
+  ├─ scheduler.schedule()        → SchedulerOutput           # L404
+  ├─ executor.execute_model()    → Future[ModelRunnerOutput]  # L405
+  ├─ grammar_output 取得                                      # L406
+  ├─ future.result()             → ModelRunnerOutput          # L411
+  ├─ sample_tokens()（非同期スケジューリング時）              # L413
+  └─ scheduler.update_from_output() → EngineCoreOutputs      # L418
+</code></pre>
+<h2 id="コアループ-enginecorestep-todo"><a class="header" href="#コアループ-enginecorestep-todo">コアループ: EngineCore.step() [TODO]</a></h2>
+<p>セッション2で詳細記述。Scheduler、KVCacheManager、Executorの連携を追跡する。</p>
+<h2 id="下流パス-modelrunneroutput--ユーザー応答-todo"><a class="header" href="#下流パス-modelrunneroutput--ユーザー応答-todo">下流パス: ModelRunnerOutput → ユーザー応答 [TODO]</a></h2>
+<p>セッション3で詳細記述。GPUModelRunner、OutputProcessor、Detokenizerの処理を追跡する。</p>
+<h2 id="prefill-vs-decode-todo"><a class="header" href="#prefill-vs-decode-todo">Prefill vs Decode [TODO]</a></h2>
+<p>セッション3で記述。同一フロー内でのPrefill/Decodeフェーズの違いを整理する。</p>
+<h2 id="コンポーネント優先度暫定"><a class="header" href="#コンポーネント優先度暫定">コンポーネント優先度（暫定）</a></h2>
+<p>Phase 2での深堀り順序。セッション3で確定する。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>優先度</th><th>コンポーネント</th><th>理由</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>S</strong></td><td>KVCacheManager</td><td>ユーザー関心1位（メモリ管理/KVキャッシュ）</td></tr>
+<tr><td><strong>A</strong></td><td>Scheduler</td><td>KVCacheManagerと密連携、推論パイプライン全体を制御</td></tr>
+<tr><td><strong>B</strong></td><td>EngineCore, AsyncLLM, GPUModelRunner</td><td>フロー理解に重要</td></tr>
+<tr><td><strong>C</strong></td><td>InputProcessor, EngineCoreClient, Executor, Worker, OutputProcessor</td><td>薄いレイヤーまたは通信層</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="参照ファイル一覧"><a class="header" href="#参照ファイル一覧">参照ファイル一覧</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/entrypoints/llm.py</code></td><td><code>LLM.generate()</code> (L396), <code>_add_request()</code> (L1850)</td><td>同期エントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td><td><code>AsyncLLM.generate()</code> (L537), <code>add_request()</code> (L286)</td><td>非同期エントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>InputProcessor.process_inputs()</code> (L521)</td><td>入力処理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/__init__.py</code></td><td><code>EngineCoreRequest</code> (L55), <code>EngineCoreOutput</code> (L130), <code>EngineCoreOutputs</code> (L176)</td><td>境界データ構造</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td><code>EngineCoreClient</code> (L63), <code>MPClient</code> (L442), <code>AsyncMPClient</code> (L822)</td><td>ZMQ IPC通信</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td><code>EngineCore.add_request()</code> (L288), <code>step()</code> (L389)</td><td>推論ループ本体</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>Scheduler.schedule()</code> (L321)</td><td>スケジューリング</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code></td><td><code>KVCacheManager.allocate_slots()</code> (L206)</td><td>KVキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> (ABC)</td><td>実行層抽象</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker.execute_model()</code> (L604)</td><td>GPU Worker</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner.execute_model()</code> (L3312)</td><td>モデル実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/output_processor.py</code></td><td><code>OutputProcessor.process_outputs()</code></td><td>出力処理</td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="アーキテクチャ概要"><a class="header" href="#アーキテクチャ概要">アーキテクチャ概要</a></h1>
 <blockquote>
@@ -185,7 +467,7 @@
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-09</p>
 </blockquote>
-<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<h2 id="概要-1"><a class="header" href="#概要-1">概要</a></h2>
 <p>vLLMはUC Berkeley Sky Computing Lab発のLLM推論・サービングライブラリである。PagedAttentionによるKVキャッシュの効率的メモリ管理、Continuous Batchingによる動的バッチスケジューリングを中核技術とし、高スループット・低レイテンシのLLM推論を実現する。OpenAI互換APIサーバー、マルチモーダル対応、分散推論（Tensor/Pipeline/Data/Expert並列）を備える。</p>
 <h2 id="全体構造"><a class="header" href="#全体構造">全体構造</a></h2>
 <pre class="mermaid">graph TD
@@ -296,6 +578,325 @@
 </tbody>
 </table>
 </div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="enginecoreclient-サマリー"><a class="header" href="#enginecoreclient-サマリー">EngineCoreClient サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-09</p>
+</blockquote>
+<h2 id="概要-2"><a class="header" href="#概要-2">概要</a></h2>
+<p><code>EngineCoreClient</code>はフロントエンドプロセス（AsyncLLM / LLM）とバックエンドプロセス（EngineCore）間のプロセス間通信を抽象化するコンポーネントである。ZeroMQソケットとmsgpackシリアライゼーションを使用し、<code>EngineCoreRequest</code>の送信と<code>EngineCoreOutputs</code>の受信を効率的に行う。</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<pre><code>フロントエンドプロセス            バックエンドプロセス
+┌───────────────────┐            ┌───────────────────┐
+│  AsyncMPClient    │            │  EngineCore       │
+│                   │            │                   │
+│  input_socket     ├──ROUTER──→│  (ZMQ受信)        │
+│  (zmq.ROUTER)     │  msgpack   │                   │
+│                   │            │                   │
+│  output_socket    │←──PULL────┤  (ZMQ送信)        │
+│  (zmq.PULL)       │  msgpack   │                   │
+│                   │            │                   │
+│  outputs_queue    │            │                   │
+│  (asyncio.Queue)  │            │                   │
+└───────────────────┘            └───────────────────┘
+</code></pre>
+<h2 id="主要コンポーネント-1"><a class="header" href="#主要コンポーネント-1">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td><code>target/vllm/vllm/v1/engine/core_client.py:63</code></td></tr>
+<tr><td><code>MPClient</code></td><td>マルチプロセスクライアント基底</td><td><code>target/vllm/vllm/v1/engine/core_client.py:442</code></td></tr>
+<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセスクライアント（AsyncLLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py:822</code></td></tr>
+<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセスクライアント（LLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>MsgpackEncoder</code></td><td>リクエストのシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
+<tr><td><code>MsgpackDecoder</code></td><td>レスポンスのデシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<h3 id="enginecoreclient-abc"><a class="header" href="#enginecoreclient-abc">EngineCoreClient (ABC)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>make_client()</code></td><td>ファクトリ。設定に応じた適切なサブクラスを返す</td></tr>
+<tr><td><code>make_async_mp_client()</code></td><td>AsyncLLM用ファクトリ。DP構成も考慮</td></tr>
+<tr><td><code>add_request()</code></td><td>EngineCoreRequestを送信</td></tr>
+<tr><td><code>get_output()</code></td><td>EngineCoreOutputsを受信</td></tr>
+<tr><td><code>abort_requests()</code></td><td>リクエストキャンセル</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="asyncmpclient"><a class="header" href="#asyncmpclient">AsyncMPClient</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_ensure_output_queue_task()</code></td><td>L856</td><td>ZMQ出力受信タスクを起動</td></tr>
+<tr><td><code>get_output_async()</code></td><td>L902</td><td>asyncio.Queueから出力を取得</td></tr>
+<tr><td><code>_send_input()</code></td><td>L913</td><td>EngineCoreRequestをZMQで送信</td></tr>
+<tr><td><code>_send_input_message()</code></td><td>L925</td><td>ZMQ multipart送信（zero-copy対応）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ファクトリ選択ロジック"><a class="header" href="#ファクトリ選択ロジック">ファクトリ選択ロジック</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:99</code> (make_async_mp_client)</p>
+<pre><code>make_async_mp_client(vllm_config, executor_class, ...)
+  ├─ data_parallel_size &gt; 1 の場合:
+  │   ├─ external_lb → DPAsyncMPClient
+  │   └─ internal_lb → DPLBAsyncMPClient
+  └─ それ以外 → AsyncMPClient
+</code></pre>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>parallel_config.data_parallel_size</code></td><td>1</td><td>データ並列数。&gt;1でDP系クライアントを使用</td></tr>
+<tr><td><code>parallel_config.data_parallel_external_lb</code></td><td>—</td><td>外部ロードバランサ使用フラグ</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
+<pre><code>[送信パス]
+AsyncLLM.add_request()
+  → engine_core.add_request_async(request)
+    → AsyncMPClient._send_input(REQUEST, request)
+      → MsgpackEncoder.encode(request)
+      → input_socket.send_multipart(msg, copy=False)
+        → ZMQ ROUTER → バックエンドプロセス
+
+[受信パス]
+process_outputs_socket() [バックグラウンドタスク]
+  → output_socket.recv_multipart()
+    → MsgpackDecoder.decode(frames) → EngineCoreOutputs
+    → outputs_queue.put_nowait(outputs)
+
+AsyncLLM._run_output_handler()
+  → engine_core.get_output_async()
+    → outputs_queue.get() → EngineCoreOutputs
+</code></pre>
+<h2 id="設計上の特徴"><a class="header" href="#設計上の特徴">設計上の特徴</a></h2>
+<ul>
+<li><strong>プロセス分離</strong>: EngineCoreが別プロセスで動作するため、GILの影響を受けずスケジューリングとGPU実行を並行可能</li>
+<li><strong>msgpackシリアライゼーション</strong>: <code>msgspec.Struct</code>の<code>array_like</code>形式でコンパクトなバイナリ表現</li>
+<li><strong>zero-copy</strong>: ZMQ <code>copy=False</code> でメモリコピーを最小化。テンソルバッキングバッファの追跡（<code>add_pending_message</code>）</li>
+<li><strong>weakref</strong>: 出力タスクがクライアントへの循環参照を持たないよう<code>weakref</code>を使用</li>
+</ul>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a></li>
+<li><a href="#テキスト推論データフロー">データフロー</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="エントリポイント-asyncllm--llm-サマリー"><a class="header" href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント (AsyncLLM / LLM) サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-09</p>
+</blockquote>
+<h2 id="概要-3"><a class="header" href="#概要-3">概要</a></h2>
+<p><code>AsyncLLM</code>と<code>LLM</code>はvLLMの2つの主要エントリポイントである。<code>AsyncLLM</code>はAPIサーバー（OpenAI互換API等）が使用する非同期パスで、<code>LLM</code>はオフラインバッチ推論用の同期パスである。どちらも<code>InputProcessor</code>で入力を処理し、<code>EngineCoreClient</code>経由でバックエンド（EngineCore）にリクエストを送信する。</p>
+<h2 id="アーキテクチャ-1"><a class="header" href="#アーキテクチャ-1">アーキテクチャ</a></h2>
+<pre class="mermaid">graph LR
+    subgraph 非同期パス
+        OpenAI["OpenAI API Server"] --&gt; AsyncLLM
+        AsyncLLM --&gt;|"process_inputs()"| IP["InputProcessor"]
+        IP --&gt;|"EngineCoreRequest"| AsyncLLM
+        AsyncLLM --&gt;|"add_request_async()"| Client["EngineCoreClient"]
+        Client --&gt;|"ZMQ"| EC["EngineCore"]
+    end
+
+    subgraph 同期パス
+        User["ユーザーコード"] --&gt; LLM
+        LLM --&gt;|"process_inputs()"| IP2["InputProcessor"]
+        IP2 --&gt;|"EngineCoreRequest"| LLM
+        LLM --&gt;|"add_request()"| Client2["EngineCoreClient"]
+    end
+</pre>
+
+<h2 id="主要コンポーネント-2"><a class="header" href="#主要コンポーネント-2">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>AsyncLLM</code></td><td>非同期推論エントリポイント。AsyncGeneratorでストリーミング出力</td><td><code>target/vllm/vllm/v1/engine/async_llm.py:71</code></td></tr>
+<tr><td><code>LLM</code></td><td>同期バッチ推論エントリポイント。<code>list[RequestOutput]</code>を返す</td><td><code>target/vllm/vllm/entrypoints/llm.py:101</code></td></tr>
+<tr><td><code>RequestOutputCollector</code></td><td>非同期パスでの出力キュー管理</td><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td></tr>
+<tr><td><code>ParentRequest</code></td><td>n&gt;1サンプリング時の親リクエスト管理</td><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド-1"><a class="header" href="#主要メソッド-1">主要メソッド</a></h2>
+<h3 id="asyncllm"><a class="header" href="#asyncllm">AsyncLLM</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>generate()</code></td><td>L537</td><td>メインAPI。AsyncGeneratorでRequestOutputをyield</td></tr>
+<tr><td><code>add_request()</code></td><td>L286</td><td>リクエスト追加。InputProcessor→OutputProcessor→EngineCore</td></tr>
+<tr><td><code>_add_request()</code></td><td>L414</td><td>内部: OutputProcessorとEngineCoreに登録</td></tr>
+<tr><td><code>_run_output_handler()</code></td><td>L647</td><td>バックグラウンドタスク起動。EngineCore出力を受信→キュー</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="llm"><a class="header" href="#llm">LLM</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>generate()</code></td><td>L396</td><td>バッチ推論API。<code>list[RequestOutput]</code>を返す</td></tr>
+<tr><td><code>_add_request()</code></td><td>L1850</td><td>InputProcessor→llm_engine.add_request()</td></tr>
+<tr><td><code>_run_engine()</code></td><td>L1900</td><td>ポーリングループ。完了まで<code>step()</code>を繰り返す</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="設定-1"><a class="header" href="#設定-1">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>log_requests</code></td><td><code>True</code></td><td>リクエストログ出力</td></tr>
+<tr><td><code>log_stats</code></td><td>引数指定</td><td>統計ログ出力</td></tr>
+<tr><td><code>start_engine_loop</code></td><td><code>True</code></td><td>エンジンループ自動起動</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー-1"><a class="header" href="#呼び出しフロー-1">呼び出しフロー</a></h2>
+<pre><code>[APIサーバー or ユーザーコード]
+  → AsyncLLM.generate() / LLM.generate()
+    → InputProcessor.process_inputs()
+      → EngineCoreRequest
+    → EngineCoreClient.add_request_async()
+      → ZMQ → EngineCore（別プロセス）
+
+[バックグラウンド output_handler タスク]
+  → EngineCoreClient.get_output_async()
+    → EngineCoreOutputs
+  → OutputProcessor.process_outputs()
+    → RequestOutput → キューにpush
+
+[generate() AsyncGenerator]
+  → キューから取り出してyield
+</code></pre>
+<h2 id="関連ドキュメント-1"><a class="header" href="#関連ドキュメント-1">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#inputprocessor-サマリー">入力処理</a></li>
+<li><a href="#enginecoreclient-サマリー">EngineCoreClient</a></li>
+<li><a href="#テキスト推論データフロー">データフロー</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="inputprocessor-サマリー"><a class="header" href="#inputprocessor-サマリー">InputProcessor サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-09</p>
+</blockquote>
+<h2 id="概要-4"><a class="header" href="#概要-4">概要</a></h2>
+<p><code>InputProcessor</code>はユーザー入力（テキストプロンプト、SamplingParams等）を内部表現<code>EngineCoreRequest</code>に変換するコンポーネントである。トークナイズ、パラメータのバリデーションと正規化、マルチモーダル入力の前処理を担当する。AsyncLLMの初期化時に生成され、フロントエンドプロセスで動作する。</p>
+<h2 id="アーキテクチャ-2"><a class="header" href="#アーキテクチャ-2">アーキテクチャ</a></h2>
+<pre class="mermaid">graph LR
+    Prompt["PromptType&lt;br&gt;(str / list[int] / dict)"] --&gt; IP["InputProcessor"]
+    Params["SamplingParams"] --&gt; IP
+    IP --&gt; IPP["InputPreprocessor&lt;br&gt;tokenizer.encode()"]
+    IPP --&gt; PI["ProcessorInputs"]
+    PI --&gt; IP
+    IP --&gt; ECR["EngineCoreRequest"]
+</pre>
+
+<h2 id="主要コンポーネント-3"><a class="header" href="#主要コンポーネント-3">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>InputProcessor</code></td><td>入力処理のメインクラス</td><td><code>target/vllm/vllm/v1/engine/input_processor.py:56</code></td></tr>
+<tr><td><code>InputPreprocessor</code></td><td>トークナイズとマルチモーダル前処理</td><td><code>target/vllm/vllm/v1/engine/input_processor.py</code> (内部利用)</td></tr>
+<tr><td><code>ProcessorInputs</code></td><td>前処理結果の中間データ構造</td><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド-2"><a class="header" href="#主要メソッド-2">主要メソッド</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>入力</th><th>出力</th></tr>
+</thead>
+<tbody>
+<tr><td><code>process_inputs()</code></td><td>L521</td><td><code>request_id</code>, <code>prompt</code>, <code>params</code></td><td><code>EngineCoreRequest</code></td></tr>
+<tr><td><code>assign_request_id()</code></td><td>(別メソッド)</td><td><code>EngineCoreRequest</code></td><td>None (内部IDを付与)</td></tr>
+<tr><td><code>_validate_lora()</code></td><td>L535付近</td><td><code>LoRARequest</code></td><td>バリデーション</td></tr>
+<tr><td><code>_validate_params()</code></td><td>L536付近</td><td><code>SamplingParams</code></td><td>バリデーション</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="process_inputs-の処理フロー"><a class="header" href="#process_inputs-の処理フロー">process_inputs() の処理フロー</a></h2>
+<pre><code>process_inputs(request_id, prompt, params)
+  1. バリデーション
+     ├─ LoRAリクエスト検証
+     ├─ パラメータ検証
+     └─ data_parallel_rank 範囲チェック
+  2. arrival_time 設定
+  3. input_preprocessor.preprocess(prompt)
+     → テキストをトークナイズ → ProcessorInputs
+  4. split_enc_dec_inputs()
+     → エンコーダ/デコーダ入力を分離
+  5. SamplingParams 正規化
+     ├─ clone() で複製
+     ├─ max_tokens 未設定時: max_model_len - seq_len
+     ├─ update_from_generation_config()
+     └─ update_from_tokenizer()
+  6. EngineCoreRequest を構築して返す
+</code></pre>
+<h2 id="設定-2"><a class="header" href="#設定-2">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model_config.max_model_len</code></td><td>モデル依存</td><td>max_tokens未指定時の上限計算に使用</td></tr>
+<tr><td><code>cache_config.enable_prefix_caching</code></td><td>—</td><td>マルチモーダルUUID生成方式に影響</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー-2"><a class="header" href="#呼び出しフロー-2">呼び出しフロー</a></h2>
+<pre><code>AsyncLLM.add_request() / LLM._add_request()
+  → InputProcessor.process_inputs()
+    → InputPreprocessor.preprocess()
+      → tokenizer.encode()
+    → EngineCoreRequest を返す
+  → InputProcessor.assign_request_id()
+    → 外部IDを external_req_id に退避
+    → 内部ID（外部ID + 8文字ランダム）を request_id に設定
+</code></pre>
+<h2 id="関連ドキュメント-2"><a class="header" href="#関連ドキュメント-2">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a></li>
+<li><a href="#テキスト推論データフロー">データフロー</a></li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="用語集"><a class="header" href="#用語集">用語集</a></h1>
 <!-- 調査中に発見した対象OSS固有の用語をここに蓄積する -->
