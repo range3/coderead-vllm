@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-414c41f5.js";
+            window.path_to_searchindex_js = "searchindex-79c19c41.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-a7fd8ba8.js"></script>
@@ -176,7 +176,58 @@
                     <main>
                         <h1 id="用語集"><a class="header" href="#用語集">用語集</a></h1>
 <!-- 調査中に発見した対象OSS固有の用語をここに蓄積する -->
-<!-- 形式: ### 用語名\n説明文 -->
+<h3 id="pagedattention"><a class="header" href="#pagedattention">PagedAttention</a></h3>
+<p>KVキャッシュをOSの仮想メモリページングに着想を得て、固定サイズのブロック単位で管理する技術。連続したGPUメモリ確保が不要になり、メモリ断片化を大幅に抑制する。SOSP 2023論文で提案。</p>
+<p><strong>参照</strong>: <code>target/vllm/csrc/attention/</code> (カーネル実装)</p>
+<h3 id="continuous-batching"><a class="header" href="#continuous-batching">Continuous Batching</a></h3>
+<p>リクエストの到着・完了に応じてバッチを動的に更新する手法。固定バッチサイズと異なり、GPU稼働率を最大化できる。vLLMのSchedulerが担う。</p>
+<h3 id="prefill"><a class="header" href="#prefill">Prefill</a></h3>
+<p>プロンプト入力トークン全体を処理してKVキャッシュに書き込む最初のフェーズ。計算量が多く、GPUの並列性を活かしやすい。</p>
+<h3 id="decode"><a class="header" href="#decode">Decode</a></h3>
+<p>生成済みコンテキストのKVキャッシュを参照しながら次のトークンを1つずつ逐次生成するフェーズ。メモリバウンドになりやすい。</p>
+<h3 id="chunked-prefill"><a class="header" href="#chunked-prefill">Chunked Prefill</a></h3>
+<p>Prefillフェーズをチャンクに分割してDecodeフェーズと交互実行する手法。長いプロンプトがDecodeのレイテンシを増加させるのを防ぐ。</p>
+<h3 id="enginecore"><a class="header" href="#enginecore">EngineCore</a></h3>
+<p>vLLMの推論ループの内側コンポーネント。別プロセス（<code>EngineCoreProc</code>）として動作し、ZeroMQソケットで上位エンジン層と通信する。Scheduler、KVCacheManager、Executorを統括する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:79</code> (<code>EngineCore</code>)</p>
+<h3 id="kvcachemanager"><a class="header" href="#kvcachemanager">KVCacheManager</a></h3>
+<p>KVキャッシュブロックの割り当て・解放・プレフィックスキャッシュを管理するクラス。BlockPoolを内部で使用する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:94</code> (<code>KVCacheManager</code>)</p>
+<h3 id="kvcacheblock"><a class="header" href="#kvcacheblock">KVCacheBlock</a></h3>
+<p>PagedAttentionで管理するKVキャッシュの最小単位。固定サイズ（block_sizeトークン分）のGPUメモリブロック。</p>
+<h3 id="blockpool"><a class="header" href="#blockpool">BlockPool</a></h3>
+<p>KVCacheBlockの空きブロックをプール管理するクラス。ブロックの割り当て・返却を効率的に行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py</code></p>
+<h3 id="vllmconfig"><a class="header" href="#vllmconfig">VllmConfig</a></h3>
+<p>全設定を集約するトップレベルクラス。<code>ModelConfig</code>、<code>CacheConfig</code>、<code>SchedulerConfig</code>、<code>ParallelConfig</code>等を内包する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/vllm.py</code></p>
+<h3 id="gpumodelrunner"><a class="header" href="#gpumodelrunner">GPUModelRunner</a></h3>
+<p>GPU上でモデルのフォワードパスを実際に実行するクラス。LoRA、KVConnector、ECConnectorのMixinを持つ。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:329</code> (<code>GPUModelRunner</code>)</p>
+<h3 id="executor"><a class="header" href="#executor">Executor</a></h3>
+<p>Worker群を管理する抽象層。シングルプロセス（<code>UniProcExecutor</code>）、マルチプロセス（<code>MultiprocExecutor</code>）、Ray分散（<code>RayDistributedExecutor</code>）の実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py</code></p>
+<h3 id="worker"><a class="header" href="#worker">Worker</a></h3>
+<p>1つのGPU（またはCPU/XPU）デバイスを担当するプロセス。GPUModelRunnerを保持し、Executorから呼び出される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:70</code> (<code>Worker</code>)</p>
+<h3 id="speculative-decoding"><a class="header" href="#speculative-decoding">Speculative Decoding</a></h3>
+<p>ドラフトモデル（小さいモデル）で複数トークンを仮生成し、メインモデルで一括検証することで推論を高速化する手法。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/spec_decode/</code></p>
+<h3 id="lora-low-rank-adaptation"><a class="header" href="#lora-low-rank-adaptation">LoRA (Low-Rank Adaptation)</a></h3>
+<p>少量の追加パラメータでLLMをファインチューニングする手法。vLLMは複数LoRAの動的切替（Multi-LoRA）をランタイムでサポートする。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/lora/</code></p>
+<h3 id="kv-transfer"><a class="header" href="#kv-transfer">KV Transfer</a></h3>
+<p>複数のvLLMインスタンス間でKVキャッシュを転送する機構。Disaggregated Prefill（PrefillとDecodeを異なるインスタンスで実行）等に使用。KVConnector抽象基底クラスとして実装され、LMCache、NIXL、P2P NCCL、Mooncake等の複数バックエンドがある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/</code> (全体), <code>target/vllm/vllm/config/kv_transfer.py:17</code> (<code>KVTransferConfig</code>)</p>
+<h3 id="lmcache"><a class="header" href="#lmcache">LMCache</a></h3>
+<p>vLLMと統合可能な外部KVキャッシュストレージ。KV Transferのバックエンドの一つとして動作し、KVキャッシュのCPUオフロード、インスタンス間共有等を提供する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py</code>, <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/</code></p>
+<h3 id="multimodal-マルチモーダル"><a class="header" href="#multimodal-マルチモーダル">Multimodal (マルチモーダル)</a></h3>
+<p>テキスト以外の入力（画像・動画・音声）を扱うモデル機能。<code>vllm/multimodal/</code> にプロセッサ・レジストリ等が実装されている。Gemma3等のマルチモーダルモデルが対応。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/</code></p>
+<h3 id="mm_cache-マルチモーダルキャッシュ"><a class="header" href="#mm_cache-マルチモーダルキャッシュ">mm_cache (マルチモーダルキャッシュ)</a></h3>
+<p>マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py</code></p>
 
                     </main>
 
