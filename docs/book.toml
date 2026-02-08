@@ -1,0 +1,18 @@
+[book]
+title = "コードリーディング: （対象OSS名）"
+authors = [""]
+language = "ja"
+
+[output.html]
+git-repository-url = ""
+edit-url-template = ""
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.search]
+enable = true
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html.playground]
+editable = false

@@ -1,0 +1,34 @@
+[project]
+name = "coderead-template"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+dependencies = [
+    "ghp-import>=2.1.0",
+    "taskipy>=1.14.1",
+]
+
+[tool.taskipy.settings]
+cwd = "."
+
+[tool.taskipy.tasks]
+# ドキュメント
+docs-build = "mdbook build docs"
+docs-serve = "mdbook serve docs --open"
+docs-deploy = "ghp-import -n -p -f docs/book"
+
+# SUMMARY.md 自動生成
+summary = "python scripts/gen_summary.py"
+
+# リンク検証
+validate = "python scripts/validate_links.py"
+
+# 調査進捗の統計
+stats = "python scripts/stats.py"
+
+# submodule管理
+target-init = "git submodule update --init --recursive"
+target-update = "git submodule update --remote"
+
+# セットアップ（初回のみ）
+setup = "task target-init && task docs-build"
