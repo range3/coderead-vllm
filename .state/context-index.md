@@ -7,12 +7,15 @@
 | ドキュメント                         | 内容       | 深度 | 確信度 | 最終更新 |
 | ------------------------------------ | ---------- | ---- | ------ | -------- |
 | `docs/src/architecture/overview.md`  | vLLM全体のアーキテクチャ概要。5層構造（エントリポイント→エンジン→コア→実行→モデル）、v1が本体、ZMQ IPC分離 | [SHALLOW] | [VERIFIED] | 2026-02-09 |
-| `docs/src/architecture/data-flow.md` | （未作成） | -    | -      | -        |
+| `docs/src/architecture/data-flow.md` | テキスト推論データフロー。全体Mermaid図、境界データ構造5つ、上流パス詳細（AsyncLLM→InputProcessor→ZMQ→EngineCore）。コアループ・下流パスはTODO | [SHALLOW] | [VERIFIED] | 2026-02-09 |
 
 ## コンポーネント
 
 | ドキュメント | 内容 | 深度 | 確信度 | 最終更新 |
 | ------------ | ---- | ---- | ------ | -------- |
+| `docs/src/components/entrypoint/summary.md` | AsyncLLM/LLMエントリポイント。generate()→add_request()→InputProcessor→EngineCoreClient。同期/非同期パスの違い | [SHALLOW] | [VERIFIED] | 2026-02-09 |
+| `docs/src/components/input-processor/summary.md` | InputProcessor。prompt→トークナイズ→SamplingParams正規化→EngineCoreRequest構築 | [SHALLOW] | [VERIFIED] | 2026-02-09 |
+| `docs/src/components/engine-core-client/summary.md` | EngineCoreClient。ZMQ ROUTER/PULL + msgpackによるプロセス間通信。クライアント階層（Async/Sync/DP） | [SHALLOW] | [VERIFIED] | 2026-02-09 |
 
 ## 付録
 
