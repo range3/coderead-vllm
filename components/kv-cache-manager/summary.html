@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>はじめに - コードリーディング: vLLM</title>
+        <title>KVCacheManager サマリー - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="favicon-8114d1fc.png">
-        <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
-        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-45f5642a.js";
+            window.path_to_searchindex_js = "../../searchindex-45f5642a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-45977929.js"></script>
+        <script src="../../toc-45977929.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -105,7 +105,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -140,7 +140,7 @@
                     <h1 class="menu-title">コードリーディング: vLLM</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
@@ -174,14 +174,178 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="はじめに"><a class="header" href="#はじめに">はじめに</a></h1>
+                        <h1 id="kvcachemanager-サマリー"><a class="header" href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p><code>KVCacheManager</code>はPagedAttentionに基づくKVキャッシュブロックの割り当て・解放・プレフィックスキャッシュ検索を管理するクラスである。階層設計を採用し、<code>KVCacheManager</code> → <code>KVCacheCoordinator</code> → <code>SingleTypeKVCacheManager</code> → <code>BlockPool</code> の4層でマルチグループKVキャッシュを統括する。Schedulerから呼び出され、各リクエストに必要なGPUメモリブロックを確保する。</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<h3 id="クラス階層"><a class="header" href="#クラス階層">クラス階層</a></h3>
+<pre class="mermaid">graph TD
+    KVM["KVCacheManager&lt;br&gt;公開API"]
+    Coord["KVCacheCoordinator&lt;br&gt;マルチグループ統括"]
+    STM["SingleTypeKVCacheManager&lt;br&gt;アテンションタイプ別管理"]
+    BP["BlockPool&lt;br&gt;物理ブロック管理"]
+    BH["BlockHashToBlockMap&lt;br&gt;ハッシュ→ブロック対応"]
+    FQ["FreeKVCacheBlockQueue&lt;br&gt;空きブロックキュー"]
+    KB["KVCacheBlock&lt;br&gt;ブロック単位"]
+
+    KVM --&gt; Coord
+    Coord --&gt; STM
+    STM --&gt; BP
+    BP --&gt; BH
+    BP --&gt; FQ
+    FQ --&gt; KB
+</pre>
+
+<h3 id="ブロック配置図allocate_slots"><a class="header" href="#ブロック配置図allocate_slots">ブロック配置図（allocate_slots）</a></h3>
+<p><code>allocate_slots()</code> がリクエストに割り当てるブロックの論理構造:</p>
+<pre><code>|  comp  | new_comp | ext_comp |   new   | lookahead |
+|&lt;------ 既計算トークン ------&gt;|&lt;-- 新規計算対象 --&gt;|
+                               |&lt;- 割り当て対象 -&gt;|
+</code></pre>
+<ul>
+<li><code>comp</code>: <code>request.num_computed_tokens</code> — 前ステップまでに計算済み</li>
+<li><code>new_comp</code>: <code>num_new_computed_tokens</code> — プレフィックスキャッシュから新規にヒットしたトークン</li>
+<li><code>ext_comp</code>: <code>num_external_computed_tokens</code> — KVコネクタ（LMCache等）から取得したトークン</li>
+<li><code>new</code>: <code>num_new_tokens</code> — 今回計算するトークン</li>
+<li><code>lookahead</code>: <code>num_lookahead_tokens</code> — Speculative Decoding用の先読みトークン</li>
+</ul>
+<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>KVCacheManager</code></td><td>Scheduler向け公開API</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py:94</code></td></tr>
+<tr><td><code>KVCacheCoordinator</code></td><td>複数KVキャッシュグループの統括</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code> 内部</td></tr>
+<tr><td><code>SingleTypeKVCacheManager</code></td><td>アテンションタイプ別（Full/SlidingWindow等）のブロック管理</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code> 内部</td></tr>
+<tr><td><code>BlockPool</code></td><td>物理ブロックの割り当て・解放・キャッシュ管理</td><td><code>target/vllm/vllm/v1/core/block_pool.py:128</code></td></tr>
+<tr><td><code>KVCacheBlock</code></td><td>ブロックメタデータ（block_id, ref_cnt, block_hash）</td><td><code>target/vllm/vllm/v1/core/kv_cache_utils.py:107</code></td></tr>
+<tr><td><code>BlockHashToBlockMap</code></td><td>プレフィックスキャッシュ用ハッシュ→ブロック対応表</td><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td></tr>
+<tr><td><code>FreeKVCacheBlockQueue</code></td><td>LRU順序の空きブロック管理キュー</td><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>allocate_slots()</code></td><td>L206</td><td>リクエストにKVキャッシュブロックを割り当て。成功時<code>KVCacheBlocks</code>、失敗時<code>None</code></td></tr>
+<tr><td><code>get_computed_blocks()</code></td><td>L164</td><td>プレフィックスキャッシュから最長ヒットを検索。<code>(KVCacheBlocks, int)</code></td></tr>
+<tr><td><code>free()</code></td><td>L378</td><td>リクエストのブロックをプールに返却</td></tr>
+<tr><td><code>usage</code> (property)</td><td>L143</td><td>KVキャッシュ使用率 (0.0-1.0)</td></tr>
+<tr><td><code>reset_prefix_cache()</code></td><td>L409</td><td>プレフィックスキャッシュ全体をリセット</td></tr>
+<tr><td><code>get_num_common_prefix_blocks()</code></td><td>L425</td><td>全リクエスト共通の先頭ブロック数（Cascade Attention用）</td></tr>
+<tr><td><code>cache_blocks()</code></td><td>L475</td><td>ブロックをプレフィックスキャッシュに登録</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="allocate_slots-の詳細"><a class="header" href="#allocate_slots-の詳細">allocate_slots() の詳細</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:206</code></p>
+<pre><code class="language-python">def allocate_slots(
+    self,
+    request: Request,
+    num_new_tokens: int,
+    num_new_computed_tokens: int = 0,
+    new_computed_blocks: KVCacheBlocks | None = None,
+    num_lookahead_tokens: int = 0,
+    num_external_computed_tokens: int = 0,
+    delay_cache_blocks: bool = False,
+    num_encoder_tokens: int = 0,
+) -&gt; KVCacheBlocks | None
+</code></pre>
+<p>処理フロー:</p>
+<ol>
+<li>必要ブロック数を計算（<code>coordinator.get_num_blocks_to_allocate()</code>）</li>
+<li>空きブロック数と比較 → 不足なら <code>None</code> を返す（プリエンプション誘発）</li>
+<li>プレフィックスキャッシュヒットのブロックをリクエストに追加</li>
+<li>新規ブロックを割り当て（<code>coordinator.allocate_new_blocks()</code>）</li>
+<li>キャッシング有効時、計算済みブロックをプレフィックスキャッシュに登録</li>
+</ol>
+<p><strong>割り当て失敗時</strong> (L336-338):</p>
+<pre><code class="language-python">if num_blocks_to_allocate &gt; self.block_pool.get_num_free_blocks():
+    return None  # → Scheduler がプリエンプションを実行
+</code></pre>
+<h2 id="プレフィックスキャッシュ"><a class="header" href="#プレフィックスキャッシュ">プレフィックスキャッシュ</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:164</code> (get_computed_blocks)</p>
+<p>プロンプトトークン列をブロックサイズ単位でハッシュ化し、<code>BlockHashToBlockMap</code> で過去に計算済みのブロックを検索する。ハッシュチェーンを前方から走査し、最長一致を見つける。</p>
+<pre><code>get_computed_blocks(request)
+  → coordinator.find_longest_cache_hit(request.block_hashes, max_length)
+    → block_pool.get_cached_block(block_hash) を順次検索
+    → キャッシュミスで検索終了
+  → (キャッシュ済みブロック, ヒットトークン数) を返却
+</code></pre>
+<p><strong>制約</strong>: 全トークンがキャッシュヒットしても、logits取得のため最後の1トークンは再計算が必要（<code>max_cache_hit_length = request.num_tokens - 1</code>）。</p>
+<h2 id="参照カウントとeviction"><a class="header" href="#参照カウントとeviction">参照カウントとEviction</a></h2>
+<p><strong>KVCacheBlock</strong> (L107) の <code>ref_cnt</code> フィールドでブロックの使用状況を管理:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ref_cnt</th><th>状態</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>空きブロックキュー（<code>FreeKVCacheBlockQueue</code>）内。Eviction候補</td></tr>
+<tr><td>≥ 1</td><td>リクエストに使用中。Eviction対象外</td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li><strong>touch()</strong>: キャッシュヒット時に<code>ref_cnt</code>を増加し、空きキューから除外</li>
+<li><strong>free_blocks()</strong>: <code>ref_cnt</code>を減少。0になったら空きキューに戻す（逆順追加でLRU効率化）</li>
+<li><strong>_maybe_evict_cached_block()</strong>: 新規ブロック要求時に空きキューの先頭（最古）からEvict。ハッシュメタデータをリセット</li>
+</ul>
+<h2 id="スライディングウィンドウ対応"><a class="header" href="#スライディングウィンドウ対応">スライディングウィンドウ対応</a></h2>
+<p>アテンションウィンドウ外のブロックを<code>null_block</code>（ダミーブロック）で置換し、物理メモリを解放する:</p>
+<pre><code>remove_skipped_blocks(request_id, total_computed_tokens)
+  → num_skipped_tokens = get_num_skipped_tokens(total_computed_tokens)
+  → 前方のブロックをnull_blockで置換
+  → 解放したブロックをBlockPoolに返却
+</code></pre>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>block_size</code></td><td>モデル依存</td><td>1ブロックあたりのトークン数</td></tr>
+<tr><td><code>enable_caching</code></td><td>設定依存</td><td>プレフィックスキャッシュの有効化</td></tr>
+<tr><td><code>num_gpu_blocks</code></td><td>プロファイリングで決定</td><td>GPUメモリから算出される総ブロック数</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
+<pre><code>Scheduler.schedule()
+  ├─ kv_cache_manager.get_computed_blocks(request)     # プレフィックスキャッシュ検索
+  ├─ kv_cache_manager.allocate_slots(request, ...)     # ブロック割り当て
+  │   └─ None の場合 → プリエンプション実行
+  └─ （完了時）kv_cache_manager.free(request)           # ブロック解放
+</code></pre>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="../scheduler/summary.html">Scheduler</a></li>
+<li><a href="../engine-core/summary.html">EngineCore</a></li>
+<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+<li><a href="../../glossary.html">用語集: PagedAttention, KVCacheBlock, BlockPool</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../components/input-processor/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
 
-                            <a rel="next prefetch" href="architecture/data-flow.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/scheduler/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -191,8 +355,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../components/input-processor/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
 
-                    <a rel="next prefetch" href="architecture/data-flow.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/scheduler/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
@@ -212,17 +379,17 @@
         </script>
 
 
-        <script src="elasticlunr-ef4e11c1.min.js"></script>
-        <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
 
-        <script src="clipboard-1626706a.min.js"></script>
-        <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-eefea253.min.js"></script>
-        <script src="mermaid-init-ccf746f1.js"></script>
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
 
 
 

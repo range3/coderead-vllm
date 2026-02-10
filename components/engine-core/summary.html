@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>はじめに - コードリーディング: vLLM</title>
+        <title>EngineCore サマリー - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="favicon-8114d1fc.png">
-        <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
-        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-45f5642a.js";
+            window.path_to_searchindex_js = "../../searchindex-45f5642a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-45977929.js"></script>
+        <script src="../../toc-45977929.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -105,7 +105,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -140,7 +140,7 @@
                     <h1 class="menu-title">コードリーディング: vLLM</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
@@ -174,14 +174,181 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="はじめに"><a class="header" href="#はじめに">はじめに</a></h1>
+                        <h1 id="enginecore-サマリー"><a class="header" href="#enginecore-サマリー">EngineCore サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p><code>EngineCore</code>はバックエンドプロセス（<code>EngineCoreProc</code>）内で動作する推論ループの中央制御コンポーネントである。<code>Scheduler</code>、<code>ModelExecutor</code>、<code>KVCacheManager</code>を統括し、<code>step()</code>メソッドで <strong>schedule → execute → update</strong> のサイクルを繰り返す。フロントエンドプロセスとはZMQ IPC経由で通信し、<code>EngineCoreRequest</code>を受信して<code>EngineCoreOutputs</code>を返す。</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<pre class="mermaid">graph TD
+    subgraph EngineCoreプロセス
+        EC["EngineCore"]
+        Sched["Scheduler"]
+        KVM["KVCacheManager"]
+        Exec["ModelExecutor"]
+
+        EC --&gt;|"1. schedule()"| Sched
+        Sched --&gt;|"allocate_slots()"| KVM
+        Sched --&gt;|"SchedulerOutput"| EC
+        EC --&gt;|"2. execute_model()"| Exec
+        Exec --&gt;|"Future&lt;ModelRunnerOutput&gt;"| EC
+        EC --&gt;|"3. update_from_output()"| Sched
+        Sched --&gt;|"EngineCoreOutputs"| EC
+    end
+
+    ZMQ_IN["ZMQ ROUTER&lt;br&gt;(受信)"] --&gt;|"EngineCoreRequest"| EC
+    EC --&gt;|"EngineCoreOutputs"| ZMQ_OUT["ZMQ PUSH&lt;br&gt;(送信)"]
+</pre>
+
+<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>EngineCore</code></td><td>推論ループ本体</td><td><code>target/vllm/vllm/v1/engine/core.py:82</code></td></tr>
+<tr><td><code>EngineCoreProc</code></td><td>プロセスラッパー。ZMQソケット管理とイベントループ</td><td><code>target/vllm/vllm/v1/engine/core.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>__init__()</code></td><td>L82</td><td>Scheduler, ModelExecutor, KVキャッシュの初期化</td></tr>
+<tr><td><code>step()</code></td><td>L389</td><td>メインループ: schedule → execute → update</td></tr>
+<tr><td><code>step_with_batch_queue()</code></td><td>L434</td><td>パイプライン並列化版step（batch_queue使用）</td></tr>
+<tr><td><code>add_request()</code></td><td>L288</td><td>リクエストをバリデーション後Schedulerに登録</td></tr>
+<tr><td><code>post_step()</code></td><td>L424</td><td>step後処理（Speculative Decodingのドラフトトークン更新）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="step-サイクル"><a class="header" href="#step-サイクル">step() サイクル</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code></p>
+<pre><code>EngineCore.step() -&gt; tuple[dict[int, EngineCoreOutputs], bool]
+  │
+  ├─ スケジューラ停止チェック                           # L397
+  │   if _scheduler_paused: return {}, False
+  │
+  ├─ リクエスト有無チェック                             # L402
+  │   if not scheduler.has_requests(): return {}, False
+  │
+  ├─ 1. scheduler.schedule()                            # L404
+  │   → SchedulerOutput
+  │
+  ├─ 2. executor.execute_model(scheduler_output,        # L405
+  │       non_block=True)
+  │   → Future[ModelRunnerOutput | None]
+  │
+  ├─ 3. scheduler.get_grammar_bitmask(scheduler_output) # L406
+  │   → grammar_output（構造化出力用）
+  │
+  ├─ 4. future.result()                                 # L411
+  │   → ModelRunnerOutput（ブロッキング待機）
+  │
+  ├─ 5. if model_output is None:                        # L413
+  │       model_output = executor.sample_tokens(grammar_output)
+  │   （非同期スケジューリング時: execute_modelとsamplingが分離）
+  │
+  ├─ 6. _process_aborts_queue()                         # L417
+  │
+  └─ 7. scheduler.update_from_output(                   # L418
+  │       scheduler_output, model_output)
+  │   → dict[int, EngineCoreOutputs]
+  │
+  └─ return (engine_core_outputs,                       # L422
+             total_num_scheduled_tokens &gt; 0)
+</code></pre>
+<p><strong>戻り値</strong>:</p>
+<ul>
+<li>第1要素: クライアントインデックス → EngineCoreOutputs のマッピング</li>
+<li>第2要素: モデル実行が行われたか（<code>total_num_scheduled_tokens &gt; 0</code>）</li>
+</ul>
+<h2 id="add_request-フロー"><a class="header" href="#add_request-フロー">add_request() フロー</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:288</code></p>
+<pre><code>add_request(request, request_wave=0)                    # L288
+  ├─ request_id の型チェック（str必須）                   # L295
+  ├─ pooling_params のタスクバリデーション                # L300
+  ├─ kv_transfer_params の互換性チェック                  # L311
+  └─ scheduler.add_request(request)                      # L319
+</code></pre>
+<h2 id="batch_queue-パイプライン並列化-shallow"><a class="header" href="#batch_queue-パイプライン並列化-shallow">batch_queue パイプライン並列化 [SHALLOW]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:434</code> (step_with_batch_queue)</p>
+<p><code>max_concurrent_batches &gt; 1</code> の場合、<code>step_with_batch_queue()</code> が <code>step_fn</code> として使用される。スケジューリングとモデル実行をパイプライン的にオーバーラップさせ、GPUのアイドル時間を削減する。</p>
+<ul>
+<li><code>batch_queue</code>: <code>deque[tuple[Future, SchedulerOutput, Future]]</code></li>
+<li>新しいスケジュール結果を <code>appendleft()</code> で追加、完了待ちを <code>pop()</code> で取得</li>
+<li>前のバッチの実行完了を待たずに次のバッチをスケジュール可能</li>
+</ul>
+<h2 id="kvキャッシュ初期化フロー-shallow"><a class="header" href="#kvキャッシュ初期化フロー-shallow">KVキャッシュ初期化フロー [SHALLOW]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:82</code> (<strong>init</strong>)</p>
+<pre><code>EngineCore.__init__()
+  → _initialize_kv_caches()
+    → model_executor.get_kv_cache_specs()       # モデルのKVキャッシュ要件取得
+    → determine_available_memory()               # GPUメモリプロファイリング
+    → get_kv_cache_configs()                     # ブロック数等の設定算出
+    → generate_scheduler_kv_cache_config()       # Scheduler用設定生成
+    → model_executor.initialize_from_config()    # GPUメモリ確保
+</code></pre>
+<p>KV Connector（KV Transfer/LMCache連携）が有効な場合:</p>
+<ul>
+<li><code>scheduler.get_kv_connector()</code> でコネクタ有無を確認 (L159)</li>
+<li>各ワーカーのハンドシェイクメタデータを収集・統合 (L164-175)</li>
+</ul>
+<h2 id="async_scheduling-shallow"><a class="header" href="#async_scheduling-shallow">async_scheduling [SHALLOW]</a></h2>
+<p><code>vllm_config.scheduler_config.async_scheduling</code> で有効化。</p>
+<ul>
+<li>通常: <code>execute_model()</code> がモデル実行 + トークンサンプリングをまとめて実行</li>
+<li>async有効時: <code>execute_model()</code> はモデル実行のみ（<code>None</code> を返す）→ <code>sample_tokens()</code> で別途サンプリング</li>
+<li><code>post_step()</code> でのSpeculative Decodingドラフトトークン更新タイミングに影響</li>
+</ul>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>max_concurrent_batches</code></td><td>1</td><td>batch_queueサイズ（&gt;1でパイプライン並列化）</td></tr>
+<tr><td><code>async_scheduling</code></td><td>False</td><td>非同期スケジューリングモード</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
+<pre><code>[EngineCoreProc イベントループ]
+  ├─ ZMQ受信 → EngineCore.add_request()
+  ├─ EngineCore.step_fn()  (= step() or step_with_batch_queue())
+  │   ├─ Scheduler.schedule()
+  │   ├─ ModelExecutor.execute_model()
+  │   └─ Scheduler.update_from_output()
+  ├─ EngineCore.post_step()
+  └─ ZMQ送信 ← EngineCoreOutputs
+</code></pre>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="../scheduler/summary.html">Scheduler</a></li>
+<li><a href="../kv-cache-manager/summary.html">KVCacheManager</a></li>
+<li><a href="../engine-core-client/summary.html">EngineCoreClient</a></li>
+<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
+<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../architecture/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
 
-                            <a rel="next prefetch" href="architecture/data-flow.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -191,8 +358,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../architecture/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
 
-                    <a rel="next prefetch" href="architecture/data-flow.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
@@ -212,17 +382,17 @@
         </script>
 
 
-        <script src="elasticlunr-ef4e11c1.min.js"></script>
-        <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
 
-        <script src="clipboard-1626706a.min.js"></script>
-        <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-eefea253.min.js"></script>
-        <script src="mermaid-init-ccf746f1.js"></script>
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
 
 
 

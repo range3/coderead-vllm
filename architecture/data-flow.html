@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-adbc12ad.js";
+            window.path_to_searchindex_js = "../searchindex-45f5642a.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-db18f248.js"></script>
+        <script src="../toc-45977929.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -176,9 +176,9 @@
                     <main>
                         <h1 id="テキスト推論データフロー"><a class="header" href="#テキスト推論データフロー">テキスト推論データフロー</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-09</p>
+<strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
@@ -249,12 +249,57 @@
 </table>
 </div>
 <p><code>msgspec.Struct</code> を継承し、<code>array_like=True</code> + <code>omit_defaults=True</code> で効率的にmsgpackシリアライズされる。</p>
-<h3 id="scheduleroutput-todo"><a class="header" href="#scheduleroutput-todo">SchedulerOutput [TODO]</a></h3>
-<p>Scheduler → Executor の境界。スケジュール結果を含む。セッション2で詳細記述。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/output.py</code></p>
-<h3 id="modelrunneroutput-todo"><a class="header" href="#modelrunneroutput-todo">ModelRunnerOutput [TODO]</a></h3>
-<p>GPUModelRunner → EngineCore の境界。推論結果を含む。セッション3で詳細記述。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:160</code></p>
+<h3 id="scheduleroutput"><a class="header" href="#scheduleroutput">SchedulerOutput</a></h3>
+<p>Scheduler → Executor の境界。各ステップのスケジュール結果を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/output.py:184</code> (SchedulerOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>scheduled_new_reqs</code></td><td><code>list[NewRequestData]</code></td><td>初回スケジュールされたリクエスト（フルデータ）</td></tr>
+<tr><td><code>scheduled_cached_reqs</code></td><td><code>CachedRequestData</code></td><td>既スケジュール済みリクエスト（差分のみ）</td></tr>
+<tr><td><code>num_scheduled_tokens</code></td><td><code>dict[str, int]</code></td><td>リクエストごとのスケジュールトークン数</td></tr>
+<tr><td><code>total_num_scheduled_tokens</code></td><td><code>int</code></td><td>合計スケジュールトークン数</td></tr>
+<tr><td><code>scheduled_spec_decode_tokens</code></td><td><code>dict[str, list[int]]</code></td><td>Speculative Decoding用トークン</td></tr>
+<tr><td><code>scheduled_encoder_inputs</code></td><td><code>dict[str, list[int]]</code></td><td>エンコーダ入力インデックス（マルチモーダル）</td></tr>
+<tr><td><code>num_common_prefix_blocks</code></td><td><code>list[int]</code></td><td>共通プレフィックスブロック数（Cascade Attention用）</td></tr>
+<tr><td><code>finished_req_ids</code></td><td><code>set[str]</code></td><td>このステップで完了したリクエストID</td></tr>
+<tr><td><code>free_encoder_mm_hashes</code></td><td><code>list[str]</code></td><td>解放するエンコーダキャッシュのmm_hash</td></tr>
+<tr><td><code>preempted_req_ids</code></td><td><code>set[str] | None</code></td><td>プリエンプションされたリクエスト</td></tr>
+<tr><td><code>has_structured_output_requests</code></td><td><code>bool</code></td><td>構造化出力リクエストの有無</td></tr>
+<tr><td><code>pending_structured_output_tokens</code></td><td><code>bool</code></td><td>Grammar bitmask準備状態</td></tr>
+<tr><td><code>num_invalid_spec_tokens</code></td><td><code>dict[str, int] | None</code></td><td>無効スペキュレーショントークン数</td></tr>
+<tr><td><code>kv_connector_metadata</code></td><td><code>KVConnectorMetadata | None</code></td><td>KV Transfer メタデータ</td></tr>
+<tr><td><code>ec_connector_metadata</code></td><td><code>ECConnectorMetadata | None</code></td><td>EC Transfer メタデータ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>NewRequestData</strong> は初回スケジュール時のフルデータ（プロンプトトークン、サンプリングパラメータ、ブロックID等）を含む。<strong>CachedRequestData</strong> は既スケジュール済みリクエストの差分（新規ブロックID、新トークンID、計算済みトークン数の更新）のみを含み、プロセス間通信コストを最小化する。</p>
+<h3 id="modelrunneroutput"><a class="header" href="#modelrunneroutput">ModelRunnerOutput</a></h3>
+<p>GPUModelRunner → EngineCore の境界。モデル推論結果を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:160</code> (ModelRunnerOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>req_ids</code></td><td><code>list[str]</code></td><td>バッチ内のリクエストID一覧</td></tr>
+<tr><td><code>req_id_to_index</code></td><td><code>dict[str, int]</code></td><td>リクエストID → バッチインデックス</td></tr>
+<tr><td><code>sampled_token_ids</code></td><td><code>list[list[int]]</code></td><td>サンプリング済みトークンID [num_reqs, num_generated]</td></tr>
+<tr><td><code>logprobs</code></td><td><code>LogprobsLists | None</code></td><td>生成トークンの対数確率</td></tr>
+<tr><td><code>prompt_logprobs_dict</code></td><td><code>dict[str, LogprobsTensors | None]</code></td><td>プロンプトトークンの対数確率</td></tr>
+<tr><td><code>pooler_output</code></td><td><code>list[Tensor | None] | None</code></td><td>プーリング出力（埋め込みモデル用）</td></tr>
+<tr><td><code>kv_connector_output</code></td><td><code>KVConnectorOutput | None</code></td><td>KV Transfer出力</td></tr>
+<tr><td><code>ec_connector_output</code></td><td><code>ECConnectorOutput | None</code></td><td>EC Transfer出力</td></tr>
+<tr><td><code>num_nans_in_logits</code></td><td><code>dict[str, int] | None</code></td><td>logits内のNaN数</td></tr>
+<tr><td><code>cudagraph_stats</code></td><td><code>CUDAGraphStat | None</code></td><td>CUDAGraph実行統計</td></tr>
+</tbody>
+</table>
+</div>
+<p>Worker→Executorへの転送ではPythonリスト形式を使用し、torch.Tensorの高コストなシリアライゼーションを回避する。</p>
 <h3 id="enginecoreoutput"><a class="header" href="#enginecoreoutput">EngineCoreOutput</a></h3>
 <p>バックエンド → フロントエンドの境界。リクエスト単位の推論結果。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:130</code> (EngineCoreOutput)</p>
@@ -414,8 +459,131 @@
   ├─ sample_tokens()（非同期スケジューリング時）              # L413
   └─ scheduler.update_from_output() → EngineCoreOutputs      # L418
 </code></pre>
-<h2 id="コアループ-enginecorestep-todo"><a class="header" href="#コアループ-enginecorestep-todo">コアループ: EngineCore.step() [TODO]</a></h2>
-<p>セッション2で詳細記述。Scheduler、KVCacheManager、Executorの連携を追跡する。</p>
+<h2 id="コアループ-enginecorestep"><a class="header" href="#コアループ-enginecorestep">コアループ: EngineCore.step()</a></h2>
+<p>EngineCoreの<code>step()</code>メソッドは、各ステップで <strong>schedule → execute → update</strong> のサイクルを実行し、待機中のリクエストから生成トークンを生産する。</p>
+<h3 id="step-実行フロー"><a class="header" href="#step-実行フロー">step() 実行フロー</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code> (step)</p>
+<pre><code>EngineCore.step()                                            # L389
+  │
+  ├─ if _scheduler_paused: return {}, False                  # L397
+  ├─ if not scheduler.has_requests(): return {}, False       # L402
+  │
+  ├─ 1. scheduler_output = scheduler.schedule()              # L404
+  │      → SchedulerOutput
+  │      （RUNNINGリクエストの予算割当 → WAITINGリクエストの受け入れ
+  │        → KVキャッシュブロック確保 → SchedulerOutput構築）
+  │
+  ├─ 2. future = executor.execute_model(                     # L405
+  │         scheduler_output, non_block=True)
+  │      → Future[ModelRunnerOutput | None]
+  │      （非ブロッキング。ワーカープロセスで並行実行）
+  │
+  ├─ 3. grammar_output = scheduler.get_grammar_bitmask(      # L406
+  │         scheduler_output)
+  │      （構造化出力有効時のみ使用）
+  │
+  ├─ 4. model_output = future.result()                       # L411
+  │      → ModelRunnerOutput（ブロッキング待機）
+  │
+  ├─ 5. if model_output is None:                             # L413
+  │        model_output = executor.sample_tokens(grammar_output)
+  │      （非同期スケジューリング時: execute_modelとsamplingが分離）
+  │
+  ├─ 6. _process_aborts_queue()                              # L417
+  │
+  └─ 7. engine_core_outputs = scheduler.update_from_output(  # L418
+  │         scheduler_output, model_output)
+  │      → dict[int, EngineCoreOutputs]
+  │      （生成トークンの追加、完了判定、出力構築）
+  │
+  └─ return (engine_core_outputs,                            # L422
+             total_num_scheduled_tokens &gt; 0)
+</code></pre>
+<h3 id="scheduler-と-kvcachemanager-の相互作用"><a class="header" href="#scheduler-と-kvcachemanager-の相互作用">Scheduler と KVCacheManager の相互作用</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant EC as EngineCore
+    participant S as Scheduler
+    participant KV as KVCacheManager
+    participant Ex as Executor
+
+    EC-&gt;&gt;S: schedule()
+
+    Note over S: Phase 1: RUNNINGリクエスト処理
+    loop 各RUNNINGリクエスト
+        S-&gt;&gt;KV: allocate_slots(request, num_new_tokens)
+        KV--&gt;&gt;S: KVCacheBlocks or None
+        alt 割り当て失敗 (None)
+            S-&gt;&gt;KV: free(低優先度request)
+            Note over S: プリエンプション → 再試行
+        end
+    end
+
+    Note over S: Phase 2: WAITINGリクエスト受け入れ
+    loop 各WAITINGリクエスト
+        S-&gt;&gt;KV: get_computed_blocks(request)
+        KV--&gt;&gt;S: (cached_blocks, num_hits)
+        S-&gt;&gt;KV: allocate_slots(request, num_new_tokens, ...)
+        KV--&gt;&gt;S: KVCacheBlocks or None
+        alt 割り当て失敗 (None)
+            Note over S: break（ループ終了）
+        end
+    end
+
+    Note over S: Phase 3: SchedulerOutput構築
+    S--&gt;&gt;EC: SchedulerOutput
+
+    EC-&gt;&gt;Ex: execute_model(scheduler_output)
+    Ex--&gt;&gt;EC: Future[ModelRunnerOutput]
+    EC-&gt;&gt;EC: future.result()（待機）
+
+    EC-&gt;&gt;S: update_from_output(scheduler_output, model_output)
+    Note over S: トークン追加、完了判定
+    S--&gt;&gt;EC: dict[int, EngineCoreOutputs]
+</pre>
+
+<h3 id="schedulerschedule-の3フェーズ"><a class="header" href="#schedulerschedule-の3フェーズ">Scheduler.schedule() の3フェーズ</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:321</code> (schedule)</p>
+<p><code>schedule()</code> は Unified Compute Model を採用し、Prefill/Decodeを区別せず <code>num_computed_tokens</code> の進捗で統一的にトークンを割り当てる。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フェーズ</th><th>行</th><th>対象</th><th>処理</th></tr>
+</thead>
+<tbody>
+<tr><td>Phase 1</td><td>L350-517</td><td>RUNNINGリクエスト</td><td>トークン予算割当。ブロック不足時はプリエンプション</td></tr>
+<tr><td>Phase 2</td><td>L532-800</td><td>WAITINGリクエスト</td><td>新規受け入れ。プレフィックスキャッシュ検索 + ブロック割当</td></tr>
+<tr><td>Phase 3</td><td>L827-896</td><td>出力構築</td><td>NewRequestData + CachedRequestData → SchedulerOutput</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>トークン予算</strong>: <code>token_budget = max_num_scheduled_tokens</code>（ステップあたり上限）で、各リクエストのスケジュール時に消費される。</p>
+<p>詳細は <a href="../components/scheduler/summary.html">Scheduler サマリー</a> を参照。</p>
+<h3 id="kvcachemanager-のブロック割り当て"><a class="header" href="#kvcachemanager-のブロック割り当て">KVCacheManager のブロック割り当て</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:206</code> (allocate_slots)</p>
+<p><code>allocate_slots()</code> は以下のブロック配置に基づいてGPUメモリブロックを確保する:</p>
+<pre><code>|  comp  | new_comp | ext_comp |   new   | lookahead |
+|&lt;------ 既計算トークン ------&gt;|&lt;-- 新規計算対象 --&gt;|
+                               |&lt;- 割り当て対象 -&gt;|
+</code></pre>
+<ul>
+<li>成功時: <code>KVCacheBlocks</code>（割り当てたブロック情報）を返す</li>
+<li>失敗時: <code>None</code> を返す → Schedulerがプリエンプション（RUNNING）またはスキップ（WAITING）</li>
+</ul>
+<p>プレフィックスキャッシュ検索は <code>get_computed_blocks()</code> で行い、過去に計算済みのブロックを再利用する。</p>
+<p>詳細は <a href="../components/kv-cache-manager/summary.html">KVCacheManager サマリー</a> を参照。</p>
+<h3 id="update_from_output--enginecoreoutputs"><a class="header" href="#update_from_output--enginecoreoutputs">update_from_output() → EngineCoreOutputs</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1241</code> (update_from_output)</p>
+<p><code>ModelRunnerOutput</code>を受けてSchedulerの状態を更新し、クライアントに返す<code>EngineCoreOutputs</code>を構築する。</p>
+<pre><code>update_from_output(scheduler_output, model_runner_output)
+  for each scheduled request:
+    ├─ Speculative Decodingリジェクション処理
+    │   → 不採用分の num_computed_tokens 巻き戻し
+    ├─ 生成トークンをリクエストに追加
+    ├─ 完了判定（EOS、max_tokens、stop_token）
+    │   → 完了時: kv_cache_manager.free(request) でブロック解放
+    └─ EngineCoreOutput 構築（request_id, new_token_ids, finish_reason, ...）
+  → dict[int, EngineCoreOutputs]（クライアントインデックス別）
+</code></pre>
 <h2 id="下流パス-modelrunneroutput--ユーザー応答-todo"><a class="header" href="#下流パス-modelrunneroutput--ユーザー応答-todo">下流パス: ModelRunnerOutput → ユーザー応答 [TODO]</a></h2>
 <p>セッション3で詳細記述。GPUModelRunner、OutputProcessor、Detokenizerの処理を追跡する。</p>
 <h2 id="prefill-vs-decode-todo"><a class="header" href="#prefill-vs-decode-todo">Prefill vs Decode [TODO]</a></h2>
@@ -448,8 +616,12 @@
 <tr><td><code>target/vllm/vllm/v1/engine/__init__.py</code></td><td><code>EngineCoreRequest</code> (L55), <code>EngineCoreOutput</code> (L130), <code>EngineCoreOutputs</code> (L176)</td><td>境界データ構造</td></tr>
 <tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td><code>EngineCoreClient</code> (L63), <code>MPClient</code> (L442), <code>AsyncMPClient</code> (L822)</td><td>ZMQ IPC通信</td></tr>
 <tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td><code>EngineCore.add_request()</code> (L288), <code>step()</code> (L389)</td><td>推論ループ本体</td></tr>
-<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>Scheduler.schedule()</code> (L321)</td><td>スケジューリング</td></tr>
-<tr><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code></td><td><code>KVCacheManager.allocate_slots()</code> (L206)</td><td>KVキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>Scheduler.schedule()</code> (L321), <code>update_from_output()</code> (L1241)</td><td>スケジューリング</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/output.py</code></td><td><code>SchedulerOutput</code> (L184), <code>NewRequestData</code> (L34), <code>CachedRequestData</code> (L114)</td><td>スケジュール出力データ構造</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code></td><td><code>KVCacheManager.allocate_slots()</code> (L206), <code>get_computed_blocks()</code> (L164)</td><td>KVキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td><td><code>BlockPool</code> (L128)</td><td>物理ブロック管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/request.py</code></td><td><code>Request</code></td><td>リクエスト内部状態</td></tr>
+<tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160)</td><td>モデル推論出力</td></tr>
 <tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> (ABC)</td><td>実行層抽象</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker.execute_model()</code> (L604)</td><td>GPU Worker</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner.execute_model()</code> (L3312)</td><td>モデル実行</td></tr>
