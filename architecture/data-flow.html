@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-45f5642a.js";
+            window.path_to_searchindex_js = "../searchindex-9f7dca1f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-45977929.js"></script>
+        <script src="../toc-e9f58a38.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,7 @@
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-11 (セッション3で下流パス追加)</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
@@ -319,8 +319,50 @@
 </div>
 <p><code>EngineCoreOutputs</code>（複数形）がこれを<code>list[EngineCoreOutput]</code>としてバッチ化し、<code>scheduler_stats</code>やタイムスタンプと共にZMQ経由で送信される。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:176</code> (EngineCoreOutputs)</p>
-<h3 id="requestoutput-todo"><a class="header" href="#requestoutput-todo">RequestOutput [TODO]</a></h3>
-<p>OutputProcessor → API の境界。ユーザーに返却される最終出力。セッション3で詳細記述。</p>
+<h3 id="requestoutput"><a class="header" href="#requestoutput">RequestOutput</a></h3>
+<p>OutputProcessor → API の境界。ユーザーに返却される最終出力。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/outputs.py:86</code> (RequestOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>外部リクエストID（クライアントが指定したID）</td></tr>
+<tr><td><code>prompt</code></td><td><code>str | None</code></td><td>元のプロンプト文字列</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>トークナイズ済みプロンプト</td></tr>
+<tr><td><code>prompt_logprobs</code></td><td><code>PromptLogprobs | None</code></td><td>プロンプトトークンの対数確率</td></tr>
+<tr><td><code>outputs</code></td><td><code>list[CompletionOutput]</code></td><td>サンプルごとの出力（n&gt;1で複数）</td></tr>
+<tr><td><code>finished</code></td><td><code>bool</code></td><td>リクエスト完了フラグ</td></tr>
+<tr><td><code>metrics</code></td><td><code>RequestStateStats | None</code></td><td>レイテンシ等の統計情報</td></tr>
+<tr><td><code>num_cached_tokens</code></td><td><code>int | None</code></td><td>プレフィックスキャッシュヒット数</td></tr>
+<tr><td><code>kv_transfer_params</code></td><td><code>dict[str, Any] | None</code></td><td>KV Transfer情報（完了時）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>CompletionOutput</strong> (<code>target/vllm/vllm/outputs.py:23</code>) は各サンプルの出力を表す:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>index</code></td><td><code>int</code></td><td>サンプルインデックス</td></tr>
+<tr><td><code>text</code></td><td><code>str</code></td><td>デトークナイズ済みテキスト</td></tr>
+<tr><td><code>token_ids</code></td><td><code>GenericSequence[int]</code></td><td>生成トークンID列</td></tr>
+<tr><td><code>cumulative_logprob</code></td><td><code>float | None</code></td><td>累積対数確率</td></tr>
+<tr><td><code>logprobs</code></td><td><code>SampleLogprobs | None</code></td><td>各トークンのlogprobs</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>str | None</code></td><td>完了理由（“stop” / “length”）</td></tr>
+<tr><td><code>stop_reason</code></td><td><code>int | str | None</code></td><td>停止トークン/文字列</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>出力モード</strong>（<code>RequestOutputKind</code>、<code>target/vllm/vllm/sampling_params.py:108</code>）:</p>
+<ul>
+<li><code>CUMULATIVE</code>: 毎回全出力を返す（デフォルト）</li>
+<li><code>DELTA</code>: 差分のみ返す（ストリーミング向け）</li>
+<li><code>FINAL_ONLY</code>: 完了時のみ返す</li>
+</ul>
 <h2 id="上流パス-リクエスト受信--enginecore"><a class="header" href="#上流パス-リクエスト受信--enginecore">上流パス: リクエスト受信 → EngineCore</a></h2>
 <h3 id="エントリポイント-llm--asyncllm"><a class="header" href="#エントリポイント-llm--asyncllm">エントリポイント (LLM / AsyncLLM)</a></h3>
 <p>vLLMには同期パス（<code>LLM</code>）と非同期パス（<code>AsyncLLM</code>）の2つのエントリポイントがある。内部的にはどちらも<code>InputProcessor</code>と<code>EngineCoreClient</code>を使用する。</p>
@@ -584,22 +626,157 @@
     └─ EngineCoreOutput 構築（request_id, new_token_ids, finish_reason, ...）
   → dict[int, EngineCoreOutputs]（クライアントインデックス別）
 </code></pre>
-<h2 id="下流パス-modelrunneroutput--ユーザー応答-todo"><a class="header" href="#下流パス-modelrunneroutput--ユーザー応答-todo">下流パス: ModelRunnerOutput → ユーザー応答 [TODO]</a></h2>
-<p>セッション3で詳細記述。GPUModelRunner、OutputProcessor、Detokenizerの処理を追跡する。</p>
-<h2 id="prefill-vs-decode-todo"><a class="header" href="#prefill-vs-decode-todo">Prefill vs Decode [TODO]</a></h2>
-<p>セッション3で記述。同一フロー内でのPrefill/Decodeフェーズの違いを整理する。</p>
-<h2 id="コンポーネント優先度暫定"><a class="header" href="#コンポーネント優先度暫定">コンポーネント優先度（暫定）</a></h2>
-<p>Phase 2での深堀り順序。セッション3で確定する。</p>
+<h2 id="下流パス-実行--ユーザー応答"><a class="header" href="#下流パス-実行--ユーザー応答">下流パス: 実行 → ユーザー応答</a></h2>
+<h3 id="実行層-executor--worker--gpumodelrunner"><a class="header" href="#実行層-executor--worker--gpumodelrunner">実行層: Executor → Worker → GPUModelRunner</a></h3>
+<p>EngineCore.step()は<code>executor.execute_model()</code>を<strong>非ブロッキング</strong>で呼び出し、GPUでの推論実行を開始する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:202</code> (execute_model)</p>
+<h4 id="collective_rpc-パターン"><a class="header" href="#collective_rpc-パターン">collective_rpc パターン</a></h4>
+<p>Executorは<code>collective_rpc()</code>パターンで全Workerに同一メソッドを実行させ、出力ランクのWorkerの結果のみを返す。</p>
+<pre><code>EngineCore.step()
+  │
+  ├─ executor.execute_model(scheduler_output, non_block=True)
+  │   └─ collective_rpc("execute_model", args=(scheduler_output,))
+  │       └─ Worker.execute_model(scheduler_output)                # L604
+  │           └─ model_runner.execute_model(scheduler_output)      # L652
+  │               → ExecuteModelState を内部保存、None を返す
+  │
+  ├─ grammar_output = scheduler.get_grammar_bitmask(...)           # 並行処理
+  │
+  ├─ future.result()  → None                                       # 待機
+  │
+  └─ executor.sample_tokens(grammar_output)                         # L222
+      └─ collective_rpc("sample_tokens", args=(grammar_output,))
+          └─ Worker.sample_tokens(grammar_output)                  # L598
+              └─ model_runner.sample_tokens(grammar_output)        # L3621
+                  → ModelRunnerOutput を返す
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:604</code> (Worker.execute_model)</p>
+<h4 id="gpumodelrunner-の2フェーズ実行"><a class="header" href="#gpumodelrunner-の2フェーズ実行">GPUModelRunner の2フェーズ実行</a></h4>
+<p>GPUModelRunnerは <code>execute_model()</code> と <code>sample_tokens()</code> を分離する<strong>2フェーズ実行パターン</strong>を採用する。これにより、モデルフォワード中にgrammar bitmask計算を並行実行できる。</p>
+<p><strong>Phase 1: execute_model()</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code>)</p>
+<pre><code>execute_model(scheduler_output)
+  ├─ _update_states(scheduler_output)          # バッチ状態更新
+  ├─ _prepare_inputs(scheduler_output)         # 入力ID・位置計算
+  ├─ _build_attention_metadata(...)            # Attention メタデータ構築
+  ├─ _model_forward(...)                       # model.forward() 実行
+  │   → hidden_states
+  ├─ compute_logits(hidden_states)             # logits 計算
+  │   → logits
+  └─ ExecuteModelState に保存 → None を返す
+</code></pre>
+<p><strong>Phase 2: sample_tokens()</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3621</code>)</p>
+<pre><code>sample_tokens(grammar_output)
+  ├─ ExecuteModelState を復元
+  ├─ grammar bitmask 適用（構造化出力時）
+  ├─ _sample(logits) → SamplerOutput
+  ├─ バッチ状態更新（生成トークン反映）
+  └─ ModelRunnerOutput を構築して返す
+</code></pre>
+<p><strong>ExecuteModelState</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code>) はGPUテンソル（logits, hidden_states等）を保持するNamedTupleで、2フェーズ間の一時状態転送に使用される。</p>
+<h3 id="出力処理-enginecoreoutput--requestoutput"><a class="header" href="#出力処理-enginecoreoutput--requestoutput">出力処理: EngineCoreOutput → RequestOutput</a></h3>
+<p>ModelRunnerOutputはバックエンドプロセス（EngineCore）で<code>EngineCoreOutput</code>に変換され、ZMQ経由でフロントエンドプロセスの<code>OutputProcessor</code>に送られてデトークナイズされる。</p>
+<pre class="mermaid">sequenceDiagram
+    participant MR as GPUModelRunner
+    participant S as Scheduler
+    participant EC as EngineCore
+    participant ZMQ as ZMQ IPC
+    participant OP as OutputProcessor
+    participant Client as API Client
+
+    MR-&gt;&gt;EC: ModelRunnerOutput
+    EC-&gt;&gt;S: update_from_output()
+    Note over S: トークン追加、完了判定&lt;br&gt;KVキャッシュ解放
+    S-&gt;&gt;EC: dict[int, EngineCoreOutputs]
+
+    EC-&gt;&gt;ZMQ: msgpack シリアライズ
+    ZMQ-&gt;&gt;OP: EngineCoreOutputs
+
+    Note over OP: デトークナイズ&lt;br&gt;停止文字列判定&lt;br&gt;logprobs処理
+    OP-&gt;&gt;Client: RequestOutput (yield)
+</pre>
+
+<h4 id="outputprocessorprocess_outputs"><a class="header" href="#outputprocessorprocess_outputs">OutputProcessor.process_outputs()</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
+<p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、<code>EngineCoreOutput</code>をユーザー向け<code>RequestOutput</code>に変換する。</p>
+<pre><code>OutputProcessor.process_outputs(engine_core_outputs)       # L582
+  for each engine_core_output:
+    ├─ req_state = request_states[req_id]                  # RequestState取得
+    │
+    ├─ detokenizer.update(new_token_ids, stop_terminated)  # L637
+    │   ├─ トークン→テキスト変換（インクリメンタル）
+    │   └─ 停止文字列チェック → stop_string or None
+    │
+    ├─ logprobs_processor.update_from_output(output)       # L646
+    │
+    ├─ req_state.make_request_output(...)                   # L649
+    │   ├─ _new_completion_output(token_ids, finish_reason, ...)
+    │   │   ├─ detokenizer.get_next_output_text(finished, delta)
+    │   │   └─ CompletionOutput(text, token_ids, logprobs, ...)
+    │   └─ RequestOutput(request_id, outputs, finished, ...)
+    │
+    └─ req_state.queue.put(request_output)                 # L661
+        → AsyncLLM.generate() が yield
+</code></pre>
+<h4 id="detokenizerインクリメンタルデトークナイズ"><a class="header" href="#detokenizerインクリメンタルデトークナイズ">Detokenizer（インクリメンタルデトークナイズ）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/detokenizer.py:30</code> (IncrementalDetokenizer)</p>
+<p>トークンからテキストへの変換はインクリメンタルに行われ、ストリーミング出力を実現する。</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>優先度</th><th>コンポーネント</th><th>理由</th></tr>
+<tr><th>クラス</th><th>条件</th><th>方式</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>S</strong></td><td>KVCacheManager</td><td>ユーザー関心1位（メモリ管理/KVキャッシュ）</td></tr>
-<tr><td><strong>A</strong></td><td>Scheduler</td><td>KVCacheManagerと密連携、推論パイプライン全体を制御</td></tr>
-<tr><td><strong>B</strong></td><td>EngineCore, AsyncLLM, GPUModelRunner</td><td>フロー理解に重要</td></tr>
-<tr><td><strong>C</strong></td><td>InputProcessor, EngineCoreClient, Executor, Worker, OutputProcessor</td><td>薄いレイヤーまたは通信層</td></tr>
+<tr><td><code>FastIncrementalDetokenizer</code></td><td><code>PreTrainedTokenizerFast</code> 使用時</td><td>HF tokenizersの<code>DecodeStream</code>で高速変換</td></tr>
+<tr><td><code>SlowIncrementalDetokenizer</code></td><td>その他のトークナイザ</td><td><code>detokenize_incrementally()</code>でPython変換</td></tr>
+<tr><td><code>IncrementalDetokenizer</code></td><td>トークナイザなし</td><td>No-op（テキスト出力なし）</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>update()</code>メソッドで各トークンをインクリメンタルにデコードし、同時に<code>check_stop_strings()</code>で停止文字列を検出する（<code>target/vllm/vllm/v1/engine/detokenizer.py:316</code>）。</p>
+<h2 id="prefill-vs-decode"><a class="header" href="#prefill-vs-decode">Prefill vs Decode</a></h2>
+<p>vLLM v1は<strong>Unified Compute Model</strong>を採用し、PrefillとDecodeを明示的に区別しない。両者は<code>num_computed_tokens</code>の進捗によって暗黙的に区分される。</p>
+<h3 id="統一管理の仕組み"><a class="header" href="#統一管理の仕組み">統一管理の仕組み</a></h3>
+<p>各リクエストは<code>num_computed_tokens</code>フィールドで計算済みトークン数を追跡する:</p>
+<pre><code>プロンプト: [A, B, C, D, E]    (len=5)
+num_computed_tokens: 0 → 5 → 6 → 7 → ...
+
+Prefillフェーズ: num_computed_tokens &lt; len(prompt_token_ids)
+  → 複数トークンを一度に計算（チャンクプリフィル可能）
+
+Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
+  → 1トークンずつ生成
+</code></pre>
+<h3 id="schedulerでの扱い"><a class="header" href="#schedulerでの扱い">Schedulerでの扱い</a></h3>
+<p>Scheduler.schedule()はPrefill/Decodeを区別せず、トークン予算の範囲内で各リクエストに計算トークン数を割り当てる:</p>
+<ul>
+<li><strong>新規リクエスト（WAITING→RUNNING）</strong>: <code>num_tokens = len(prompt_token_ids) - num_computed_tokens</code>（プレフィックスキャッシュヒット分を差し引き）</li>
+<li><strong>継続リクエスト（RUNNING）</strong>: <code>num_tokens = 1</code>（Decode 1トークン）</li>
+<li>予算不足時は部分的なPrefill（チャンクプリフィル）も可能</li>
+</ul>
+<h3 id="gpumodelrunner内での違い"><a class="header" href="#gpumodelrunner内での違い">GPUModelRunner内での違い</a></h3>
+<p>GPUModelRunner.execute_model()は入力準備の段階で暗黙的にPrefill/Decodeを処理する:</p>
+<ul>
+<li><strong>_prepare_inputs()</strong>: <code>num_scheduled_tokens</code>に基づいて入力トークンと位置を計算。Prefillなら複数トークン、Decodeなら1トークン</li>
+<li><strong>_build_attention_metadata()</strong>: Prefillはフルattention、Decodeはキャッシュ済みKVに対するattentionのメタデータを構築</li>
+<li><strong>モデルフォワード</strong>: 入力テンソルのサイズが異なるだけで、同一のforward()を実行</li>
+</ul>
+<p>この統一モデルにより、同一バッチ内にPrefillリクエストとDecodeリクエストを混在させるContinuous Batchingが自然に実現される。</p>
+<h2 id="コンポーネント優先度確定"><a class="header" href="#コンポーネント優先度確定">コンポーネント優先度（確定）</a></h2>
+<p>Phase 2での深堀り順序。ユーザー関心領域とフロー上の重要度に基づく。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>優先度</th><th>コンポーネント</th><th>理由</th><th>現在の深度</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>S</strong></td><td>KVCacheManager</td><td>ユーザー関心1位（メモリ管理/KVキャッシュ）。PagedAttention、ブロック管理、Eviction</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>A</strong></td><td>Scheduler</td><td>KVCacheManagerと密連携、推論パイプライン全体を制御。Continuous Batching</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>A</strong></td><td>GPUModelRunner</td><td>推論実行の中核。6277行の巨大クラス。将来のプラグイン開発に重要</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>B</strong></td><td>EngineCore</td><td>step()サイクル、batch_queueパイプライン。全体の統合ポイント</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>B</strong></td><td>OutputProcessor</td><td>デトークナイズ、停止判定。ストリーミング出力の仕組み</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>AsyncLLM, InputProcessor</td><td>エントリポイント。薄いレイヤー</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>Executor, Worker</td><td>委譲パターン。分散推論時のみ詳細が必要</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>EngineCoreClient</td><td>ZMQ IPC通信層。プロトコルは把握済み</td><td>[SHALLOW]</td></tr>
 </tbody>
 </table>
 </div>
@@ -622,10 +799,15 @@
 <tr><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td><td><code>BlockPool</code> (L128)</td><td>物理ブロック管理</td></tr>
 <tr><td><code>target/vllm/vllm/v1/request.py</code></td><td><code>Request</code></td><td>リクエスト内部状態</td></tr>
 <tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160)</td><td>モデル推論出力</td></tr>
-<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> (ABC)</td><td>実行層抽象</td></tr>
-<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker.execute_model()</code> (L604)</td><td>GPU Worker</td></tr>
-<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner.execute_model()</code> (L3312)</td><td>モデル実行</td></tr>
-<tr><td><code>target/vllm/vllm/v1/engine/output_processor.py</code></td><td><code>OutputProcessor.process_outputs()</code></td><td>出力処理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> (ABC), <code>execute_model()</code> (L202), <code>collective_rpc()</code> (L180)</td><td>実行層抽象</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> (L26)</td><td>単一プロセス実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93)</td><td>マルチプロセス実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker.execute_model()</code> (L604), <code>sample_tokens()</code> (L598)</td><td>GPU Worker</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner.execute_model()</code> (L3312), <code>sample_tokens()</code> (L3621), <code>ExecuteModelState</code> (L313)</td><td>モデル実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/output_processor.py</code></td><td><code>OutputProcessor.process_outputs()</code> (L582), <code>RequestState.make_request_output()</code> (L269)</td><td>出力処理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/detokenizer.py</code></td><td><code>IncrementalDetokenizer</code> (L30), <code>FastIncrementalDetokenizer</code> (L169), <code>check_stop_strings()</code> (L316)</td><td>デトークナイズ</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/logprobs.py</code></td><td><code>LogprobsProcessor</code> (L28)</td><td>logprobs処理</td></tr>
+<tr><td><code>target/vllm/vllm/outputs.py</code></td><td><code>RequestOutput</code> (L86), <code>CompletionOutput</code> (L23)</td><td>最終出力データ構造</td></tr>
 </tbody>
 </table>
 </div>

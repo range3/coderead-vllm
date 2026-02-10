@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-45f5642a.js";
+            window.path_to_searchindex_js = "searchindex-9f7dca1f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-45977929.js"></script>
+        <script src="toc-e9f58a38.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -228,6 +228,21 @@
 <h3 id="unified-compute-model"><a class="header" href="#unified-compute-model">Unified Compute Model</a></h3>
 <p>vLLM v1のSchedulerが採用するスケジューリングアプローチ。PrefillフェーズとDecodeフェーズを明示的に区別せず、各リクエストの<code>num_computed_tokens</code>（計算済みトークン数）が目標に追いつくまでトークンを割り当てる。これにより、Chunked Prefill、Prefix Caching、Speculative Decodingを統一的に扱える。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:322</code> (コメント)</p>
+<h3 id="collective_rpc"><a class="header" href="#collective_rpc">collective_rpc</a></h3>
+<p>Executor層が全Workerに対して同一メソッドを実行するRPCパターン。メソッド名（文字列）または関数を受け取り、全Workerで並列実行後、出力ランクのWorkerの結果を返す。<code>non_block=True</code>でFuture返却も可能。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:180</code> (<code>collective_rpc</code>)</p>
+<h3 id="executemodelstate"><a class="header" href="#executemodelstate">ExecuteModelState</a></h3>
+<p>GPUModelRunnerの2フェーズ実行パターンで使用される一時状態。execute_model()がlogitsやhidden_statesなどのGPUテンソルを保存し、sample_tokens()が復元してサンプリングを行う。NamedTuple。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code> (<code>ExecuteModelState</code>)</p>
+<h3 id="outputprocessor"><a class="header" href="#outputprocessor">OutputProcessor</a></h3>
+<p>フロントエンドプロセスで動作し、EngineCoreOutputをRequestOutputに変換するコンポーネント。インクリメンタルデトークナイズ、停止文字列判定、logprobs処理を行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:73</code> (<code>OutputProcessor</code>)</p>
+<h3 id="incrementaldetokenizer"><a class="header" href="#incrementaldetokenizer">IncrementalDetokenizer</a></h3>
+<p>トークンIDからテキストへのインクリメンタル変換を行うクラス。FastIncrementalDetokenizer（HF DecodeStream）とSlowIncrementalDetokenizer（Python実装）の2種がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/detokenizer.py:30</code> (<code>IncrementalDetokenizer</code>)</p>
+<h3 id="requestoutputkind"><a class="header" href="#requestoutputkind">RequestOutputKind</a></h3>
+<p>出力モードを定義するEnum。CUMULATIVE（毎回全出力）、DELTA（差分のみ、ストリーミング向け）、FINAL_ONLY（完了時のみ）の3値。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/sampling_params.py:108</code> (<code>RequestOutputKind</code>)</p>
 <h3 id="mm_cache-マルチモーダルキャッシュ"><a class="header" href="#mm_cache-マルチモーダルキャッシュ">mm_cache (マルチモーダルキャッシュ)</a></h3>
 <p>マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py</code></p>

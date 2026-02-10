@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>ファイル索引 - コードリーディング: vLLM</title>
+        <title>GPUModelRunner - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -12,33 +12,33 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
-        <link rel="stylesheet" href="../css/variables-8adf115d.css">
-        <link rel="stylesheet" href="../css/general-2459343d.css">
-        <link rel="stylesheet" href="../css/chrome-ae938929.css">
-        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-9f7dca1f.js";
+            window.path_to_searchindex_js = "../../searchindex-9f7dca1f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-e9f58a38.js"></script>
+        <script src="../../toc-e9f58a38.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -105,7 +105,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -140,7 +140,7 @@
                     <h1 class="menu-title">コードリーディング: vLLM</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
@@ -174,16 +174,185 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="ファイル索引"><a class="header" href="#ファイル索引">ファイル索引</a></h1>
+                        <h1 id="gpumodelrunner"><a class="header" href="#gpumodelrunner">GPUModelRunner</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p>GPUModelRunnerは、推論パイプラインの実行中核を担う巨大クラス（約6,300行）である。SchedulerOutputを受け取り、入力テンソルの準備、モデルのforward実行、サンプリングを経て、ModelRunnerOutputを返す。<strong>2フェーズ実行パターン</strong>（<code>execute_model()</code> → <code>sample_tokens()</code>）を採用し、モデルフォワードとgrammar bitmask計算の並行実行を可能にしている。</p>
+<h2 id="クラス定義"><a class="header" href="#クラス定義">クラス定義</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:329</code> (GPUModelRunner)</p>
+<pre><code class="language-python">class GPUModelRunner(
+    LoRAModelRunnerMixin,           # LoRAアダプタ管理
+    KVConnectorModelRunnerMixin,    # KV Transfer対応
+    ECConnectorModelRunnerMixin,    # エンコーダキャッシュ対応
+):
+</code></pre>
+<h2 id="2フェーズ実行パターン"><a class="header" href="#2フェーズ実行パターン">2フェーズ実行パターン</a></h2>
+<p>GPUModelRunnerの中核設計。<code>execute_model()</code>でモデルフォワードとlogits計算を行い、結果を<code>ExecuteModelState</code>に保存して<code>None</code>を返す。その後<code>sample_tokens()</code>が状態を復元してサンプリングを実行する。</p>
+<pre class="mermaid">sequenceDiagram
+    participant EC as EngineCore
+    participant MR as GPUModelRunner
+
+    EC-&gt;&gt;MR: execute_model(scheduler_output)
+    Note over MR: 入力準備 → モデルフォワード&lt;br&gt;→ logits計算 → 状態保存
+    MR--&gt;&gt;EC: None
+
+    Note over EC: grammar bitmask 計算&lt;br&gt;（並行処理）
+
+    EC-&gt;&gt;MR: sample_tokens(grammar_output)
+    Note over MR: 状態復元 → grammar適用&lt;br&gt;→ サンプリング → 出力構築
+    MR--&gt;&gt;EC: ModelRunnerOutput
+</pre>
+
+<h3 id="phase-1-execute_model"><a class="header" href="#phase-1-execute_model">Phase 1: execute_model()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code> (execute_model)</p>
+<pre><code>execute_model(scheduler_output, intermediate_tensors=None)
+  │
+  ├─ 早期リターン判定                                      # L3335-3367
+  │   スケジュールトークン0件 → EMPTY_MODEL_RUNNER_OUTPUT
+  │
+  ├─ 1. バッチ状態更新                                     # L3376
+  │   _update_states(scheduler_output)
+  │   → 新規リクエスト登録、キャッシュ済みリクエスト更新
+  │
+  ├─ 2. 入力準備                                           # L3389
+  │   _prepare_inputs(scheduler_output)
+  │   → input_ids, positions, logits_indices 計算
+  │
+  ├─ 3. Attentionメタデータ構築                             # L3400
+  │   _build_attention_metadata(scheduler_output, ...)
+  │
+  ├─ 4. 前処理                                             # L3440-3504
+  │   slot_mapping取得、入力トークン/位置/埋め込み準備
+  │
+  ├─ 5. モデルフォワード                                    # L3521-3603
+  │   _model_forward(...)
+  │   → hidden_states = model.forward(input_ids, positions, ...)
+  │   → logits = compute_logits(hidden_states)
+  │
+  └─ 6. 状態保存                                            # L3605-3615
+      ExecuteModelState(scheduler_output, logits, ...)
+      → self.execute_model_state に保存
+      → None を返す
+</code></pre>
+<p><strong>戻り値のパターン</strong>:</p>
+<ul>
+<li><code>None</code> — 通常ケース（sample_tokens()を後で呼ぶ）</li>
+<li><code>ModelRunnerOutput</code> — プーリングモデル等（サンプリング不要）</li>
+<li><code>IntermediateTensors</code> — Pipeline Parallelismの中間ランク</li>
+<li><code>EMPTY_MODEL_RUNNER_OUTPUT</code> — スケジュールトークン0件</li>
+</ul>
+<h3 id="phase-2-sample_tokens"><a class="header" href="#phase-2-sample_tokens">Phase 2: sample_tokens()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3621</code> (sample_tokens)</p>
+<pre><code>sample_tokens(grammar_output)
+  │
+  ├─ 1. 状態復元                                            # L3643-3657
+  │   ExecuteModelState から logits, scheduler_output 等を復元
+  │   self.execute_model_state = None（クリア）
+  │
+  ├─ 2. Grammar制約適用                                     # L3659-3663
+  │   grammar bitmask を logits に適用（構造化出力時）
+  │
+  ├─ 3. サンプリング                                        # L3665-3666
+  │   _sample(logits, spec_decode_metadata) → SamplerOutput
+  │
+  ├─ 4. 後処理                                             # L3668-3699
+  │   バッチ状態に生成トークンを反映
+  │   PP時のトークンブロードキャスト
+  │   Speculative Decodingのドラフトトークン提案
+  │
+  └─ 5. ModelRunnerOutput構築                               # L3775-3787
+      ModelRunnerOutput(
+        req_ids, req_id_to_index,
+        sampled_token_ids,    # list[list[int]]
+        logprobs,             # numpy配列
+        prompt_logprobs_dict, # torch.Tensor
+        kv_connector_output, ...
+      )
+</code></pre>
+<h2 id="executemodelstate"><a class="header" href="#executemodelstate">ExecuteModelState</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code> (ExecuteModelState)</p>
+<p>2フェーズ間の一時状態を保持するNamedTuple。GPUテンソルを含むため、シリアライズはされない。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>scheduler_output</code></td><td><code>SchedulerOutput</code></td><td>スケジュール結果</td></tr>
+<tr><td><code>logits</code></td><td><code>torch.Tensor</code></td><td>モデル出力logits</td></tr>
+<tr><td><code>spec_decode_metadata</code></td><td><code>SpecDecodeMetadata | None</code></td><td>Speculative Decoding情報</td></tr>
+<tr><td><code>hidden_states</code></td><td><code>torch.Tensor</code></td><td>隠れ状態</td></tr>
+<tr><td><code>sample_hidden_states</code></td><td><code>torch.Tensor</code></td><td>サンプリング用隠れ状態</td></tr>
+<tr><td><code>aux_hidden_states</code></td><td><code>list[torch.Tensor] | None</code></td><td>補助隠れ状態</td></tr>
+<tr><td><code>ec_connector_output</code></td><td><code>ECConnectorOutput | None</code></td><td>エンコーダ出力</td></tr>
+<tr><td><code>cudagraph_stats</code></td><td><code>CUDAGraphStat | None</code></td><td>CUDAGraph統計</td></tr>
+<tr><td><code>slot_mappings</code></td><td><code>dict | list | None</code></td><td>KVキャッシュスロットマッピング</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="6300行の内訳-inferred"><a class="header" href="#6300行の内訳-inferred">6,300行の内訳 [INFERRED]</a></h2>
+<p>GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一クラスに集約しているため:</p>
+<ul>
+<li><strong>バッチ状態管理</strong>: リクエストの追加・削除、永続バッチテンソルの管理</li>
+<li><strong>入力準備</strong>: トークンID、位置、埋め込みの計算</li>
+<li><strong>Attentionメタデータ</strong>: FlashAttention/FlashInfer用メタデータ構築</li>
+<li><strong>モデルフォワード</strong>: CUDAGraph対応、torch.compile統合</li>
+<li><strong>サンプリング</strong>: トップk/p/温度、logprobs計算</li>
+<li><strong>KV Transfer</strong>: KVコネクタとの連携</li>
+<li><strong>Speculative Decoding</strong>: ドラフトトークン提案・検証</li>
+<li><strong>Pipeline Parallelism</strong>: 中間テンソル管理</li>
+<li><strong>LoRA</strong>: アダプタの動的切り替え</li>
+<li><strong>マルチモーダル</strong>: エンコーダ入力の処理</li>
+</ul>
+<h2 id="上流下流の関係"><a class="header" href="#上流下流の関係">上流・下流の関係</a></h2>
+<ul>
+<li><strong>上流</strong>: Worker（<code>execute_model()</code> / <code>sample_tokens()</code>経由で呼び出し）</li>
+<li><strong>下流</strong>: モデル層（<code>model.forward()</code>）、Sampler</li>
+</ul>
+<h2 id="phase-2-深堀り候補"><a class="header" href="#phase-2-深堀り候補">Phase 2 深堀り候補</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>テーマ</th><th>関連メソッド</th><th>ユーザー関心</th></tr>
+</thead>
+<tbody>
+<tr><td>入力準備の詳細</td><td><code>_prepare_inputs()</code>, <code>_update_states()</code></td><td>中</td></tr>
+<tr><td>Attentionメタデータ</td><td><code>_build_attention_metadata()</code></td><td>KVキャッシュ関連で高</td></tr>
+<tr><td>CUDAGraph統合</td><td><code>_model_forward()</code>, CUDAGraphランナー</td><td>中</td></tr>
+<tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
+<tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位）</td></tr>
+<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner</code> (L329), <code>execute_model()</code> (L3312), <code>sample_tokens()</code> (L3621), <code>ExecuteModelState</code> (L313)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160), <code>AsyncModelRunnerOutput</code> (L200)</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../glossary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../components/executor/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
+                            <a rel="next prefetch" href="../../components/input-processor/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -191,10 +360,13 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../glossary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../components/executor/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
+                    <a rel="next prefetch" href="../../components/input-processor/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
             </nav>
 
         </div>
@@ -212,17 +384,17 @@
         </script>
 
 
-        <script src="../elasticlunr-ef4e11c1.min.js"></script>
-        <script src="../mark-09e88c2c.min.js"></script>
-        <script src="../searcher-c2a407aa.js"></script>
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
 
-        <script src="../clipboard-1626706a.min.js"></script>
-        <script src="../highlight-abc7f01d.js"></script>
-        <script src="../book-a0b12cfe.js"></script>
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid-eefea253.min.js"></script>
-        <script src="../mermaid-init-ccf746f1.js"></script>
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
 
 
 
