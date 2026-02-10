@@ -7,13 +7,15 @@
 - [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？
 - [ ] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
-- [ ] GPUModelRunnerが6277行もある理由 — 何がこのクラスに集約されているのか
+- [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？
+- [ ] FastIncrementalDetokenizer vs SlowIncrementalDetokenizer の実際のパフォーマンス差は？
 - [ ] batch_queue パイプライン並列化は実際にどう動作するか？（max_concurrent_batches > 1 時のオーバーラップ）
 - [ ] block_size の設定方法とパフォーマンスへの影響は？
 - [ ] async_scheduling と Speculative Decoding のドラフトトークンタイミングの相互作用は？
 
 ## 解決済み
 
+- [x] GPUModelRunnerが6277行もある理由 — **回答**: バッチ状態管理、入力準備、Attentionメタデータ、モデルフォワード（CUDAGraph対応）、サンプリング、KV Transfer、Speculative Decoding、PP、LoRA、マルチモーダルの10+責務を集約。詳細は `docs/src/components/gpu-model-runner/summary.md`
 - [x] ZMQ IPCを採用した理由は何か？ — **回答**: EngineCoreが別プロセスで動作し、GIL回避とスケジューリング/GPU実行の並行を実現。ZMQ ROUTER/PULLソケット + msgpackシリアライゼーション。詳細は `docs/src/components/engine-core-client/summary.md`
 - [x] v0→v1の移行はいつ、なぜ行われたか？ — **回答**: `vllm/engine/` がv1への1行エイリアス。v1が現行本体。移行の時期・理由は未調査だが、プロセス分離やContinuous Batching改善が動機と推測 [INFERRED]
 - [x] Scheduler.schedule() のトークン予算割当はどのように動作するか？ — **回答**: `token_budget = max_num_scheduled_tokens` で初期化し、Phase 1（RUNNING）→ Phase 2（WAITING）で各リクエストのスケジュール時に消費。Unified Compute Modelで統一管理。詳細は `docs/src/components/scheduler/summary.md`

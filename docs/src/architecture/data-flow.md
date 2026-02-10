@@ -2,7 +2,7 @@
 
 > **深度**: [MEDIUM]
 > **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-11
+> **最終更新**: 2026-02-11 (セッション3で下流パス追加)
 
 ## 概要
 
@@ -142,9 +142,40 @@ Worker→Executorへの転送ではPythonリスト形式を使用し、torch.Ten
 
 **参照**: `target/vllm/vllm/v1/engine/__init__.py:176` (EngineCoreOutputs)
 
-### RequestOutput [TODO]
+### RequestOutput
 
-OutputProcessor → API の境界。ユーザーに返却される最終出力。セッション3で詳細記述。
+OutputProcessor → API の境界。ユーザーに返却される最終出力。
+
+**参照**: `target/vllm/vllm/outputs.py:86` (RequestOutput)
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `request_id` | `str` | 外部リクエストID（クライアントが指定したID） |
+| `prompt` | `str \| None` | 元のプロンプト文字列 |
+| `prompt_token_ids` | `list[int] \| None` | トークナイズ済みプロンプト |
+| `prompt_logprobs` | `PromptLogprobs \| None` | プロンプトトークンの対数確率 |
+| `outputs` | `list[CompletionOutput]` | サンプルごとの出力（n>1で複数） |
+| `finished` | `bool` | リクエスト完了フラグ |
+| `metrics` | `RequestStateStats \| None` | レイテンシ等の統計情報 |
+| `num_cached_tokens` | `int \| None` | プレフィックスキャッシュヒット数 |
+| `kv_transfer_params` | `dict[str, Any] \| None` | KV Transfer情報（完了時） |
+
+**CompletionOutput** (`target/vllm/vllm/outputs.py:23`) は各サンプルの出力を表す:
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `index` | `int` | サンプルインデックス |
+| `text` | `str` | デトークナイズ済みテキスト |
+| `token_ids` | `GenericSequence[int]` | 生成トークンID列 |
+| `cumulative_logprob` | `float \| None` | 累積対数確率 |
+| `logprobs` | `SampleLogprobs \| None` | 各トークンのlogprobs |
+| `finish_reason` | `str \| None` | 完了理由（"stop" / "length"） |
+| `stop_reason` | `int \| str \| None` | 停止トークン/文字列 |
+
+**出力モード**（`RequestOutputKind`、`target/vllm/vllm/sampling_params.py:108`）:
+- `CUMULATIVE`: 毎回全出力を返す（デフォルト）
+- `DELTA`: 差分のみ返す（ストリーミング向け）
+- `FINAL_ONLY`: 完了時のみ返す
 
 ## 上流パス: リクエスト受信 → EngineCore
 
@@ -458,24 +489,188 @@ update_from_output(scheduler_output, model_runner_output)
   → dict[int, EngineCoreOutputs]（クライアントインデックス別）
 ```
 
-## 下流パス: ModelRunnerOutput → ユーザー応答 [TODO]
+## 下流パス: 実行 → ユーザー応答
 
-セッション3で詳細記述。GPUModelRunner、OutputProcessor、Detokenizerの処理を追跡する。
+### 実行層: Executor → Worker → GPUModelRunner
 
-## Prefill vs Decode [TODO]
+EngineCore.step()は`executor.execute_model()`を**非ブロッキング**で呼び出し、GPUでの推論実行を開始する。
 
-セッション3で記述。同一フロー内でのPrefill/Decodeフェーズの違いを整理する。
+**参照**: `target/vllm/vllm/v1/executor/abstract.py:202` (execute_model)
 
-## コンポーネント優先度（暫定）
+#### collective_rpc パターン
 
-Phase 2での深堀り順序。セッション3で確定する。
+Executorは`collective_rpc()`パターンで全Workerに同一メソッドを実行させ、出力ランクのWorkerの結果のみを返す。
 
-| 優先度 | コンポーネント | 理由 |
-|--------|--------------|------|
-| **S** | KVCacheManager | ユーザー関心1位（メモリ管理/KVキャッシュ） |
-| **A** | Scheduler | KVCacheManagerと密連携、推論パイプライン全体を制御 |
-| **B** | EngineCore, AsyncLLM, GPUModelRunner | フロー理解に重要 |
-| **C** | InputProcessor, EngineCoreClient, Executor, Worker, OutputProcessor | 薄いレイヤーまたは通信層 |
+```
+EngineCore.step()
+  │
+  ├─ executor.execute_model(scheduler_output, non_block=True)
+  │   └─ collective_rpc("execute_model", args=(scheduler_output,))
+  │       └─ Worker.execute_model(scheduler_output)                # L604
+  │           └─ model_runner.execute_model(scheduler_output)      # L652
+  │               → ExecuteModelState を内部保存、None を返す
+  │
+  ├─ grammar_output = scheduler.get_grammar_bitmask(...)           # 並行処理
+  │
+  ├─ future.result()  → None                                       # 待機
+  │
+  └─ executor.sample_tokens(grammar_output)                         # L222
+      └─ collective_rpc("sample_tokens", args=(grammar_output,))
+          └─ Worker.sample_tokens(grammar_output)                  # L598
+              └─ model_runner.sample_tokens(grammar_output)        # L3621
+                  → ModelRunnerOutput を返す
+```
+
+**参照**: `target/vllm/vllm/v1/worker/gpu_worker.py:604` (Worker.execute_model)
+
+#### GPUModelRunner の2フェーズ実行
+
+GPUModelRunnerは `execute_model()` と `sample_tokens()` を分離する**2フェーズ実行パターン**を採用する。これにより、モデルフォワード中にgrammar bitmask計算を並行実行できる。
+
+**Phase 1: execute_model()** (`target/vllm/vllm/v1/worker/gpu_model_runner.py:3312`)
+
+```
+execute_model(scheduler_output)
+  ├─ _update_states(scheduler_output)          # バッチ状態更新
+  ├─ _prepare_inputs(scheduler_output)         # 入力ID・位置計算
+  ├─ _build_attention_metadata(...)            # Attention メタデータ構築
+  ├─ _model_forward(...)                       # model.forward() 実行
+  │   → hidden_states
+  ├─ compute_logits(hidden_states)             # logits 計算
+  │   → logits
+  └─ ExecuteModelState に保存 → None を返す
+```
+
+**Phase 2: sample_tokens()** (`target/vllm/vllm/v1/worker/gpu_model_runner.py:3621`)
+
+```
+sample_tokens(grammar_output)
+  ├─ ExecuteModelState を復元
+  ├─ grammar bitmask 適用（構造化出力時）
+  ├─ _sample(logits) → SamplerOutput
+  ├─ バッチ状態更新（生成トークン反映）
+  └─ ModelRunnerOutput を構築して返す
+```
+
+**ExecuteModelState** (`target/vllm/vllm/v1/worker/gpu_model_runner.py:313`) はGPUテンソル（logits, hidden_states等）を保持するNamedTupleで、2フェーズ間の一時状態転送に使用される。
+
+### 出力処理: EngineCoreOutput → RequestOutput
+
+ModelRunnerOutputはバックエンドプロセス（EngineCore）で`EngineCoreOutput`に変換され、ZMQ経由でフロントエンドプロセスの`OutputProcessor`に送られてデトークナイズされる。
+
+```mermaid
+sequenceDiagram
+    participant MR as GPUModelRunner
+    participant S as Scheduler
+    participant EC as EngineCore
+    participant ZMQ as ZMQ IPC
+    participant OP as OutputProcessor
+    participant Client as API Client
+
+    MR->>EC: ModelRunnerOutput
+    EC->>S: update_from_output()
+    Note over S: トークン追加、完了判定<br>KVキャッシュ解放
+    S->>EC: dict[int, EngineCoreOutputs]
+
+    EC->>ZMQ: msgpack シリアライズ
+    ZMQ->>OP: EngineCoreOutputs
+
+    Note over OP: デトークナイズ<br>停止文字列判定<br>logprobs処理
+    OP->>Client: RequestOutput (yield)
+```
+
+#### OutputProcessor.process_outputs()
+
+**参照**: `target/vllm/vllm/v1/engine/output_processor.py:582` (process_outputs)
+
+OutputProcessorは**フロントエンドプロセス**で動作し、`EngineCoreOutput`をユーザー向け`RequestOutput`に変換する。
+
+```
+OutputProcessor.process_outputs(engine_core_outputs)       # L582
+  for each engine_core_output:
+    ├─ req_state = request_states[req_id]                  # RequestState取得
+    │
+    ├─ detokenizer.update(new_token_ids, stop_terminated)  # L637
+    │   ├─ トークン→テキスト変換（インクリメンタル）
+    │   └─ 停止文字列チェック → stop_string or None
+    │
+    ├─ logprobs_processor.update_from_output(output)       # L646
+    │
+    ├─ req_state.make_request_output(...)                   # L649
+    │   ├─ _new_completion_output(token_ids, finish_reason, ...)
+    │   │   ├─ detokenizer.get_next_output_text(finished, delta)
+    │   │   └─ CompletionOutput(text, token_ids, logprobs, ...)
+    │   └─ RequestOutput(request_id, outputs, finished, ...)
+    │
+    └─ req_state.queue.put(request_output)                 # L661
+        → AsyncLLM.generate() が yield
+```
+
+#### Detokenizer（インクリメンタルデトークナイズ）
+
+**参照**: `target/vllm/vllm/v1/engine/detokenizer.py:30` (IncrementalDetokenizer)
+
+トークンからテキストへの変換はインクリメンタルに行われ、ストリーミング出力を実現する。
+
+| クラス | 条件 | 方式 |
+|--------|------|------|
+| `FastIncrementalDetokenizer` | `PreTrainedTokenizerFast` 使用時 | HF tokenizersの`DecodeStream`で高速変換 |
+| `SlowIncrementalDetokenizer` | その他のトークナイザ | `detokenize_incrementally()`でPython変換 |
+| `IncrementalDetokenizer` | トークナイザなし | No-op（テキスト出力なし） |
+
+`update()`メソッドで各トークンをインクリメンタルにデコードし、同時に`check_stop_strings()`で停止文字列を検出する（`target/vllm/vllm/v1/engine/detokenizer.py:316`）。
+
+## Prefill vs Decode
+
+vLLM v1は**Unified Compute Model**を採用し、PrefillとDecodeを明示的に区別しない。両者は`num_computed_tokens`の進捗によって暗黙的に区分される。
+
+### 統一管理の仕組み
+
+各リクエストは`num_computed_tokens`フィールドで計算済みトークン数を追跡する:
+
+```
+プロンプト: [A, B, C, D, E]    (len=5)
+num_computed_tokens: 0 → 5 → 6 → 7 → ...
+
+Prefillフェーズ: num_computed_tokens < len(prompt_token_ids)
+  → 複数トークンを一度に計算（チャンクプリフィル可能）
+
+Decodeフェーズ: num_computed_tokens >= len(prompt_token_ids)
+  → 1トークンずつ生成
+```
+
+### Schedulerでの扱い
+
+Scheduler.schedule()はPrefill/Decodeを区別せず、トークン予算の範囲内で各リクエストに計算トークン数を割り当てる:
+
+- **新規リクエスト（WAITING→RUNNING）**: `num_tokens = len(prompt_token_ids) - num_computed_tokens`（プレフィックスキャッシュヒット分を差し引き）
+- **継続リクエスト（RUNNING）**: `num_tokens = 1`（Decode 1トークン）
+- 予算不足時は部分的なPrefill（チャンクプリフィル）も可能
+
+### GPUModelRunner内での違い
+
+GPUModelRunner.execute_model()は入力準備の段階で暗黙的にPrefill/Decodeを処理する:
+
+- **_prepare_inputs()**: `num_scheduled_tokens`に基づいて入力トークンと位置を計算。Prefillなら複数トークン、Decodeなら1トークン
+- **_build_attention_metadata()**: Prefillはフルattention、Decodeはキャッシュ済みKVに対するattentionのメタデータを構築
+- **モデルフォワード**: 入力テンソルのサイズが異なるだけで、同一のforward()を実行
+
+この統一モデルにより、同一バッチ内にPrefillリクエストとDecodeリクエストを混在させるContinuous Batchingが自然に実現される。
+
+## コンポーネント優先度（確定）
+
+Phase 2での深堀り順序。ユーザー関心領域とフロー上の重要度に基づく。
+
+| 優先度 | コンポーネント | 理由 | 現在の深度 |
+|--------|--------------|------|-----------|
+| **S** | KVCacheManager | ユーザー関心1位（メモリ管理/KVキャッシュ）。PagedAttention、ブロック管理、Eviction | [MEDIUM] |
+| **A** | Scheduler | KVCacheManagerと密連携、推論パイプライン全体を制御。Continuous Batching | [MEDIUM] |
+| **A** | GPUModelRunner | 推論実行の中核。6277行の巨大クラス。将来のプラグイン開発に重要 | [SHALLOW] |
+| **B** | EngineCore | step()サイクル、batch_queueパイプライン。全体の統合ポイント | [MEDIUM] |
+| **B** | OutputProcessor | デトークナイズ、停止判定。ストリーミング出力の仕組み | [SHALLOW] |
+| **C** | AsyncLLM, InputProcessor | エントリポイント。薄いレイヤー | [SHALLOW] |
+| **C** | Executor, Worker | 委譲パターン。分散推論時のみ詳細が必要 | [SHALLOW] |
+| **C** | EngineCoreClient | ZMQ IPC通信層。プロトコルは把握済み | [SHALLOW] |
 
 ## 参照ファイル一覧
 
@@ -493,7 +688,12 @@ Phase 2での深堀り順序。セッション3で確定する。
 | `target/vllm/vllm/v1/core/block_pool.py` | `BlockPool` (L128) | 物理ブロック管理 |
 | `target/vllm/vllm/v1/request.py` | `Request` | リクエスト内部状態 |
 | `target/vllm/vllm/v1/outputs.py` | `ModelRunnerOutput` (L160) | モデル推論出力 |
-| `target/vllm/vllm/v1/executor/abstract.py` | `Executor` (ABC) | 実行層抽象 |
-| `target/vllm/vllm/v1/worker/gpu_worker.py` | `Worker.execute_model()` (L604) | GPU Worker |
-| `target/vllm/vllm/v1/worker/gpu_model_runner.py` | `GPUModelRunner.execute_model()` (L3312) | モデル実行 |
-| `target/vllm/vllm/v1/engine/output_processor.py` | `OutputProcessor.process_outputs()` | 出力処理 |
+| `target/vllm/vllm/v1/executor/abstract.py` | `Executor` (ABC), `execute_model()` (L202), `collective_rpc()` (L180) | 実行層抽象 |
+| `target/vllm/vllm/v1/executor/uniproc_executor.py` | `UniProcExecutor` (L26) | 単一プロセス実行 |
+| `target/vllm/vllm/v1/executor/multiproc_executor.py` | `MultiprocExecutor` (L93) | マルチプロセス実行 |
+| `target/vllm/vllm/v1/worker/gpu_worker.py` | `Worker.execute_model()` (L604), `sample_tokens()` (L598) | GPU Worker |
+| `target/vllm/vllm/v1/worker/gpu_model_runner.py` | `GPUModelRunner.execute_model()` (L3312), `sample_tokens()` (L3621), `ExecuteModelState` (L313) | モデル実行 |
+| `target/vllm/vllm/v1/engine/output_processor.py` | `OutputProcessor.process_outputs()` (L582), `RequestState.make_request_output()` (L269) | 出力処理 |
+| `target/vllm/vllm/v1/engine/detokenizer.py` | `IncrementalDetokenizer` (L30), `FastIncrementalDetokenizer` (L169), `check_stop_strings()` (L316) | デトークナイズ |
+| `target/vllm/vllm/v1/engine/logprobs.py` | `LogprobsProcessor` (L28) | logprobs処理 |
+| `target/vllm/vllm/outputs.py` | `RequestOutput` (L86), `CompletionOutput` (L23) | 最終出力データ構造 |

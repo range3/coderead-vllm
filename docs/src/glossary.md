@@ -87,6 +87,31 @@ vLLM v1のSchedulerが採用するスケジューリングアプローチ。Pref
 
 **参照**: `target/vllm/vllm/v1/core/sched/scheduler.py:322` (コメント)
 
+### collective_rpc
+Executor層が全Workerに対して同一メソッドを実行するRPCパターン。メソッド名（文字列）または関数を受け取り、全Workerで並列実行後、出力ランクのWorkerの結果を返す。`non_block=True`でFuture返却も可能。
+
+**参照**: `target/vllm/vllm/v1/executor/abstract.py:180` (`collective_rpc`)
+
+### ExecuteModelState
+GPUModelRunnerの2フェーズ実行パターンで使用される一時状態。execute_model()がlogitsやhidden_statesなどのGPUテンソルを保存し、sample_tokens()が復元してサンプリングを行う。NamedTuple。
+
+**参照**: `target/vllm/vllm/v1/worker/gpu_model_runner.py:313` (`ExecuteModelState`)
+
+### OutputProcessor
+フロントエンドプロセスで動作し、EngineCoreOutputをRequestOutputに変換するコンポーネント。インクリメンタルデトークナイズ、停止文字列判定、logprobs処理を行う。
+
+**参照**: `target/vllm/vllm/v1/engine/output_processor.py:73` (`OutputProcessor`)
+
+### IncrementalDetokenizer
+トークンIDからテキストへのインクリメンタル変換を行うクラス。FastIncrementalDetokenizer（HF DecodeStream）とSlowIncrementalDetokenizer（Python実装）の2種がある。
+
+**参照**: `target/vllm/vllm/v1/engine/detokenizer.py:30` (`IncrementalDetokenizer`)
+
+### RequestOutputKind
+出力モードを定義するEnum。CUMULATIVE（毎回全出力）、DELTA（差分のみ、ストリーミング向け）、FINAL_ONLY（完了時のみ）の3値。
+
+**参照**: `target/vllm/vllm/sampling_params.py:108` (`RequestOutputKind`)
+
 ### mm_cache (マルチモーダルキャッシュ)
 マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。
 
