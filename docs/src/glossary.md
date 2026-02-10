@@ -82,6 +82,11 @@ vLLMと統合可能な外部KVキャッシュストレージ。KV Transferのバ
 
 **参照**: `target/vllm/vllm/multimodal/`
 
+### Unified Compute Model
+vLLM v1のSchedulerが採用するスケジューリングアプローチ。PrefillフェーズとDecodeフェーズを明示的に区別せず、各リクエストの`num_computed_tokens`（計算済みトークン数）が目標に追いつくまでトークンを割り当てる。これにより、Chunked Prefill、Prefix Caching、Speculative Decodingを統一的に扱える。
+
+**参照**: `target/vllm/vllm/v1/core/sched/scheduler.py:322` (コメント)
+
 ### mm_cache (マルチモーダルキャッシュ)
 マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。
 
