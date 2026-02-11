@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>EngineCoreClient サマリー - コードリーディング: vLLM</title>
+        <title>Gemma3 ビジョンエンコーダと画像処理 [MEDIUM] [VERIFIED] - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -174,138 +174,322 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="enginecoreclient-サマリー"><a class="header" href="#enginecoreclient-サマリー">EngineCoreClient サマリー</a></h1>
+                        <h1 id="gemma3-ビジョンエンコーダと画像処理-medium-verified"><a class="header" href="#gemma3-ビジョンエンコーダと画像処理-medium-verified">Gemma3 ビジョンエンコーダと画像処理 [MEDIUM] [VERIFIED]</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
-<strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-09</p>
+<p><strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p><code>EngineCoreClient</code>はフロントエンドプロセス（AsyncLLM / LLM）とバックエンドプロセス（EngineCore）間のプロセス間通信を抽象化するコンポーネントである。ZeroMQソケットとmsgpackシリアライゼーションを使用し、<code>EngineCoreRequest</code>の送信と<code>EngineCoreOutputs</code>の受信を効率的に行う。</p>
-<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
-<pre><code>フロントエンドプロセス            バックエンドプロセス
-┌───────────────────┐            ┌───────────────────┐
-│  AsyncMPClient    │            │  EngineCore       │
-│                   │            │                   │
-│  input_socket     ├──ROUTER──→│  (ZMQ受信)        │
-│  (zmq.ROUTER)     │  msgpack   │                   │
-│                   │            │                   │
-│  output_socket    │←──PULL────┤  (ZMQ送信)        │
-│  (zmq.PULL)       │  msgpack   │                   │
-│                   │            │                   │
-│  outputs_queue    │            │                   │
-│  (asyncio.Queue)  │            │                   │
-└───────────────────┘            └───────────────────┘
-</code></pre>
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
-</thead>
-<tbody>
-<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td><code>target/vllm/vllm/v1/engine/core_client.py:63</code></td></tr>
-<tr><td><code>MPClient</code></td><td>マルチプロセスクライアント基底</td><td><code>target/vllm/vllm/v1/engine/core_client.py:442</code></td></tr>
-<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセスクライアント（AsyncLLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py:822</code></td></tr>
-<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセスクライアント（LLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>MsgpackEncoder</code></td><td>リクエストのシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
-<tr><td><code>MsgpackDecoder</code></td><td>レスポンスのデシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
-<h3 id="enginecoreclient-abc"><a class="header" href="#enginecoreclient-abc">EngineCoreClient (ABC)</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>メソッド</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>make_client()</code></td><td>ファクトリ。設定に応じた適切なサブクラスを返す</td></tr>
-<tr><td><code>make_async_mp_client()</code></td><td>AsyncLLM用ファクトリ。DP構成も考慮</td></tr>
-<tr><td><code>add_request()</code></td><td>EngineCoreRequestを送信</td></tr>
-<tr><td><code>get_output()</code></td><td>EngineCoreOutputsを受信</td></tr>
-<tr><td><code>abort_requests()</code></td><td>リクエストキャンセル</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="asyncmpclient"><a class="header" href="#asyncmpclient">AsyncMPClient</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>_ensure_output_queue_task()</code></td><td>L856</td><td>ZMQ出力受信タスクを起動</td></tr>
-<tr><td><code>get_output_async()</code></td><td>L902</td><td>asyncio.Queueから出力を取得</td></tr>
-<tr><td><code>_send_input()</code></td><td>L913</td><td>EngineCoreRequestをZMQで送信</td></tr>
-<tr><td><code>_send_input_message()</code></td><td>L925</td><td>ZMQ multipart送信（zero-copy対応）</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="ファクトリ選択ロジック"><a class="header" href="#ファクトリ選択ロジック">ファクトリ選択ロジック</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:99</code> (make_async_mp_client)</p>
-<pre><code>make_async_mp_client(vllm_config, executor_class, ...)
-  ├─ data_parallel_size &gt; 1 の場合:
-  │   ├─ external_lb → DPAsyncMPClient
-  │   └─ internal_lb → DPLBAsyncMPClient
-  └─ それ以外 → AsyncMPClient
-</code></pre>
-<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>parallel_config.data_parallel_size</code></td><td>1</td><td>データ並列数。&gt;1でDP系クライアントを使用</td></tr>
-<tr><td><code>parallel_config.data_parallel_external_lb</code></td><td>—</td><td>外部ロードバランサ使用フラグ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
-<pre><code>[送信パス]
-AsyncLLM.add_request()
-  → engine_core.add_request_async(request)
-    → AsyncMPClient._send_input(REQUEST, request)
-      → MsgpackEncoder.encode(request)
-      → input_socket.send_multipart(msg, copy=False)
-        → ZMQ ROUTER → バックエンドプロセス
+<p>Gemma3 モデルにおけるビジョンエンコーダ（SiglipVisionModel）、プロジェクタ（Gemma3MultiModalProjector）、および text + vision 埋め込みマージの詳細。</p>
+<h2 id="モデルアーキテクチャ全体像"><a class="header" href="#モデルアーキテクチャ全体像">モデルアーキテクチャ全体像</a></h2>
+<pre class="mermaid">graph TD
+    subgraph "Gemma3ForConditionalGeneration"
+        subgraph "vision_tower (SiglipVisionModel)"
+            PE["SiglipVisionEmbeddings&lt;br&gt;Conv2d patch embedding&lt;br&gt;+ position embedding"]
+            ENC["SiglipEncoder&lt;br&gt;N層 Transformer&lt;br&gt;(双方向Attention)"]
+            PE --&gt; ENC
+        end
 
-[受信パス]
-process_outputs_socket() [バックグラウンドタスク]
-  → output_socket.recv_multipart()
-    → MsgpackDecoder.decode(frames) → EngineCoreOutputs
-    → outputs_queue.put_nowait(outputs)
+        PROJ["Gemma3MultiModalProjector&lt;br&gt;AvgPool2d → RMSNorm → Linear"]
+        ENC --&gt; PROJ
 
-AsyncLLM._run_output_handler()
-  → engine_core.get_output_async()
-    → outputs_queue.get() → EngineCoreOutputs
+        subgraph "language_model (Gemma3ForCausalLM)"
+            EMB["embed_tokens()&lt;br&gt;テキスト埋め込み"]
+            LM["Transformer Decoder&lt;br&gt;(因果的Attention)"]
+            EMB --&gt; LM
+        end
+
+        MERGE["masked_scatter_&lt;br&gt;text + vision マージ"]
+        PROJ --&gt; MERGE
+        EMB --&gt; MERGE
+        MERGE --&gt; LM
+    end
+</pre>
+
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:481-694</code></p>
+<h2 id="1-siglipvisionmodelビジョンエンコーダ"><a class="header" href="#1-siglipvisionmodelビジョンエンコーダ">1. SiglipVisionModel（ビジョンエンコーダ）</a></h2>
+<h3 id="構造"><a class="header" href="#構造">構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:848-894</code></p>
+<pre><code>SiglipVisionModel
+  └─ SiglipVisionTransformer (L681)
+      ├─ SiglipVisionEmbeddings (L282)
+      │   ├─ patch_embedding: Conv2d(3, hidden_size, kernel=patch_size, stride=patch_size)
+      │   └─ position_embedding: Embedding(num_patches, hidden_size)
+      ├─ SiglipEncoder (L520)
+      │   └─ layers: ModuleList[SiglipEncoderLayer] × N
+      │       ├─ layer_norm1 → SiglipAttention (MMEncoderAttention)
+      │       └─ layer_norm2 → SiglipMLP
+      └─ post_layernorm: LayerNorm（最終層のみ）
 </code></pre>
-<h2 id="設計上の特徴"><a class="header" href="#設計上の特徴">設計上の特徴</a></h2>
+<h3 id="パッチ埋め込み-siglipvisionembeddings"><a class="header" href="#パッチ埋め込み-siglipvisionembeddings">パッチ埋め込み (SiglipVisionEmbeddings)</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:282-352</code></p>
+<pre><code class="language-python"># 入力: pixel_values (batch, 3, H, W)
+patch_embeds = self.patch_embedding(pixel_values)  # Conv2d: (batch, hidden_size, grid, grid)
+embeddings = patch_embeds.flatten(2).transpose(1, 2)  # (batch, num_patches, hidden_size)
+embeddings += self.position_embedding(position_ids)    # 位置埋め込みを加算
+</code></pre>
 <ul>
-<li><strong>プロセス分離</strong>: EngineCoreが別プロセスで動作するため、GILの影響を受けずスケジューリングとGPU実行を並行可能</li>
-<li><strong>msgpackシリアライゼーション</strong>: <code>msgspec.Struct</code>の<code>array_like</code>形式でコンパクトなバイナリ表現</li>
-<li><strong>zero-copy</strong>: ZMQ <code>copy=False</code> でメモリコピーを最小化。テンソルバッキングバッファの追跡（<code>add_pending_message</code>）</li>
-<li><strong>weakref</strong>: 出力タスクがクライアントへの循環参照を持たないよう<code>weakref</code>を使用</li>
+<li><code>image_size = 256</code> の場合、<code>patch_size = 16</code> → <code>num_patches = (256/16)² = 256</code></li>
+<li>各パッチは <code>16×16×3 = 768</code> ピクセルから <code>hidden_size</code> 次元のベクトルに変換</li>
+<li>位置埋め込みは学習済みの <code>nn.Embedding</code>（補間対応あり）</li>
 </ul>
+<h3 id="エンコーダ層-siglipencoder"><a class="header" href="#エンコーダ層-siglipencoder">エンコーダ層 (SiglipEncoder)</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:520-567</code></p>
+<p>各エンコーダ層の構造:</p>
+<pre><code>SiglipEncoderLayer:
+    residual = hidden_states
+    hidden_states = layer_norm1(hidden_states)
+    hidden_states = self_attn(hidden_states)     ← MMEncoderAttention（双方向）
+    hidden_states = residual + hidden_states
+    residual = hidden_states
+    hidden_states = layer_norm2(hidden_states)
+    hidden_states = mlp(hidden_states)
+    hidden_states = residual + hidden_states
+</code></pre>
+<ul>
+<li><strong>アテンション型</strong>: <code>MMEncoderAttention</code>（双方向、因果マスクなし）</li>
+<li>全パッチが全パッチを参照できる（テキストの因果アテンションとは異なる）</li>
+</ul>
+<h3 id="forward-フロー"><a class="header" href="#forward-フロー">forward() フロー</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:755-788</code></p>
+<pre><code class="language-python">def forward(self, pixel_values, *, select_layers=None, feature_select_strategy=None):
+    hidden_states = self.embeddings(pixel_values)      # (batch, num_patches, hidden_size)
+    encoder_outputs = self.encoder(inputs_embeds=hidden_states)  # N層 Transformer
+    encoder_outputs = resolve_visual_encoder_outputs(   # 特徴選択
+        encoder_outputs, select_layers, feature_select_strategy
+    )
+    return self.last_hs_proc(encoder_outputs)           # post_layernorm + head
+</code></pre>
+<p>出力: <code>(batch, num_patches, hidden_size)</code> — 典型的に <code>(batch, 256, 1152)</code></p>
+<h2 id="2-gemma3multimodalprojector投射層"><a class="header" href="#2-gemma3multimodalprojector投射層">2. Gemma3MultiModalProjector（投射層）</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:432-473</code></p>
+<p>ビジョンエンコーダの出力をテキスト埋め込み空間に変換する。</p>
+<h3 id="パラメータ"><a class="header" href="#パラメータ">パラメータ</a></h3>
+<pre><code class="language-python">mm_input_projection_weight: (vision_hidden_size, text_hidden_size)  # 例: (1152, 2048)
+mm_soft_emb_norm: GemmaRMSNorm(vision_hidden_size)
+avg_pool: AvgPool2d(kernel_size, stride=kernel_size)
+</code></pre>
+<h3 id="設定値の計算"><a class="header" href="#設定値の計算">設定値の計算</a></h3>
+<pre><code class="language-python">patches_per_image = image_size // patch_size           # 256 // 16 = 16
+tokens_per_side = int(mm_tokens_per_image ** 0.5)      # int(256 ** 0.5) = 16
+kernel_size = patches_per_image // tokens_per_side     # 16 // 16 = 1
+</code></pre>
+<p><code>kernel_size = 1</code> の場合、AvgPool2dは実質的にno-op（パッチ数が変わらない）。<code>mm_tokens_per_image</code> が小さい設定ではダウンサンプリングが発生する。</p>
+<h3 id="forward-フロー-1"><a class="header" href="#forward-フロー-1">forward() フロー</a></h3>
+<pre><code class="language-python">def forward(self, vision_outputs):
+    # vision_outputs: (batch, hidden_size, num_patches) — エンコーダ出力のtranspose形式
+    batch_size, _, seq_length = vision_outputs.shape
+
+    # 1. 2Dグリッドへリシェイプ
+    reshaped = vision_outputs.transpose(1, 2).reshape(
+        batch_size, seq_length, patches_per_image, patches_per_image
+    )  # (batch, seq_length, 16, 16)
+
+    # 2. 平均プーリング（ダウンサンプリング）
+    pooled = self.avg_pool(reshaped)  # kernel=1の場合: (batch, seq_length, 16, 16)
+    pooled = pooled.flatten(2).transpose(1, 2)  # (batch, mm_tokens_per_image, seq_length)
+
+    # 3. RMS正規化
+    normed = self.mm_soft_emb_norm(pooled)
+
+    # 4. 線形投射: vision_hidden_size → text_hidden_size
+    projected = torch.matmul(normed, self.mm_input_projection_weight)
+    # (batch, mm_tokens_per_image, text_hidden_size)
+
+    return projected.type_as(vision_outputs)
+</code></pre>
+<p><strong>重要な注意</strong>: テキスト埋め込みの正規化とは異なり、ビジョン埋め込みには <code>mm_soft_emb_norm</code> のみが適用される。vocab embedding に適用されるスケーリング（<code>embed_tokens * normalizer</code>）はビジョン埋め込みには適用 <strong>されない</strong>。</p>
+<h2 id="3-embed_multimodal-と-_process_image_input"><a class="header" href="#3-embed_multimodal-と-_process_image_input">3. embed_multimodal() と _process_image_input()</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:567-594</code></p>
+<p>GPUModelRunner の <code>_execute_mm_encoder()</code> から呼ばれるメインのエンコーダ実行パス:</p>
+<pre><code class="language-python">def embed_multimodal(self, **kwargs):
+    image_input = self._parse_and_validate_image_input(**kwargs)  # pixel_values 取得
+    if image_input is None:
+        return []
+    return self._process_image_input(image_input)
+
+def _process_image_input(self, image_input):
+    pixel_values = image_input["pixel_values"]    # (total_patches, 3, image_size, image_size)
+    num_patches = image_input["num_patches"]       # (num_images,) — 画像ごとのパッチ数
+
+    # ビジョンエンコーダ実行
+    image_features = self._image_pixels_to_features(self.vision_tower, pixel_values)
+
+    # プロジェクタで投射
+    image_embeds = self.multi_modal_projector(image_features)
+
+    # 画像ごとに分割 + flatten
+    return [e.flatten(0, 1) for e in image_embeds.split(num_patches.tolist())]
+    # list[Tensor(mm_tokens_per_image, text_hidden_size)]
+</code></pre>
+<h3 id="テンソル形状の追跡"><a class="header" href="#テンソル形状の追跡">テンソル形状の追跡</a></h3>
+<p>画像1枚、Pan-and-Scan なし（<code>num_patches=1</code>）の場合:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ステージ</th><th>形状</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td>入力 pixel_values</td><td><code>(1, 3, 256, 256)</code></td><td>RGB画像</td></tr>
+<tr><td>patch_embedding</td><td><code>(1, 1152, 16, 16)</code></td><td>Conv2d出力</td></tr>
+<tr><td>flatten + transpose</td><td><code>(1, 256, 1152)</code></td><td>パッチシーケンス</td></tr>
+<tr><td>+ position_embedding</td><td><code>(1, 256, 1152)</code></td><td>位置情報付加</td></tr>
+<tr><td>SiglipEncoder (N層)</td><td><code>(1, 256, 1152)</code></td><td>Transformer処理</td></tr>
+<tr><td>Projector reshape</td><td><code>(1, 256, 16, 16)</code></td><td>2Dグリッド</td></tr>
+<tr><td>AvgPool2d (k=1)</td><td><code>(1, 256, 16, 16)</code></td><td>no-op</td></tr>
+<tr><td>flatten + transpose</td><td><code>(1, 256, 256)</code></td><td>?</td></tr>
+<tr><td>mm_soft_emb_norm</td><td><code>(1, 256, 1152)</code></td><td>RMS正規化</td></tr>
+<tr><td>matmul(projection)</td><td><code>(1, 256, 2048)</code></td><td>テキスト空間</td></tr>
+<tr><td>flatten(0,1)</td><td><code>(256, 2048)</code></td><td>最終出力</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="4-テキスト--ビジョン埋め込みのマージ"><a class="header" href="#4-テキスト--ビジョン埋め込みのマージ">4. テキスト + ビジョン埋め込みのマージ</a></h2>
+<h3 id="embed_input_ids"><a class="header" href="#embed_input_ids">embed_input_ids()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:596-614</code></p>
+<pre><code class="language-python">def embed_input_ids(self, input_ids, multimodal_embeddings=None, *, is_multimodal=None, ...):
+    if multimodal_embeddings is None or is_multimodal is None:
+        return super().embed_input_ids(input_ids)  # テキストのみ
+    return super().embed_input_ids(
+        input_ids, multimodal_embeddings=multimodal_embeddings,
+        is_multimodal=is_multimodal, handle_oov_mm_token=True,
+    )
+</code></pre>
+<h3 id="_merge_multimodal_embeddings"><a class="header" href="#_merge_multimodal_embeddings">_merge_multimodal_embeddings()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/utils.py:445-487</code></p>
+<pre><code class="language-python">def _merge_multimodal_embeddings(inputs_embeds, multimodal_embeddings, is_multimodal):
+    mm_embeds_flat = _flatten_embeddings(multimodal_embeddings)
+    # in-place 置換: is_multimodal=True の位置を mm_embeds_flat で上書き
+    inputs_embeds.masked_scatter_(
+        is_multimodal.unsqueeze(-1),
+        mm_embeds_flat.to(dtype=inputs_embeds.dtype)
+    )
+    return inputs_embeds
+</code></pre>
+<p><strong><code>masked_scatter_</code> の動作</strong>:</p>
+<ol>
+<li><code>is_multimodal</code>: <code>(seq_len,)</code> のboolテンソル（True = 画像プレースホルダー位置）</li>
+<li><code>is_multimodal.unsqueeze(-1)</code>: <code>(seq_len, 1)</code> → ブロードキャストで <code>(seq_len, hidden_size)</code> に展開</li>
+<li><code>mm_embeds_flat</code>: True位置の数 × hidden_size の連続テンソル</li>
+<li>True位置に順番に mm_embeds_flat の値を書き込む</li>
+</ol>
+<p><strong>制約</strong>: <code>is_multimodal.sum() == len(mm_embeds_flat)</code> でなければランタイムエラー</p>
+<h3 id="handle_oov_mm_token"><a class="header" href="#handle_oov_mm_token">handle_oov_mm_token</a></h3>
+<p>Gemma3 は <code>handle_oov_mm_token=True</code> を指定。これは image_token_id が vocab の範囲外の場合でも安全に処理するための仕組み。</p>
+<h2 id="5-pan-and-scanパノラマクロップ"><a class="header" href="#5-pan-and-scanパノラマクロップ">5. Pan-and-Scan（パノラマクロップ）</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109-176</code></p>
+<p>アスペクト比が大きい画像に対して、複数のクロップを生成して詳細認識を向上させる仕組み。</p>
+<h3 id="クロップ数の計算"><a class="header" href="#クロップ数の計算">クロップ数の計算</a></h3>
+<pre><code class="language-python">def get_num_crops(self, *, image_width, image_height, processor):
+    # 横長画像の場合
+    if image_width &gt;= image_height:
+        if width/height &lt; min_ratio:  return 0  # 比率が小さすぎる
+        num_crops_w = min(floor(width/min_crop_size), floor(w/h + 0.5))
+        num_crops_w = max(2, num_crops_w)
+        num_crops_w = min(max_num_crops, num_crops_w)
+        num_crops_h = 1
+
+    # 縦長画像の場合は逆
+    ...
+
+    # クロップサイズが小さすぎる場合は無効
+    if min(crop_size_w, crop_size_h) &lt; min_crop_size:
+        return 0
+
+    return num_crops_w * num_crops_h
+</code></pre>
+<h3 id="pan-and-scan時のプロンプト"><a class="header" href="#pan-and-scan時のプロンプト">Pan-and-Scan時のプロンプト</a></h3>
+<pre><code>"Here is the original image &lt;full_image_seq&gt; and here are some crops to help you see better &lt;full_image_seq&gt; &lt;full_image_seq&gt;"
+</code></pre>
+<p>各 <code>&lt;full_image_seq&gt;</code> は <code>image_seq_length</code>（=256）トークンを消費。</p>
+<p><strong>V1での制限</strong>: Pan-and-Scan は簡略化されたアテンションパターンを使用するため、最適ではない結果になる可能性がある。</p>
+<h2 id="6-forward--最終推論"><a class="header" href="#6-forward--最終推論">6. forward() — 最終推論</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:616-635</code></p>
+<pre><code class="language-python">def forward(self, input_ids, positions, intermediate_tensors=None, inputs_embeds=None, **kwargs):
+    if intermediate_tensors is not None:
+        inputs_embeds = None  # Pipeline Parallelism の中間ランク
+
+    hidden_states = self.language_model.model(
+        input_ids,
+        positions,
+        intermediate_tensors,
+        inputs_embeds=inputs_embeds,  # text + vision マージ済み
+        **kwargs,
+    )
+    return hidden_states
+</code></pre>
+<p>マルチモーダル時は <code>inputs_embeds</code> が渡され、<code>input_ids</code> は使用されない（embed_input_ids で既に埋め込み済みのため）。</p>
+<h2 id="データフロー全体"><a class="header" href="#データフロー全体">データフロー全体</a></h2>
+<pre><code>pixel_values: (total_patches, 3, 256, 256)
+      │
+      ▼
+SiglipVisionEmbeddings
+  Conv2d(3→1152, k=16, s=16) + position_embedding
+      │
+      ▼
+(total_patches, 256, 1152)
+      │
+      ▼
+SiglipEncoder (N層 Transformer, 双方向Attention)
+      │
+      ▼
+(total_patches, 256, 1152)
+      │
+      ▼
+Gemma3MultiModalProjector
+  reshape → AvgPool2d → RMSNorm → matmul(1152→2048)
+      │
+      ▼
+(total_patches, 256, 2048)
+      │
+      ▼
+split by num_patches → list[(mm_tokens, 2048)]
+      │
+      ▼
+encoder_cache[mm_hash] に格納
+      │
+      ▼
+_gather_mm_embeddings() でスライス
+      │
+      ▼
+embed_input_ids():
+  text_embeds = embed_tokens(input_ids)     # (seq_len, 2048)
+  merged = masked_scatter_(text_embeds, is_multimodal, mm_embeds)
+      │
+      ▼
+language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
+</code></pre>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3ForConditionalGeneration</code></td><td>L481</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3MultiModalProjector</code></td><td>L432</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3ProcessingInfo</code>, <code>Gemma3MultiModalProcessor</code></td><td>L77, L276</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipVisionModel</code></td><td>L848</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipVisionEmbeddings</code></td><td>L282</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipEncoder</code></td><td>L520</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/utils.py</code></td><td><code>_merge_multimodal_embeddings()</code></td><td>L445</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
 <ul>
-<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
-<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+<li><a href="mm-processing.html">フロントエンド MM処理パス</a></li>
+<li><a href="mm-engine-gpu.html">バックエンド MM処理パス</a></li>
+<li><a href="summary.html">マルチモーダル処理パイプライン概要</a></li>
 </ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../components/engine-core/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../components/multimodal/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../components/entrypoint/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/multimodal/mm-engine-gpu.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -315,11 +499,11 @@ AsyncLLM._run_output_handler()
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../components/engine-core/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../components/multimodal/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../components/entrypoint/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/multimodal/mm-engine-gpu.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

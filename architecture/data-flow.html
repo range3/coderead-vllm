@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-58528295.js";
+            window.path_to_searchindex_js = "../searchindex-a88a02e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-d1c54e9e.js"></script>
+        <script src="../toc-e3d8dfe5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,7 +178,7 @@
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11 (セッション3で下流パス追加)</p>
+<strong>最終更新</strong>: 2026-02-11 (Phase 2bでマルチモーダル差分追加)</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
@@ -811,6 +811,29 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 </tbody>
 </table>
 </div>
+<h2 id="マルチモーダル推論パスの差分"><a class="header" href="#マルチモーダル推論パスの差分">マルチモーダル推論パスの差分</a></h2>
+<p>テキスト推論フローに対し、画像等のマルチモーダル入力がある場合の主要な差分を以下に示す。詳細は <a href="../components/multimodal/summary.html">マルチモーダル処理パイプライン</a> を参照。</p>
+<h3 id="フロントエンドp0の差分"><a class="header" href="#フロントエンドp0の差分">フロントエンド（P0）の差分</a></h3>
+<ol>
+<li><strong>チャットテンプレート</strong>: プレースホルダー（<code>&lt;start_of_image&gt;</code> 等）がプロンプトに挿入される</li>
+<li><strong>HF Processor実行</strong>: 画像を <code>pixel_values</code> テンソルに変換（リサイズ、正規化、パッチ分割）</li>
+<li><strong>MMハッシュ計算</strong>: <code>MultiModalHasher</code> でコンテンツベースのblake3ハッシュを生成</li>
+<li><strong>ProcessorCache</strong>: HF処理結果をキャッシュ（4種類の実装: processor_only/lru/shm/none）</li>
+<li><strong>EngineCoreRequest</strong>: <code>mm_features: list[MultiModalFeatureSpec]</code> にテンソルデータ・位置情報・ハッシュを格納</li>
+</ol>
+<h3 id="バックエンドp1の差分"><a class="header" href="#バックエンドp1の差分">バックエンド（P1）の差分</a></h3>
+<ol>
+<li><strong>EncoderCacheManager</strong>: エンコーダ出力をリファレンスカウント方式で管理。キャッシュヒットでエンコーダ計算スキップ</li>
+<li><strong>Scheduler</strong>: <code>encoder_compute_budget</code> でステップあたりのエンコーダ計算量を制御</li>
+<li><strong>GPUModelRunner</strong>:
+<ul>
+<li><code>_execute_mm_encoder()</code>: ビジョンエンコーダ実行（<code>model.embed_multimodal()</code>）</li>
+<li><code>_gather_mm_embeddings()</code>: キャッシュからプレースホルダー位置に対応する埋め込みを取得</li>
+<li><code>embed_input_ids()</code>: <code>masked_scatter_</code> でテキスト埋め込みとビジョン埋め込みをマージ</li>
+</ul>
+</li>
+<li><strong>モデルforward</strong>: <code>input_ids</code> ではなく <code>inputs_embeds</code>（マージ済み）が渡される</li>
+</ol>
 
                     </main>
 

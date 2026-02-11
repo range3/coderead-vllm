@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58528295.js";
+            window.path_to_searchindex_js = "searchindex-a88a02e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d1c54e9e.js"></script>
+        <script src="toc-e3d8dfe5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,7 @@
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11 (セッション3で下流パス追加)</p>
+<strong>最終更新</strong>: 2026-02-11 (Phase 2bでマルチモーダル差分追加)</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
@@ -814,6 +814,29 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 </tbody>
 </table>
 </div>
+<h2 id="マルチモーダル推論パスの差分"><a class="header" href="#マルチモーダル推論パスの差分">マルチモーダル推論パスの差分</a></h2>
+<p>テキスト推論フローに対し、画像等のマルチモーダル入力がある場合の主要な差分を以下に示す。詳細は <a href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン</a> を参照。</p>
+<h3 id="フロントエンドp0の差分"><a class="header" href="#フロントエンドp0の差分">フロントエンド（P0）の差分</a></h3>
+<ol>
+<li><strong>チャットテンプレート</strong>: プレースホルダー（<code>&lt;start_of_image&gt;</code> 等）がプロンプトに挿入される</li>
+<li><strong>HF Processor実行</strong>: 画像を <code>pixel_values</code> テンソルに変換（リサイズ、正規化、パッチ分割）</li>
+<li><strong>MMハッシュ計算</strong>: <code>MultiModalHasher</code> でコンテンツベースのblake3ハッシュを生成</li>
+<li><strong>ProcessorCache</strong>: HF処理結果をキャッシュ（4種類の実装: processor_only/lru/shm/none）</li>
+<li><strong>EngineCoreRequest</strong>: <code>mm_features: list[MultiModalFeatureSpec]</code> にテンソルデータ・位置情報・ハッシュを格納</li>
+</ol>
+<h3 id="バックエンドp1の差分"><a class="header" href="#バックエンドp1の差分">バックエンド（P1）の差分</a></h3>
+<ol>
+<li><strong>EncoderCacheManager</strong>: エンコーダ出力をリファレンスカウント方式で管理。キャッシュヒットでエンコーダ計算スキップ</li>
+<li><strong>Scheduler</strong>: <code>encoder_compute_budget</code> でステップあたりのエンコーダ計算量を制御</li>
+<li><strong>GPUModelRunner</strong>:
+<ul>
+<li><code>_execute_mm_encoder()</code>: ビジョンエンコーダ実行（<code>model.embed_multimodal()</code>）</li>
+<li><code>_gather_mm_embeddings()</code>: キャッシュからプレースホルダー位置に対応する埋め込みを取得</li>
+<li><code>embed_input_ids()</code>: <code>masked_scatter_</code> でテキスト埋め込みとビジョン埋め込みをマージ</li>
+</ul>
+</li>
+<li><strong>モデルforward</strong>: <code>input_ids</code> ではなく <code>inputs_embeds</code>（マージ済み）が渡される</li>
+</ol>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="アーキテクチャ概要"><a class="header" href="#アーキテクチャ概要">アーキテクチャ概要</a></h1>
 <blockquote>
@@ -1601,10 +1624,19 @@ EngineCore.step()（続き）
 <tr><td>CUDAGraph統合</td><td><code>_model_forward()</code>, CUDAGraphランナー</td><td>中</td></tr>
 <tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
 <tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位）</td></tr>
-<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位）</td></tr>
+<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位） → <strong>Phase 2bで調査済み</strong></td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="マルチモーダル処理"><a class="header" href="#マルチモーダル処理">マルチモーダル処理</a></h2>
+<p>マルチモーダル推論時、GPUModelRunnerは <code>execute_model()</code> 内で以下の追加処理を行う:</p>
+<ol>
+<li><strong><code>_execute_mm_encoder()</code></strong> (L2293): <code>model.embed_multimodal()</code> でビジョンエンコーダ実行。結果を <code>encoder_cache[mm_hash]</code> に格納</li>
+<li><strong><code>_gather_mm_embeddings()</code></strong> (L2449): <code>encoder_cache</code> からスケジュール範囲に対応する埋め込みをスライス。チャンクPrefill対応</li>
+<li><strong><code>embed_input_ids()</code></strong>: <code>masked_scatter_</code> でテキスト + ビジョン埋め込みをマージ → <code>inputs_embeds</code> として model.forward() に渡す</li>
+</ol>
+<p><code>encoder_cache: dict[str, torch.Tensor]</code> はGPU上のシンプルなdictキャッシュで、Schedulerの <code>free_encoder_mm_hashes</code> 指示で解放される。</p>
+<p>詳細は <a href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド MM処理パス</a> を参照。</p>
 <h2 id="主要ファイル-1"><a class="header" href="#主要ファイル-1">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1703,10 +1735,21 @@ EngineCore.step()（続き）
     → 外部IDを external_req_id に退避
     → 内部ID（外部ID + 8文字ランダム）を request_id に設定
 </code></pre>
+<h2 id="マルチモーダル処理-1"><a class="header" href="#マルチモーダル処理-1">マルチモーダル処理</a></h2>
+<p>テキスト入力に加えて画像等のマルチモーダルデータがある場合、InputProcessorは以下の追加処理を行う:</p>
+<ol>
+<li><strong>MM Registry から <code>BaseMultiModalProcessor</code> を取得</strong>（<code>_get_mm_processor()</code>）</li>
+<li><strong>マルチモーダルデータのパース</strong>: <code>mm_processor.info.parse_mm_data()</code> → <code>MultiModalDataItems</code></li>
+<li><strong>HF Processor 実行</strong>: <code>mm_processor.apply()</code> → <code>MultiModalInputs</code>（トークン列 + テンソル + ハッシュ + PlaceholderRange）</li>
+<li><strong>ProcessorCache</strong>: <code>mm_processor_cache</code> によるHF処理結果のキャッシュ（4種類: processor_only/lru/shm/none）</li>
+<li><strong>MultiModalFeatureSpec 構築</strong>: データ + 位置情報 + ハッシュを <code>EngineCoreRequest.mm_features</code> にセット</li>
+</ol>
+<p>詳細は <a href="#フロントエンド-マルチモーダル処理パス-medium-verified">マルチモーダル フロントエンド処理</a> を参照。</p>
 <h2 id="関連ドキュメント-3"><a class="header" href="#関連ドキュメント-3">関連ドキュメント</a></h2>
 <ul>
 <li><a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a></li>
 <li><a href="#テキスト推論データフロー">データフロー</a></li>
+<li><a href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="kvcachemanager-サマリー"><a class="header" href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></h1>
@@ -2989,13 +3032,1007 @@ Scheduler.schedule()
 <li><a href="#用語集">用語集</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
+<p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
+<h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
+<pre class="mermaid">graph TD
+    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate 適用&lt;br&gt;プレースホルダー挿入"]
+    B --&gt; C["InputPreprocessor&lt;br&gt;トークナイズ + HF Processor"]
+
+    C --&gt; D{"ProcessorCache&lt;br&gt;ヒット?"}
+    D --&gt;|HIT| E["キャッシュから取得&lt;br&gt;(HF処理スキップ)"]
+    D --&gt;|MISS| F["HF Processor 実行&lt;br&gt;pixel_values テンソル生成"]
+    E --&gt; G["MultiModalFeatureSpec 構築"]
+    F --&gt; G
+
+    G --&gt; H["EngineCoreRequest&lt;br&gt;ZMQ IPC 送信"]
+
+    H --&gt; I["Scheduler"]
+    I --&gt; J{"EncoderCacheManager&lt;br&gt;ヒット?"}
+    J --&gt;|HIT| K["エンコーダ計算スキップ"]
+    J --&gt;|MISS| L["encoder_compute_budget&lt;br&gt;から割り当て"]
+
+    K --&gt; M["GPUModelRunner"]
+    L --&gt; M
+
+    M --&gt; N["_execute_mm_encoder()&lt;br&gt;model.embed_multimodal()"]
+    N --&gt; O["encoder_cache に格納"]
+    O --&gt; P["_gather_mm_embeddings()&lt;br&gt;キャッシュからスライス"]
+    P --&gt; Q["embed_input_ids()&lt;br&gt;text + vision マージ&lt;br&gt;(masked_scatter_)"]
+    Q --&gt; R["model.forward()&lt;br&gt;統合推論"]
+</pre>
+
+<h2 id="主要コンポーネント-6"><a class="header" href="#主要コンポーネント-6">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>場所</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MULTIMODAL_REGISTRY</code></td><td><code>vllm/multimodal/registry.py</code></td><td>モデルごとのプロセッサ/情報を登録・取得</td></tr>
+<tr><td><code>BaseMultiModalProcessor</code></td><td><code>vllm/multimodal/processing/processor.py</code></td><td>HFプロセッサ実行、プロンプト更新管理</td></tr>
+<tr><td><code>MultiModalHasher</code></td><td><code>vllm/multimodal/hasher.py</code></td><td>コンテンツベースハッシュ（blake3）</td></tr>
+<tr><td><code>ProcessorCache</code> (4種)</td><td><code>vllm/multimodal/cache.py</code></td><td>P0側のHF処理結果キャッシュ</td></tr>
+<tr><td><code>EncoderCacheManager</code></td><td><code>vllm/v1/core/encoder_cache_manager.py</code></td><td>P1側のエンコーダ出力の論理管理</td></tr>
+<tr><td><code>encoder_cache</code></td><td><code>vllm/v1/worker/gpu_model_runner.py:439</code></td><td>GPU上のエンコーダ出力テンソルキャッシュ</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="キャッシュの3層構造"><a class="header" href="#キャッシュの3層構造">キャッシュの3層構造</a></h2>
+<pre><code>P0（フロントエンド）               P1（Scheduler）              P1（GPU）
+┌──────────────────┐           ┌─────────────────┐        ┌──────────────┐
+│ ProcessorCache   │           │ EncoderCache    │        │ encoder_cache│
+│ LRU, サイズベース │           │ Manager         │        │ dict[str,    │
+│                  │           │ RefCount + FIFO │        │  Tensor]     │
+│ 何をキャッシュ:   │           │                 │        │              │
+│ HF処理済みテンソル │           │ 何を管理:       │        │ 何をキャッシュ:│
+│ + prompt_updates │           │ 容量・参照カウント│       │ エンコーダ出力│
+│                  │           │ Evictionリスト   │        │ (GPUテンソル) │
+└──────────────────┘           └─────────────────┘        └──────────────┘
+  ヒット時:                      ヒット時:                   ヒット時:
+  HF処理スキップ                 エンコーダ計算スキップ        テンソル再利用
+  IPC転送量削減                  予算節約                    再計算不要
+</code></pre>
+<h2 id="テキスト推論との主な差分"><a class="header" href="#テキスト推論との主な差分">テキスト推論との主な差分</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>処理段階</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
+</thead>
+<tbody>
+<tr><td>入力前処理</td><td>tokenize のみ</td><td>tokenize + HF Processor + ハッシュ + キャッシュ</td></tr>
+<tr><td>プロンプト</td><td>テキストトークンのみ</td><td>テキスト + プレースホルダートークン（<code>&lt;start_of_image&gt;</code> 等）</td></tr>
+<tr><td>EngineCoreRequest</td><td><code>mm_features = None</code></td><td><code>mm_features = [MultiModalFeatureSpec, ...]</code></td></tr>
+<tr><td>Scheduler</td><td>KVキャッシュ予算のみ</td><td>+ エンコーダ計算予算管理</td></tr>
+<tr><td>GPUModelRunner</td><td>input_ids → model.forward()</td><td>encoder実行 → embed_input_ids(masked_scatter_) → inputs_embeds → model.forward()</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="gemma3-固有の特徴"><a class="header" href="#gemma3-固有の特徴">Gemma3 固有の特徴</a></h2>
+<ul>
+<li><strong>ビジョンエンコーダ</strong>: SiglipVisionModel（SIGLIP ViT、双方向Attention）</li>
+<li><strong>プロジェクタ</strong>: AvgPool2d → GemmaRMSNorm → Linear（vision → text空間）</li>
+<li><strong>プレースホルダー</strong>: <code>&lt;start_of_image&gt;</code> → <code>image_token × 256</code> に展開</li>
+<li><strong>Pan-and-Scan</strong>: アスペクト比が大きい画像を複数クロップ（V1では簡略化されたアテンション）</li>
+<li><strong>改行トークン結合</strong>: <code>\n</code> + <code>\n\n</code> → <code>\n\n\n</code> 等の特殊処理</li>
+</ul>
+<h2 id="詳細ドキュメント-1"><a class="header" href="#詳細ドキュメント-1">詳細ドキュメント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ドキュメント</th><th>内容</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#フロントエンド-マルチモーダル処理パス-medium-verified">mm-processing.md</a></td><td>フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ</td></tr>
+<tr><td><a href="#バックエンド-マルチモーダル処理パス-medium-verified">mm-engine-gpu.md</a></td><td>バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ</td></tr>
+<tr><td><a href="#gemma3-ビジョンエンコーダと画像処理-medium-verified">gemma3-vision.md</a></td><td>Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
+<ul>
+<li><strong>上流</strong>: <a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a> → <a href="#inputprocessor-サマリー">InputProcessor</a></li>
+<li><strong>下流</strong>: <a href="#scheduler-サマリー">Scheduler</a> → <a href="#gpumodelrunner">GPUModelRunner</a> → モデル層</li>
+</ul>
+<h2 id="主要ファイル-2"><a class="header" href="#主要ファイル-2">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>概要</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/multimodal/</code></td><td>マルチモーダル処理の基盤（レジストリ、ハッシュ、キャッシュ、パース）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td>フロントエンドでのMM処理統合</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td>バックエンドのエンコーダキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td>GPU上でのエンコーダ実行と埋め込みマージ</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td>Gemma3のマルチモーダル実装</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td>SiglipVisionModel（ビジョンエンコーダ）</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="gemma3-ビジョンエンコーダと画像処理-medium-verified"><a class="header" href="#gemma3-ビジョンエンコーダと画像処理-medium-verified">Gemma3 ビジョンエンコーダと画像処理 [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<p>Gemma3 モデルにおけるビジョンエンコーダ（SiglipVisionModel）、プロジェクタ（Gemma3MultiModalProjector）、および text + vision 埋め込みマージの詳細。</p>
+<h2 id="モデルアーキテクチャ全体像"><a class="header" href="#モデルアーキテクチャ全体像">モデルアーキテクチャ全体像</a></h2>
+<pre class="mermaid">graph TD
+    subgraph "Gemma3ForConditionalGeneration"
+        subgraph "vision_tower (SiglipVisionModel)"
+            PE["SiglipVisionEmbeddings&lt;br&gt;Conv2d patch embedding&lt;br&gt;+ position embedding"]
+            ENC["SiglipEncoder&lt;br&gt;N層 Transformer&lt;br&gt;(双方向Attention)"]
+            PE --&gt; ENC
+        end
+
+        PROJ["Gemma3MultiModalProjector&lt;br&gt;AvgPool2d → RMSNorm → Linear"]
+        ENC --&gt; PROJ
+
+        subgraph "language_model (Gemma3ForCausalLM)"
+            EMB["embed_tokens()&lt;br&gt;テキスト埋め込み"]
+            LM["Transformer Decoder&lt;br&gt;(因果的Attention)"]
+            EMB --&gt; LM
+        end
+
+        MERGE["masked_scatter_&lt;br&gt;text + vision マージ"]
+        PROJ --&gt; MERGE
+        EMB --&gt; MERGE
+        MERGE --&gt; LM
+    end
+</pre>
+
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:481-694</code></p>
+<h2 id="1-siglipvisionmodelビジョンエンコーダ"><a class="header" href="#1-siglipvisionmodelビジョンエンコーダ">1. SiglipVisionModel（ビジョンエンコーダ）</a></h2>
+<h3 id="構造"><a class="header" href="#構造">構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:848-894</code></p>
+<pre><code>SiglipVisionModel
+  └─ SiglipVisionTransformer (L681)
+      ├─ SiglipVisionEmbeddings (L282)
+      │   ├─ patch_embedding: Conv2d(3, hidden_size, kernel=patch_size, stride=patch_size)
+      │   └─ position_embedding: Embedding(num_patches, hidden_size)
+      ├─ SiglipEncoder (L520)
+      │   └─ layers: ModuleList[SiglipEncoderLayer] × N
+      │       ├─ layer_norm1 → SiglipAttention (MMEncoderAttention)
+      │       └─ layer_norm2 → SiglipMLP
+      └─ post_layernorm: LayerNorm（最終層のみ）
+</code></pre>
+<h3 id="パッチ埋め込み-siglipvisionembeddings"><a class="header" href="#パッチ埋め込み-siglipvisionembeddings">パッチ埋め込み (SiglipVisionEmbeddings)</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:282-352</code></p>
+<pre><code class="language-python"># 入力: pixel_values (batch, 3, H, W)
+patch_embeds = self.patch_embedding(pixel_values)  # Conv2d: (batch, hidden_size, grid, grid)
+embeddings = patch_embeds.flatten(2).transpose(1, 2)  # (batch, num_patches, hidden_size)
+embeddings += self.position_embedding(position_ids)    # 位置埋め込みを加算
+</code></pre>
+<ul>
+<li><code>image_size = 256</code> の場合、<code>patch_size = 16</code> → <code>num_patches = (256/16)² = 256</code></li>
+<li>各パッチは <code>16×16×3 = 768</code> ピクセルから <code>hidden_size</code> 次元のベクトルに変換</li>
+<li>位置埋め込みは学習済みの <code>nn.Embedding</code>（補間対応あり）</li>
+</ul>
+<h3 id="エンコーダ層-siglipencoder"><a class="header" href="#エンコーダ層-siglipencoder">エンコーダ層 (SiglipEncoder)</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:520-567</code></p>
+<p>各エンコーダ層の構造:</p>
+<pre><code>SiglipEncoderLayer:
+    residual = hidden_states
+    hidden_states = layer_norm1(hidden_states)
+    hidden_states = self_attn(hidden_states)     ← MMEncoderAttention（双方向）
+    hidden_states = residual + hidden_states
+    residual = hidden_states
+    hidden_states = layer_norm2(hidden_states)
+    hidden_states = mlp(hidden_states)
+    hidden_states = residual + hidden_states
+</code></pre>
+<ul>
+<li><strong>アテンション型</strong>: <code>MMEncoderAttention</code>（双方向、因果マスクなし）</li>
+<li>全パッチが全パッチを参照できる（テキストの因果アテンションとは異なる）</li>
+</ul>
+<h3 id="forward-フロー"><a class="header" href="#forward-フロー">forward() フロー</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:755-788</code></p>
+<pre><code class="language-python">def forward(self, pixel_values, *, select_layers=None, feature_select_strategy=None):
+    hidden_states = self.embeddings(pixel_values)      # (batch, num_patches, hidden_size)
+    encoder_outputs = self.encoder(inputs_embeds=hidden_states)  # N層 Transformer
+    encoder_outputs = resolve_visual_encoder_outputs(   # 特徴選択
+        encoder_outputs, select_layers, feature_select_strategy
+    )
+    return self.last_hs_proc(encoder_outputs)           # post_layernorm + head
+</code></pre>
+<p>出力: <code>(batch, num_patches, hidden_size)</code> — 典型的に <code>(batch, 256, 1152)</code></p>
+<h2 id="2-gemma3multimodalprojector投射層"><a class="header" href="#2-gemma3multimodalprojector投射層">2. Gemma3MultiModalProjector（投射層）</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:432-473</code></p>
+<p>ビジョンエンコーダの出力をテキスト埋め込み空間に変換する。</p>
+<h3 id="パラメータ"><a class="header" href="#パラメータ">パラメータ</a></h3>
+<pre><code class="language-python">mm_input_projection_weight: (vision_hidden_size, text_hidden_size)  # 例: (1152, 2048)
+mm_soft_emb_norm: GemmaRMSNorm(vision_hidden_size)
+avg_pool: AvgPool2d(kernel_size, stride=kernel_size)
+</code></pre>
+<h3 id="設定値の計算"><a class="header" href="#設定値の計算">設定値の計算</a></h3>
+<pre><code class="language-python">patches_per_image = image_size // patch_size           # 256 // 16 = 16
+tokens_per_side = int(mm_tokens_per_image ** 0.5)      # int(256 ** 0.5) = 16
+kernel_size = patches_per_image // tokens_per_side     # 16 // 16 = 1
+</code></pre>
+<p><code>kernel_size = 1</code> の場合、AvgPool2dは実質的にno-op（パッチ数が変わらない）。<code>mm_tokens_per_image</code> が小さい設定ではダウンサンプリングが発生する。</p>
+<h3 id="forward-フロー-1"><a class="header" href="#forward-フロー-1">forward() フロー</a></h3>
+<pre><code class="language-python">def forward(self, vision_outputs):
+    # vision_outputs: (batch, hidden_size, num_patches) — エンコーダ出力のtranspose形式
+    batch_size, _, seq_length = vision_outputs.shape
+
+    # 1. 2Dグリッドへリシェイプ
+    reshaped = vision_outputs.transpose(1, 2).reshape(
+        batch_size, seq_length, patches_per_image, patches_per_image
+    )  # (batch, seq_length, 16, 16)
+
+    # 2. 平均プーリング（ダウンサンプリング）
+    pooled = self.avg_pool(reshaped)  # kernel=1の場合: (batch, seq_length, 16, 16)
+    pooled = pooled.flatten(2).transpose(1, 2)  # (batch, mm_tokens_per_image, seq_length)
+
+    # 3. RMS正規化
+    normed = self.mm_soft_emb_norm(pooled)
+
+    # 4. 線形投射: vision_hidden_size → text_hidden_size
+    projected = torch.matmul(normed, self.mm_input_projection_weight)
+    # (batch, mm_tokens_per_image, text_hidden_size)
+
+    return projected.type_as(vision_outputs)
+</code></pre>
+<p><strong>重要な注意</strong>: テキスト埋め込みの正規化とは異なり、ビジョン埋め込みには <code>mm_soft_emb_norm</code> のみが適用される。vocab embedding に適用されるスケーリング（<code>embed_tokens * normalizer</code>）はビジョン埋め込みには適用 <strong>されない</strong>。</p>
+<h2 id="3-embed_multimodal-と-_process_image_input"><a class="header" href="#3-embed_multimodal-と-_process_image_input">3. embed_multimodal() と _process_image_input()</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:567-594</code></p>
+<p>GPUModelRunner の <code>_execute_mm_encoder()</code> から呼ばれるメインのエンコーダ実行パス:</p>
+<pre><code class="language-python">def embed_multimodal(self, **kwargs):
+    image_input = self._parse_and_validate_image_input(**kwargs)  # pixel_values 取得
+    if image_input is None:
+        return []
+    return self._process_image_input(image_input)
+
+def _process_image_input(self, image_input):
+    pixel_values = image_input["pixel_values"]    # (total_patches, 3, image_size, image_size)
+    num_patches = image_input["num_patches"]       # (num_images,) — 画像ごとのパッチ数
+
+    # ビジョンエンコーダ実行
+    image_features = self._image_pixels_to_features(self.vision_tower, pixel_values)
+
+    # プロジェクタで投射
+    image_embeds = self.multi_modal_projector(image_features)
+
+    # 画像ごとに分割 + flatten
+    return [e.flatten(0, 1) for e in image_embeds.split(num_patches.tolist())]
+    # list[Tensor(mm_tokens_per_image, text_hidden_size)]
+</code></pre>
+<h3 id="テンソル形状の追跡"><a class="header" href="#テンソル形状の追跡">テンソル形状の追跡</a></h3>
+<p>画像1枚、Pan-and-Scan なし（<code>num_patches=1</code>）の場合:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ステージ</th><th>形状</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td>入力 pixel_values</td><td><code>(1, 3, 256, 256)</code></td><td>RGB画像</td></tr>
+<tr><td>patch_embedding</td><td><code>(1, 1152, 16, 16)</code></td><td>Conv2d出力</td></tr>
+<tr><td>flatten + transpose</td><td><code>(1, 256, 1152)</code></td><td>パッチシーケンス</td></tr>
+<tr><td>+ position_embedding</td><td><code>(1, 256, 1152)</code></td><td>位置情報付加</td></tr>
+<tr><td>SiglipEncoder (N層)</td><td><code>(1, 256, 1152)</code></td><td>Transformer処理</td></tr>
+<tr><td>Projector reshape</td><td><code>(1, 256, 16, 16)</code></td><td>2Dグリッド</td></tr>
+<tr><td>AvgPool2d (k=1)</td><td><code>(1, 256, 16, 16)</code></td><td>no-op</td></tr>
+<tr><td>flatten + transpose</td><td><code>(1, 256, 256)</code></td><td>?</td></tr>
+<tr><td>mm_soft_emb_norm</td><td><code>(1, 256, 1152)</code></td><td>RMS正規化</td></tr>
+<tr><td>matmul(projection)</td><td><code>(1, 256, 2048)</code></td><td>テキスト空間</td></tr>
+<tr><td>flatten(0,1)</td><td><code>(256, 2048)</code></td><td>最終出力</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="4-テキスト--ビジョン埋め込みのマージ"><a class="header" href="#4-テキスト--ビジョン埋め込みのマージ">4. テキスト + ビジョン埋め込みのマージ</a></h2>
+<h3 id="embed_input_ids"><a class="header" href="#embed_input_ids">embed_input_ids()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:596-614</code></p>
+<pre><code class="language-python">def embed_input_ids(self, input_ids, multimodal_embeddings=None, *, is_multimodal=None, ...):
+    if multimodal_embeddings is None or is_multimodal is None:
+        return super().embed_input_ids(input_ids)  # テキストのみ
+    return super().embed_input_ids(
+        input_ids, multimodal_embeddings=multimodal_embeddings,
+        is_multimodal=is_multimodal, handle_oov_mm_token=True,
+    )
+</code></pre>
+<h3 id="_merge_multimodal_embeddings"><a class="header" href="#_merge_multimodal_embeddings">_merge_multimodal_embeddings()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/utils.py:445-487</code></p>
+<pre><code class="language-python">def _merge_multimodal_embeddings(inputs_embeds, multimodal_embeddings, is_multimodal):
+    mm_embeds_flat = _flatten_embeddings(multimodal_embeddings)
+    # in-place 置換: is_multimodal=True の位置を mm_embeds_flat で上書き
+    inputs_embeds.masked_scatter_(
+        is_multimodal.unsqueeze(-1),
+        mm_embeds_flat.to(dtype=inputs_embeds.dtype)
+    )
+    return inputs_embeds
+</code></pre>
+<p><strong><code>masked_scatter_</code> の動作</strong>:</p>
+<ol>
+<li><code>is_multimodal</code>: <code>(seq_len,)</code> のboolテンソル（True = 画像プレースホルダー位置）</li>
+<li><code>is_multimodal.unsqueeze(-1)</code>: <code>(seq_len, 1)</code> → ブロードキャストで <code>(seq_len, hidden_size)</code> に展開</li>
+<li><code>mm_embeds_flat</code>: True位置の数 × hidden_size の連続テンソル</li>
+<li>True位置に順番に mm_embeds_flat の値を書き込む</li>
+</ol>
+<p><strong>制約</strong>: <code>is_multimodal.sum() == len(mm_embeds_flat)</code> でなければランタイムエラー</p>
+<h3 id="handle_oov_mm_token"><a class="header" href="#handle_oov_mm_token">handle_oov_mm_token</a></h3>
+<p>Gemma3 は <code>handle_oov_mm_token=True</code> を指定。これは image_token_id が vocab の範囲外の場合でも安全に処理するための仕組み。</p>
+<h2 id="5-pan-and-scanパノラマクロップ"><a class="header" href="#5-pan-and-scanパノラマクロップ">5. Pan-and-Scan（パノラマクロップ）</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109-176</code></p>
+<p>アスペクト比が大きい画像に対して、複数のクロップを生成して詳細認識を向上させる仕組み。</p>
+<h3 id="クロップ数の計算"><a class="header" href="#クロップ数の計算">クロップ数の計算</a></h3>
+<pre><code class="language-python">def get_num_crops(self, *, image_width, image_height, processor):
+    # 横長画像の場合
+    if image_width &gt;= image_height:
+        if width/height &lt; min_ratio:  return 0  # 比率が小さすぎる
+        num_crops_w = min(floor(width/min_crop_size), floor(w/h + 0.5))
+        num_crops_w = max(2, num_crops_w)
+        num_crops_w = min(max_num_crops, num_crops_w)
+        num_crops_h = 1
+
+    # 縦長画像の場合は逆
+    ...
+
+    # クロップサイズが小さすぎる場合は無効
+    if min(crop_size_w, crop_size_h) &lt; min_crop_size:
+        return 0
+
+    return num_crops_w * num_crops_h
+</code></pre>
+<h3 id="pan-and-scan時のプロンプト"><a class="header" href="#pan-and-scan時のプロンプト">Pan-and-Scan時のプロンプト</a></h3>
+<pre><code>"Here is the original image &lt;full_image_seq&gt; and here are some crops to help you see better &lt;full_image_seq&gt; &lt;full_image_seq&gt;"
+</code></pre>
+<p>各 <code>&lt;full_image_seq&gt;</code> は <code>image_seq_length</code>（=256）トークンを消費。</p>
+<p><strong>V1での制限</strong>: Pan-and-Scan は簡略化されたアテンションパターンを使用するため、最適ではない結果になる可能性がある。</p>
+<h2 id="6-forward--最終推論"><a class="header" href="#6-forward--最終推論">6. forward() — 最終推論</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:616-635</code></p>
+<pre><code class="language-python">def forward(self, input_ids, positions, intermediate_tensors=None, inputs_embeds=None, **kwargs):
+    if intermediate_tensors is not None:
+        inputs_embeds = None  # Pipeline Parallelism の中間ランク
+
+    hidden_states = self.language_model.model(
+        input_ids,
+        positions,
+        intermediate_tensors,
+        inputs_embeds=inputs_embeds,  # text + vision マージ済み
+        **kwargs,
+    )
+    return hidden_states
+</code></pre>
+<p>マルチモーダル時は <code>inputs_embeds</code> が渡され、<code>input_ids</code> は使用されない（embed_input_ids で既に埋め込み済みのため）。</p>
+<h2 id="データフロー全体"><a class="header" href="#データフロー全体">データフロー全体</a></h2>
+<pre><code>pixel_values: (total_patches, 3, 256, 256)
+      │
+      ▼
+SiglipVisionEmbeddings
+  Conv2d(3→1152, k=16, s=16) + position_embedding
+      │
+      ▼
+(total_patches, 256, 1152)
+      │
+      ▼
+SiglipEncoder (N層 Transformer, 双方向Attention)
+      │
+      ▼
+(total_patches, 256, 1152)
+      │
+      ▼
+Gemma3MultiModalProjector
+  reshape → AvgPool2d → RMSNorm → matmul(1152→2048)
+      │
+      ▼
+(total_patches, 256, 2048)
+      │
+      ▼
+split by num_patches → list[(mm_tokens, 2048)]
+      │
+      ▼
+encoder_cache[mm_hash] に格納
+      │
+      ▼
+_gather_mm_embeddings() でスライス
+      │
+      ▼
+embed_input_ids():
+  text_embeds = embed_tokens(input_ids)     # (seq_len, 2048)
+  merged = masked_scatter_(text_embeds, is_multimodal, mm_embeds)
+      │
+      ▼
+language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
+</code></pre>
+<h2 id="主要ファイル-3"><a class="header" href="#主要ファイル-3">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3ForConditionalGeneration</code></td><td>L481</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3MultiModalProjector</code></td><td>L432</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3ProcessingInfo</code>, <code>Gemma3MultiModalProcessor</code></td><td>L77, L276</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipVisionModel</code></td><td>L848</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipVisionEmbeddings</code></td><td>L282</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td><code>SiglipEncoder</code></td><td>L520</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/utils.py</code></td><td><code>_merge_multimodal_embeddings()</code></td><td>L445</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント-8"><a class="header" href="#関連ドキュメント-8">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド MM処理パス</a></li>
+<li><a href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド MM処理パス</a></li>
+<li><a href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン概要</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="バックエンド-マルチモーダル処理パス-medium-verified"><a class="header" href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<p>EngineCore（P1）でマルチモーダルリクエストがどのように処理されるかを追跡する。EncoderCacheManager、Schedulerのエンコーダ予算管理、GPUModelRunnerのエンコーダ実行・キャッシュ・埋め込みマージを含む。</p>
+<h2 id="全体フロー"><a class="header" href="#全体フロー">全体フロー</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant ECM as EncoderCacheManager
+    participant MR as GPUModelRunner
+    participant M as Model
+
+    Note over S: schedule() 実行中
+    S-&gt;&gt;ECM: check_and_update_cache(req, i)
+    alt キャッシュヒット
+        ECM--&gt;&gt;S: True（エンコード不要）
+    else キャッシュミス
+        ECM--&gt;&gt;S: False
+        S-&gt;&gt;ECM: can_allocate(req, i, budget, scheduled)
+        alt 空き/回収可能
+            ECM--&gt;&gt;S: True（Eviction実行の可能性あり）
+            S-&gt;&gt;ECM: allocate(req, i)
+            Note over S: scheduled_encoder_inputs[req_id].append(i)
+        else 不足
+            ECM--&gt;&gt;S: False
+            Note over S: num_new_tokens を調整
+        end
+    end
+
+    Note over S: SchedulerOutput 構築
+    S-&gt;&gt;MR: execute_model(scheduler_output)
+
+    MR-&gt;&gt;MR: _batch_mm_inputs_from_scheduler()
+    MR-&gt;&gt;M: embed_multimodal(pixel_values)
+    M--&gt;&gt;MR: encoder_outputs
+    MR-&gt;&gt;MR: encoder_cache[mm_hash] = output
+
+    MR-&gt;&gt;MR: _gather_mm_embeddings()
+    Note over MR: encoder_cache からスライス
+    MR-&gt;&gt;M: embed_input_ids(ids, mm_embeds, is_multimodal)
+    Note over M: masked_scatter_ で text + vision マージ
+
+    MR-&gt;&gt;MR: free_encoder_mm_hashes の処理
+    Note over MR: encoder_cache.pop(mm_hash)
+</pre>
+
+<h2 id="1-encodercachemanager"><a class="header" href="#1-encodercachemanager">1. EncoderCacheManager</a></h2>
+<h3 id="概要-13"><a class="header" href="#概要-13">概要</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17-267</code></p>
+<p>ビジョンエンコーダの出力（埋め込みテンソル）のライフサイクルを管理する。リファレンスカウント方式でリクエスト間のキャッシュ共有を実現し、遅延Evictionでメモリ効率を高める。</p>
+<h3 id="データ構造-1"><a class="header" href="#データ構造-1">データ構造</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cache_size</code></td><td><code>int</code></td><td>キャッシュ容量（エンコーダ埋め込み数単位）</td></tr>
+<tr><td><code>num_free_slots</code></td><td><code>int</code></td><td>現在の空き容量</td></tr>
+<tr><td><code>num_freeable_slots</code></td><td><code>int</code></td><td>回収可能な容量（参照なしエントリ含む）</td></tr>
+<tr><td><code>cached</code></td><td><code>dict[str, set[str]]</code></td><td>mm_hash → 参照中のrequest_id集合</td></tr>
+<tr><td><code>freeable</code></td><td><code>OrderedDict[str, int]</code></td><td>mm_hash → 埋め込み数（参照なし、回収可能）</td></tr>
+<tr><td><code>freed</code></td><td><code>list[str]</code></td><td>実際にEvictされたmm_hashのリスト</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="主要操作"><a class="header" href="#主要操作">主要操作</a></h3>
+<h4 id="check_and_update_cacherequest-input_id--bool"><a class="header" href="#check_and_update_cacherequest-input_id--bool">check_and_update_cache(request, input_id) → bool</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:91-117</code></p>
+<pre><code>1. mm_hash が cached にない → False（キャッシュミス）
+2. cached[mm_hash] が空集合（参照なし）→ freeable から除去、num_freeable_slots 減算
+3. cached[mm_hash] に request_id 追加 → True（キャッシュヒット）
+</code></pre>
+<p>キャッシュヒット時、エンコーダ計算が <strong>完全にスキップ</strong> される。</p>
+<h4 id="can_allocaterequest-input_id-budget-scheduled--bool"><a class="header" href="#can_allocaterequest-input_id-budget-scheduled--bool">can_allocate(request, input_id, budget, scheduled) → bool</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:119-178</code></p>
+<pre><code>1. num_embeds &gt; encoder_compute_budget → False（予算不足）
+2. total ≤ num_free_slots → True（空きあり）
+3. total &gt; num_freeable_slots → False（回収しても不足）
+4. total &gt; num_free_slots かつ ≤ num_freeable_slots
+   → Eviction 実行: freeable から oldest-first で popitem(last=False)
+   → cached から削除、freed に追加
+   → num_free_slots 回復 → True
+</code></pre>
+<p><strong>Eviction ポリシー</strong>: FIFO順（OrderedDict の挿入順）。最も古い unreferenced エントリを先にEvict。</p>
+<h4 id="allocaterequest-input_id"><a class="header" href="#allocaterequest-input_id">allocate(request, input_id)</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:180-205</code></p>
+<p>キャッシュスペースを予約（論理的な簿記のみ）。物理メモリの割り当てはGPUModelRunnerで行われる。</p>
+<h4 id="freerequest"><a class="header" href="#freerequest">free(request)</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:242-253</code></p>
+<p>リクエスト完了時に呼ばれる。全エンコーダ入力の参照を解放。参照セットが空になったエントリは <code>freeable</code> に移動する（物理メモリは解放しない）。</p>
+<h4 id="get_freed_mm_hashes--liststr"><a class="header" href="#get_freed_mm_hashes--liststr">get_freed_mm_hashes() → list[str]</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:255-266</code></p>
+<p>Evictされたmm_hashを返してクリア。SchedulerOutputに含められ、GPUModelRunnerに通知される。</p>
+<h3 id="キャッシュ予算の計算"><a class="header" href="#キャッシュ予算の計算">キャッシュ予算の計算</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:269-316</code></p>
+<pre><code class="language-python">encoder_compute_budget = max(max_num_encoder_input_tokens, max_tokens_per_mm_item)
+encoder_cache_size = max(encoder_cache_size_config, max_tokens_per_mm_item)
+</code></pre>
+<ul>
+<li><code>encoder_compute_budget</code>: 1ステップあたりのエンコーダ計算量上限（埋め込み数）</li>
+<li><code>encoder_cache_size</code>: キャッシュ全体の容量</li>
+</ul>
+<h2 id="2-scheduler-のエンコーダスケジューリング"><a class="header" href="#2-scheduler-のエンコーダスケジューリング">2. Scheduler のエンコーダスケジューリング</a></h2>
+<h3 id="_get_encoder_budget"><a class="header" href="#_get_encoder_budget">_get_encoder_budget()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1060-1215</code></p>
+<p>各リクエストのエンコーダ入力をスケジューリングするロジック。<code>mm_features</code> の各アイテムについて:</p>
+<pre><code>for i, mm_feature in enumerate(mm_features):
+    1. 位置チェック: start_pos + num_encoder_tokens がスケジュール範囲内か
+    2. 重複チェック: 同じ mm_hash が既にスケジュール済みか
+    3. キャッシュチェック: encoder_cache_manager.check_and_update_cache() → True ならスキップ
+    4. チャンクMMチェック: disable_chunked_mm_input の場合、部分スケジュール禁止
+    5. 割り当てチェック: can_allocate() → False ならトークン数調整して break
+    6. ECConnectorチェック: 外部キャッシュにある場合は external_load_encoder_input に追加
+    7. encoder_inputs_to_schedule に追加、予算減算
+</code></pre>
+<h3 id="scheduleroutput-のmm関連フィールド"><a class="header" href="#scheduleroutput-のmm関連フィールド">SchedulerOutput のMM関連フィールド</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/output.py:207-218</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>scheduled_encoder_inputs</code></td><td><code>dict[str, list[int]]</code></td><td>req_id → エンコーダ入力インデックスのリスト</td></tr>
+<tr><td><code>free_encoder_mm_hashes</code></td><td><code>list[str]</code></td><td>解放すべきmm_hashのリスト</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="スケジューリングの統合"><a class="header" href="#スケジューリングの統合">スケジューリングの統合</a></h3>
+<p>schedule() のRUNNINGフェーズとWAITINGフェーズの両方で <code>_get_encoder_budget()</code> が呼ばれる:</p>
+<pre><code>schedule()
+  ├─ encoder_compute_budget = max_num_encoder_input_tokens  # 初期予算
+  │
+  ├─ RUNNING リクエスト処理
+  │   └─ _get_encoder_budget(request, ...)
+  │       → encoder_inputs_to_schedule, 調整後の num_new_tokens
+  │       → allocate() 実行
+  │
+  ├─ WAITING リクエスト処理
+  │   └─ _get_encoder_budget(request, ...)
+  │       → 同上
+  │
+  └─ SchedulerOutput 構築
+      ├─ scheduled_encoder_inputs = {req_id: [input_ids], ...}
+      └─ free_encoder_mm_hashes = encoder_cache_manager.get_freed_mm_hashes()
+</code></pre>
+<h2 id="3-gpumodelrunner-のエンコーダ実行"><a class="header" href="#3-gpumodelrunner-のエンコーダ実行">3. GPUModelRunner のエンコーダ実行</a></h2>
+<h3 id="encoder_cache"><a class="header" href="#encoder_cache">encoder_cache</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:439</code></p>
+<pre><code class="language-python">self.encoder_cache: dict[str, torch.Tensor] = {}
+</code></pre>
+<p>mm_hash をキーとして、エンコーダ出力テンソル（GPU上）を保持する単純なdictキャッシュ。</p>
+<h3 id="_batch_mm_inputs_from_scheduler"><a class="header" href="#_batch_mm_inputs_from_scheduler">_batch_mm_inputs_from_scheduler()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2250-2291</code></p>
+<p>SchedulerOutput の <code>scheduled_encoder_inputs</code> から、エンコーダに渡すデータをバッチにまとめる。</p>
+<pre><code>入力: scheduled_encoder_inputs = {req_id: [input_ids], ...}
+出力: (mm_hashes, mm_kwargs, mm_lora_refs)
+
+for req_id, encoder_input_ids in scheduled_encoder_inputs.items():
+    for mm_input_id in encoder_input_ids:
+        mm_feature = req_state.mm_features[mm_input_id]
+        if mm_feature.data is None:  # P0キャッシュヒットで省略された場合
+            continue
+        mm_hashes.append(mm_feature.identifier)
+        mm_kwargs.append((modality, mm_feature.data))
+</code></pre>
+<h3 id="_execute_mm_encoder"><a class="header" href="#_execute_mm_encoder">_execute_mm_encoder()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2293-2447</code></p>
+<pre><code>1. mm_kwargs をモダリティごとにグループ化（group_mm_kwargs_by_modality）
+2. 各グループに対して model.embed_multimodal(**mm_kwargs_group) を実行
+3. LoRA tower mapping が必要な場合は事前にセット
+4. 出力を encoder_cache[mm_hash] に格納
+5. ECConnector があれば maybe_save_ec_to_connector() で外部キャッシュにも保存
+</code></pre>
+<p><strong>バッチ処理</strong>: 同一モダリティのアイテムはバッチ実行される。異なるモダリティは別グループとして処理。</p>
+<h3 id="_gather_mm_embeddings"><a class="header" href="#_gather_mm_embeddings">_gather_mm_embeddings()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2449-2556</code></p>
+<p>スケジュールされたトークン範囲に対応するエンコーダ出力をキャッシュから取得し、マージ用のデータを準備する。</p>
+<pre><code>for req_id in input_batch.req_ids:
+    for mm_feature in req_state.mm_features:
+        1. プレースホルダーの範囲 [start_pos, start_pos + num_encoder_tokens)
+        2. スケジュールされた範囲 [num_computed_tokens, num_computed + num_scheduled)
+        3. 重複部分を計算 → start_idx, end_idx
+        4. encoder_cache[mm_hash] からスライス → mm_embeds_item
+        5. is_mm_embed マスクの対応位置を True に設定
+</code></pre>
+<p><strong>チャンクPrefill対応</strong>: <code>num_computed_tokens</code> と <code>num_scheduled_tokens</code> に基づいて部分的な埋め込み取得が可能。</p>
+<p>出力:</p>
+<ul>
+<li><code>mm_embeds: list[torch.Tensor]</code> — 全リクエストの埋め込みスライスを連結</li>
+<li><code>is_mm_embed: torch.Tensor</code> — <code>(total_num_scheduled_tokens,)</code> のboolマスク</li>
+</ul>
+<h3 id="統合-_model_forward-内の処理"><a class="header" href="#統合-_model_forward-内の処理">統合: _model_forward() 内の処理</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2756-2777</code></p>
+<pre><code class="language-python"># 1. エンコーダ実行 + キャッシュ格納
+self._execute_mm_encoder(scheduler_output)
+
+# 2. キャッシュから必要な埋め込みを収集
+mm_embeds, is_mm_embed = self._gather_mm_embeddings(scheduler_output)
+
+# 3. テキスト + ビジョン埋め込みのマージ
+inputs_embeds_scheduled = self.model.embed_input_ids(
+    self.input_ids.gpu[:num_scheduled_tokens],
+    multimodal_embeddings=mm_embeds,
+    is_multimodal=is_mm_embed,
+)
+</code></pre>
+<p><code>embed_input_ids()</code> は内部で <code>masked_scatter_</code> を使い、<code>is_multimodal=True</code> の位置を <code>mm_embeds</code> で置換する。</p>
+<h3 id="エンコーダキャッシュの解放"><a class="header" href="#エンコーダキャッシュの解放">エンコーダキャッシュの解放</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:898-899</code></p>
+<pre><code class="language-python">for mm_hash in scheduler_output.free_encoder_mm_hashes:
+    self.encoder_cache.pop(mm_hash, None)
+</code></pre>
+<p>SchedulerOutput に含まれる <code>free_encoder_mm_hashes</code> に基づいて、GPUメモリ上のテンソルを解放。</p>
+<h2 id="4-テキスト推論との差分まとめ"><a class="header" href="#4-テキスト推論との差分まとめ">4. テキスト推論との差分まとめ</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>処理ステップ</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
+</thead>
+<tbody>
+<tr><td>Scheduler: _get_encoder_budget</td><td>不要（has_encoder_inputs=False）</td><td>エンコーダ入力のスケジューリング</td></tr>
+<tr><td>Scheduler: encoder_compute_budget</td><td>消費しない</td><td>ステップごとに予算管理</td></tr>
+<tr><td>SchedulerOutput</td><td>scheduled_encoder_inputs={}</td><td>{req_id: [input_ids]}</td></tr>
+<tr><td>GPUModelRunner: encoder実行</td><td>なし</td><td>_execute_mm_encoder()</td></tr>
+<tr><td>GPUModelRunner: 埋め込み</td><td>input_ids をそのまま使用</td><td>embed_input_ids() で text + vision マージ</td></tr>
+<tr><td>GPUModelRunner: キャッシュ</td><td>なし</td><td>encoder_cache dict</td></tr>
+<tr><td>モデルforward入力</td><td>input_ids</td><td>inputs_embeds（テンソル）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="5-キャッシュの3層構造"><a class="header" href="#5-キャッシュの3層構造">5. キャッシュの3層構造</a></h2>
+<pre><code>P0（フロントエンド）          P1（バックエンド/Scheduler）      P1（バックエンド/GPU）
+┌────────────────────┐     ┌───────────────────────┐      ┌──────────────────┐
+│ ProcessorCache     │     │ EncoderCacheManager   │      │ encoder_cache    │
+│ (LRU, mm_hash)     │     │ (RefCount, mm_hash)   │      │ (dict, mm_hash)  │
+│                    │     │                       │      │                  │
+│ キャッシュ対象:     │     │ キャッシュ対象:        │      │ キャッシュ対象:   │
+│ HF処理済みテンソル  │     │ 論理的な存在管理      │      │ GPU上のテンソル   │
+│ + prompt_updates   │     │ (容量・参照カウント)   │      │ (エンコーダ出力)  │
+│                    │     │                       │      │                  │
+│ Eviction: LRU      │     │ Eviction: FIFO        │      │ Eviction:        │
+│ (サイズベース)      │     │ (OrderedDict oldest)  │      │ Scheduler指示    │
+└────────────────────┘     └───────────────────────┘      └──────────────────┘
+        ↓                           ↓                            ↓
+  HF処理スキップ            エンコーダ計算スキップ          テンソル再利用
+</code></pre>
+<h2 id="主要ファイル-4"><a class="header" href="#主要ファイル-4">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td><code>EncoderCacheManager</code></td><td>L17</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>_get_encoder_budget()</code></td><td>L1060</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/output.py</code></td><td><code>SchedulerOutput</code> (MM fields)</td><td>L207, L218</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>_execute_mm_encoder()</code>, <code>_gather_mm_embeddings()</code></td><td>L2293, L2449</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント-9"><a class="header" href="#関連ドキュメント-9">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド MM処理パス</a></li>
+<li><a href="#gemma3-ビジョンエンコーダと画像処理-medium-verified">Gemma3 ビジョンエンコーダ</a></li>
+<li><a href="#gpumodelrunner">GPUModelRunner</a></li>
+<li><a href="#scheduler-サマリー">Scheduler</a></li>
+<li><a href="#kvcachemanager-サマリー">KVCacheManager</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="フロントエンド-マルチモーダル処理パス-medium-verified"><a class="header" href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<p>APIリクエストに含まれる画像データが、フロントエンドプロセス（P0）でどのように処理され、EngineCoreRequest として ZMQ 経由でバックエンド（P1）へ送信されるかを追跡する。テキスト推論パスとの差分を中心に記述する。</p>
+<h2 id="全体フロー-1"><a class="header" href="#全体フロー-1">全体フロー</a></h2>
+<pre class="mermaid">graph TD
+    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate適用"]
+    B --&gt; C["InputPreprocessor.preprocess()"]
+    C --&gt; D["_process_multimodal()"]
+    D --&gt; E["mm_processor.info.parse_mm_data()"]
+    E --&gt; F["mm_processor.apply()"]
+    F --&gt; G{"ProcessorCache&lt;br&gt;ヒット?"}
+    G --&gt;|HIT| H["キャッシュからitem+prompt_updates取得&lt;br&gt;(HF処理スキップ)"]
+    G --&gt;|MISS| I["HF Processor実行&lt;br&gt;pixel_values等テンソル生成"]
+    I --&gt; J["キャッシュに格納"]
+    H --&gt; K["MultiModalInputs 構築"]
+    J --&gt; K
+    K --&gt; L["InputProcessor.process_inputs()"]
+    L --&gt; M["MultiModalFeatureSpec 構築"]
+    M --&gt; N["EngineCoreRequest&lt;br&gt;(mm_features)"]
+    N --&gt; O["ZMQ IPC 送信"]
+</pre>
+
+<h2 id="1-チャットテンプレートとプレースホルダー"><a class="header" href="#1-チャットテンプレートとプレースホルダー">1. チャットテンプレートとプレースホルダー</a></h2>
+<h3 id="テンプレート適用前後の文字列gemma3の例"><a class="header" href="#テンプレート適用前後の文字列gemma3の例">テンプレート適用前後の文字列（Gemma3の例）</a></h3>
+<p><strong>適用前</strong>（OpenAI形式のメッセージ）:</p>
+<pre><code class="language-json">{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+      {"type": "text", "text": "この画像は何ですか？"}
+    ]}
+  ]
+}
+</code></pre>
+<p><strong>チャットテンプレート適用後</strong>（テキスト）:</p>
+<pre><code>&lt;bos&gt;&lt;start_of_turn&gt;user
+&lt;start_of_image&gt;この画像は何ですか？&lt;end_of_turn&gt;
+&lt;start_of_turn&gt;model
+</code></pre>
+<p>ここで <code>&lt;start_of_image&gt;</code> がプレースホルダートークンとなる。</p>
+<h3 id="プレースホルダーの展開"><a class="header" href="#プレースホルダーの展開">プレースホルダーの展開</a></h3>
+<p><code>Gemma3ProcessingInfo.get_image_repl()</code> がプレースホルダーを展開する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:178</code></p>
+<pre><code>&lt;start_of_image&gt; → processor.full_image_sequence
+</code></pre>
+<p><code>processor.full_image_sequence</code> はHuggingFace Gemma3Processorが定義する完全なトークン列で、<code>&lt;start_of_image&gt;</code> + image_token × image_seq_length + <code>&lt;end_of_image&gt;</code> の形式。</p>
+<p><strong>Pan-and-Scan有効時</strong>（複数クロップ）:</p>
+<pre><code>"Here is the original image &lt;full_image_seq&gt; and here are some crops to help you see better &lt;full_image_seq&gt; &lt;full_image_seq&gt;"
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:196-211</code></p>
+<h3 id="画像1枚あたりのトークン数"><a class="header" href="#画像1枚あたりのトークン数">画像1枚あたりのトークン数</a></h3>
+<pre><code class="language-python">num_tokens = (num_crops + 1) * image_seq_length
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:213-230</code></p>
+<ul>
+<li><code>image_seq_length</code>: Gemma3Processorの設定値（典型的に256）</li>
+<li><code>num_crops</code>: Pan-and-Scan無効時は0、有効時はアスペクト比に基づいて計算（最大 <code>pan_and_scan_max_num_crops</code>）</li>
+<li>よって画像1枚で256〜1280+トークンを消費</li>
+</ul>
+<h3 id="トークン列の構造"><a class="header" href="#トークン列の構造">トークン列の構造</a></h3>
+<p>テキスト推論ではトークン列は純粋なテキストトークンのみ。マルチモーダルでは以下の構造になる:</p>
+<pre><code>[BOS] [start_of_turn] [user] [\n]
+[start_of_image] [image_token × 256] [end_of_image]    ← 画像プレースホルダー
+[テキストトークン列...]                                    ← "この画像は何ですか？"
+[end_of_turn] [\n] [start_of_turn] [model] [\n]
+</code></pre>
+<p><code>image_token</code> の位置がマスクで追跡され（<code>PlaceholderRange</code>）、後にビジョンエンコーダの出力で置換される。</p>
+<h3 id="改行トークンの結合処理"><a class="header" href="#改行トークンの結合処理">改行トークンの結合処理</a></h3>
+<p>Gemma3固有の問題：<code>\n\n\n</code> と <code>\n\n\n\n</code> が単一トークンとして存在する。画像置換テキストに <code>\n\n</code> が挿入されると、隣接する <code>\n</code> と結合が必要。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:351-385</code></p>
+<pre><code class="language-python"># _apply_token_matches() でトークンの結合を実行
+replace_token_matches(token_ids, [newline_1, newline_2], [newline_3])  # \n + \n\n → \n\n\n
+replace_token_matches(token_ids, [newline_2, newline_1], [newline_3])  # \n\n + \n → \n\n\n
+replace_token_matches(token_ids, [newline_2, newline_2], [newline_4])  # \n\n + \n\n → \n\n\n\n
+</code></pre>
+<h2 id="2-マルチモーダルデータの処理パイプライン"><a class="header" href="#2-マルチモーダルデータの処理パイプライン">2. マルチモーダルデータの処理パイプライン</a></h2>
+<h3 id="inputpreprocessor_process_multimodal"><a class="header" href="#inputpreprocessor_process_multimodal">InputPreprocessor._process_multimodal()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/inputs/preprocess.py:193-232</code></p>
+<pre><code>_process_multimodal(prompt, mm_data, mm_processor_kwargs, mm_uuids)
+  1. mm_processor.info.parse_mm_data(mm_data)
+     → MultiModalDataItems（モダリティごとに型付きデータアイテムに変換）
+  2. mm_processor.apply(prompt, mm_items, ...)
+     → MultiModalInputs（トークン列 + テンソルデータ + プレースホルダー位置 + ハッシュ）
+</code></pre>
+<h3 id="basemultimodalprocessorapply"><a class="header" href="#basemultimodalprocessorapply">BaseMultiModalProcessor.apply()</a></h3>
+<p>HFプロセッサ実行、プロンプト更新（プレースホルダー検出・展開）、キャッシュ管理を統合的に処理する。</p>
+<p>主な出力（<code>MultiModalInputs</code>）:</p>
+<ul>
+<li><code>prompt_token_ids</code>: プレースホルダー展開済みのトークン列</li>
+<li><code>mm_kwargs</code>: <code>dict[modality, list[MultiModalKwargsItem]]</code> — 処理済みテンソルデータ</li>
+<li><code>mm_hashes</code>: <code>dict[modality, list[str]]</code> — 各アイテムのハッシュ値</li>
+<li><code>mm_placeholders</code>: <code>dict[modality, list[PlaceholderRange]]</code> — プレースホルダー位置情報</li>
+</ul>
+<h3 id="gemma3multimodalprocessor_call_hf_processor"><a class="header" href="#gemma3multimodalprocessor_call_hf_processor">Gemma3MultiModalProcessor._call_hf_processor()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:277-310</code></p>
+<p>親クラスのHFプロセッサ呼び出し後、<code>num_patches</code> を追加計算する。HFプロセッサはこの値をpopしてしまうため、vLLM側で再計算が必要。</p>
+<pre><code class="language-python">num_crops = [self.info.get_num_crops(...) for size in image_sizes]
+processed_outputs["num_patches"] = torch.tensor(num_crops) + 1  # +1 for original
+</code></pre>
+<p>HFプロセッサの出力:</p>
+<ul>
+<li><code>pixel_values</code>: <code>(total_patches, 3, image_size, image_size)</code> — 全パッチのピクセルテンソル</li>
+<li><code>num_patches</code>: <code>(num_images,)</code> — 画像ごとのパッチ数（= num_crops + 1）</li>
+</ul>
+<h2 id="3-mmハッシュ"><a class="header" href="#3-mmハッシュ">3. MMハッシュ</a></h2>
+<h3 id="multimodalhasher"><a class="header" href="#multimodalhasher">MultiModalHasher</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50-162</code></p>
+<p>マルチモーダルデータのコンテンツベースハッシュを計算する。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>データ型</th><th>シリアライズ方法</th></tr>
+</thead>
+<tbody>
+<tr><td>PIL Image</td><td>ExifTags.ImageID (UUID型の場合) → 16バイト。なければ mode + pixel data (numpy配列)</td></tr>
+<tr><td>MediaWithBytes(Image)</td><td>ExifTags.ImageID → 16バイト。なければ original_bytes</td></tr>
+<tr><td>torch.Tensor</td><td>numpy変換 → dtype+shape+バイト列。bfloat16は uint8 view 経由</td></tr>
+<tr><td>np.ndarray</td><td>dtype.str + shape + contiguous バイト列</td></tr>
+<tr><td>その他</td><td>pickle フォールバック（警告あり）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ハッシュアルゴリズム</strong>: <code>VLLM_MM_HASHER_ALGORITHM</code> 環境変数で設定</p>
+<ul>
+<li><code>blake3</code>（デフォルト）: 高速</li>
+<li><code>sha256</code> / <code>sha512</code>: FIPS準拠用</li>
+</ul>
+<p><strong>hash_kwargs()</strong> はキーをソートしてから全データを逐次ハッシュに投入する（決定的）。</p>
+<h3 id="uuidオーバーライド"><a class="header" href="#uuidオーバーライド">UUIDオーバーライド</a></h3>
+<p>キャッシュとプレフィックスキャッシュの両方が無効な場合、コンテンツハッシュの代わりに <code>{request_id}-{modality}-{index}</code> 形式のUUIDを使用する（ハッシュ計算コストの回避）。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:551-574</code></p>
+<h3 id="lora対応のidentifier"><a class="header" href="#lora対応のidentifier">LoRA対応のidentifier</a></h3>
+<p>LoRAのtower_connector_loraが有効な場合、同じ画像でもLoRAによって埋め込みが変わるため、<code>identifier</code> に LoRA名をプレフィックスとして付加する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:490-506</code></p>
+<pre><code class="language-python">def _get_mm_identifier(self, mm_hash, lora_request):
+    if lora_request is None or not enable_tower_connector_lora:
+        return mm_hash
+    return f"{lora_request.lora_name}:{mm_hash}"
+</code></pre>
+<h2 id="4-プロセッサキャッシュp0側"><a class="header" href="#4-プロセッサキャッシュp0側">4. プロセッサキャッシュ（P0側）</a></h2>
+<h3 id="キャッシュタイプの選択"><a class="header" href="#キャッシュタイプの選択">キャッシュタイプの選択</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/registry.py:284-320</code></p>
+<pre><code>mm_processor_cache_gb &lt;= 0         → None（キャッシュ無効）
+IPC非対応 or API process &gt; 1       → processor_only
+mm_processor_cache_type == "lru"   → lru（Sender + Receiver）
+mm_processor_cache_type == "shm"   → shm（共有メモリ）
+</code></pre>
+<h3 id="4種類のキャッシュ実装"><a class="header" href="#4種類のキャッシュ実装">4種類のキャッシュ実装</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>実装</th><th>場所</th><th>格納内容</th><th>キャッシュヒット時の動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MultiModalProcessorOnlyCache</code> (L326)</td><td>P0のみ</td><td>テンソルデータ + prompt_updates</td><td>キャッシュから item + prompt_updates を返す（HF処理スキップ）</td></tr>
+<tr><td><code>MultiModalProcessorSenderCache</code> (L379)</td><td>P0</td><td>サイズメタデータ + prompt_updates</td><td>item=None を返す（P1にデータあり、IPC不要）</td></tr>
+<tr><td><code>ShmObjectStoreSenderCache</code> (L437)</td><td>P0</td><td>共有メモリ参照 + prompt_updates</td><td>item=None を返す（共有メモリ経由でP1に渡す）</td></tr>
+<tr><td><code>MultiModalReceiverCache</code> (L614)</td><td>P1</td><td>テンソルデータ</td><td>lru タイプ時に P1 側で使用</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="p0-p1-キャッシュの整合性"><a class="header" href="#p0-p1-キャッシュの整合性">P0-P1 キャッシュの整合性</a></h3>
+<p><strong>設計の核心</strong>: P0とP1のキャッシュは <strong>同一のEviction順序</strong> を維持する。</p>
+<pre><code>                 is_cached() × N    get_and_update()
+P0: From API ───────────────────&gt; ────────────────&gt; To P1
+
+                get_and_update()
+P1: From P0 ───────────────────&gt; To model
+</code></pre>
+<ul>
+<li><code>is_cached()</code> はP0キャッシュのみを参照（Eviction順序を変えない）</li>
+<li><code>get_and_update()</code> は P0 と P1 で順番に呼ぶ必要がある（Eviction順序を同期）</li>
+<li>これにより、P0のキャッシュ状態を見るだけでP1のキャッシュ状態を推定できる（IPC不要）</li>
+</ul>
+<h3 id="キャッシュヒット時にスキップされる処理"><a class="header" href="#キャッシュヒット時にスキップされる処理">キャッシュヒット時にスキップされる処理</a></h3>
+<ol>
+<li><strong>HF Processor実行</strong>（画像のリサイズ、正規化、パッチ分割 → <code>pixel_values</code> テンソル生成）</li>
+<li><strong>テンソルデータのIPC送信</strong>（<code>SenderCache</code>/<code>ShmCache</code> 使用時、<code>data=None</code> にしてZMQ転送量削減）</li>
+<li><strong>プロンプト更新の再計算は常に必要</strong>（キャッシュにprompt_updatesが保存されているため計算はスキップだが、取得は必要）</li>
+</ol>
+<h2 id="5-enginecorerequest-への組み立て"><a class="header" href="#5-enginecorerequest-への組み立て">5. EngineCoreRequest への組み立て</a></h2>
+<h3 id="multimodalfeaturespec-構築"><a class="header" href="#multimodalfeaturespec-構築">MultiModalFeatureSpec 構築</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:627-654</code></p>
+<pre><code class="language-python">mm_features = []
+for modality, idx in sorted_mm_idxs:
+    base_mm_hash = decoder_mm_hashes[modality][idx]
+    mm_features.append(
+        MultiModalFeatureSpec(
+            data=decoder_mm_inputs[modality][idx],     # MultiModalKwargsItem | None
+            modality=modality,                          # "image"
+            identifier=_get_mm_identifier(base_mm_hash, lora_request),
+            mm_position=decoder_mm_positions[modality][idx],  # PlaceholderRange
+            mm_hash=base_mm_hash,
+        )
+    )
+</code></pre>
+<p><code>sorted_mm_idxs</code> は <code>argsort_mm_positions()</code> でプロンプト内の出現順にソートされる。</p>
+<h3 id="multimodalfeaturespec-の構造"><a class="header" href="#multimodalfeaturespec-の構造">MultiModalFeatureSpec の構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:337-381</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>data</code></td><td><code>MultiModalKwargsItem | None</code></td><td>処理済みテンソルデータ。P0キャッシュヒット時は <code>None</code></td></tr>
+<tr><td><code>modality</code></td><td><code>str</code></td><td><code>"image"</code>, <code>"video"</code>, <code>"audio"</code> 等</td></tr>
+<tr><td><code>identifier</code></td><td><code>str</code></td><td>エンコーダキャッシュ用ハッシュ（LoRAプレフィックス付きの場合あり）</td></tr>
+<tr><td><code>mm_position</code></td><td><code>PlaceholderRange</code></td><td>プロンプト内のプレースホルダー位置</td></tr>
+<tr><td><code>mm_hash</code></td><td><code>str | None</code></td><td>プロセッサキャッシュ用ハッシュ（LoRAプレフィックスなし）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="placeholderrange-の構造"><a class="header" href="#placeholderrange-の構造">PlaceholderRange の構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:170-240</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>offset</code></td><td><code>int</code></td><td>プロンプト内の開始位置</td></tr>
+<tr><td><code>length</code></td><td><code>int</code></td><td>プレースホルダーの長さ（トークン数）</td></tr>
+<tr><td><code>is_embed</code></td><td><code>Tensor[bool] | None</code></td><td>各位置が埋め込みを受け取るかのマスク</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>get_num_embeds()</code> は実際のエンコーダ出力の埋め込み数を返す（<code>is_embed</code> のTrue数、またはlength）。</p>
+<h3 id="enginecorerequest-1"><a class="header" href="#enginecorerequest-1">EngineCoreRequest</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:55-101</code></p>
+<p>テキスト推論との差分:</p>
+<ul>
+<li><code>mm_features: list[MultiModalFeatureSpec] | None</code> — マルチモーダル時に設定される</li>
+<li><code>prompt_token_ids</code> にはプレースホルダー展開済みのトークン列が入る</li>
+</ul>
+<p>ZMQ送信時は <code>msgspec</code> によるバイナリシリアライゼーション。テンソルデータは <code>MultiModalKwargsItem</code> に含まれ、カスタムエンコーダで処理される。</p>
+<h2 id="6-キャッシュタイプ別のデータフロー"><a class="header" href="#6-キャッシュタイプ別のデータフロー">6. キャッシュタイプ別のデータフロー</a></h2>
+<h3 id="processor_onlyp0完結"><a class="header" href="#processor_onlyp0完結">processor_only（P0完結）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → cache store(tensor+prompt) → tensor をリクエストに含めて送信
+P0: hash → cache hit  → cache get(tensor+prompt) → tensor をリクエストに含めて送信
+</code></pre>
+<ul>
+<li>テンソルデータは常にZMQ経由で送信される</li>
+</ul>
+<h3 id="lrup0-sender--p1-receiver"><a class="header" href="#lrup0-sender--p1-receiver">lru（P0 Sender + P1 Receiver）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → meta store(size+prompt) → tensor をリクエストに含めて送信
+P1: hash → cache miss → tensor を受信 → cache store(tensor)
+
+P0: hash → cache hit  → meta get(prompt) → data=None で送信（テンソル省略）
+P1: hash → cache hit  → cache get(tensor)
+</code></pre>
+<ul>
+<li>キャッシュヒット時は <strong>テンソルデータのIPC転送がスキップ</strong> される</li>
+</ul>
+<h3 id="shm共有メモリ"><a class="header" href="#shm共有メモリ">shm（共有メモリ）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → 共有メモリに書き込み → data=None で送信
+P1: hash → cache miss → 共有メモリから読み取り
+
+P0: hash → cache hit  → data=None で送信
+P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ）
+</code></pre>
+<h2 id="主要ファイル-5"><a class="header" href="#主要ファイル-5">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>InputProcessor</code>, <code>process_inputs()</code>, <code>_get_mm_identifier()</code></td><td>L56, L521, L490</td></tr>
+<tr><td><code>target/vllm/vllm/inputs/preprocess.py</code></td><td><code>InputPreprocessor</code>, <code>_process_multimodal()</code>, <code>_get_mm_processor()</code></td><td>L60, L193, L182</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/hasher.py</code></td><td><code>MultiModalHasher</code>, <code>hash_kwargs()</code>, <code>serialize_item()</code></td><td>L50, L154, L52</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/cache.py</code></td><td><code>MultiModalProcessorOnlyCache</code>, <code>SenderCache</code>, <code>ShmCache</code>, <code>ReceiverCache</code></td><td>L326, L379, L437, L614</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/registry.py</code></td><td><code>MULTIMODAL_REGISTRY</code>, <code>processor_cache_from_config()</code></td><td>L305</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/inputs.py</code></td><td><code>MultiModalFeatureSpec</code>, <code>PlaceholderRange</code></td><td>L337, L170</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/__init__.py</code></td><td><code>EngineCoreRequest</code></td><td>L55</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3MultiModalProcessor</code>, <code>Gemma3ProcessingInfo</code></td><td>L276, L77</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント-10"><a class="header" href="#関連ドキュメント-10">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン概要</a></li>
+<li><a href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド MM処理パス</a></li>
+<li><a href="#gemma3-ビジョンエンコーダと画像処理-medium-verified">Gemma3 ビジョンエンコーダ</a></li>
+<li><a href="#inputprocessor-サマリー">InputProcessor</a></li>
+<li><a href="#テキスト推論データフロー">データフロー</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="outputprocessor"><a class="header" href="#outputprocessor">OutputProcessor</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [SHALLOW]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
+<h2 id="概要-14"><a class="header" href="#概要-14">概要</a></h2>
 <p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、バックエンド（EngineCore）からZMQ経由で受信した<code>EngineCoreOutput</code>を、ユーザー向けの<code>RequestOutput</code>に変換する。主な処理はインクリメンタルデトークナイズ、停止文字列判定、logprobs処理である。AsyncLLMの<code>output_handler</code>バックグラウンドタスクから呼び出される。</p>
 <h2 id="process_outputs-フロー"><a class="header" href="#process_outputs-フロー">process_outputs() フロー</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
@@ -3127,7 +4164,7 @@ Scheduler.schedule()
 <li>ストリーミングモード（DELTA）時のテキスト差分計算詳細</li>
 <li>n&gt;1サンプリング時のParentRequest管理</li>
 </ul>
-<h2 id="主要ファイル-2"><a class="header" href="#主要ファイル-2">主要ファイル</a></h2>
+<h2 id="主要ファイル-6"><a class="header" href="#主要ファイル-6">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3149,7 +4186,7 @@ Scheduler.schedule()
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-13"><a class="header" href="#概要-13">概要</a></h2>
+<h2 id="概要-15"><a class="header" href="#概要-15">概要</a></h2>
 <p><code>Scheduler</code>はContinuous Batchingの中核コンポーネントであり、各ステップでどのリクエストにどれだけのトークンを計算させるかを決定する。<code>schedule()</code>メソッドは3フェーズ（RUNNING処理 → WAITING処理 → Output構築）で構成され、トークン予算の範囲内で最大限のリクエストをスケジュールする。Unified Compute Modelを採用し、Prefill/Decodeを明示的に区別せず <code>num_computed_tokens</code> の進捗で統一的に管理する。</p>
 <h2 id="アーキテクチャ-5"><a class="header" href="#アーキテクチャ-5">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
@@ -3170,7 +4207,7 @@ Scheduler.schedule()
     UO["update_from_output()"] --&gt;|"ModelRunnerOutput"| OUT["EngineCoreOutputs"]
 </pre>
 
-<h2 id="主要コンポーネント-6"><a class="header" href="#主要コンポーネント-6">主要コンポーネント</a></h2>
+<h2 id="主要コンポーネント-7"><a class="header" href="#主要コンポーネント-7">主要コンポーネント</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3365,7 +4402,7 @@ EngineCore.step()
   ├─ executor.execute_model(scheduler_output)     # GPU実行
   └─ scheduler.update_from_output(output)         # → EngineCoreOutputs
 </code></pre>
-<h2 id="関連ドキュメント-8"><a class="header" href="#関連ドキュメント-8">関連ドキュメント</a></h2>
+<h2 id="関連ドキュメント-11"><a class="header" href="#関連ドキュメント-11">関連ドキュメント</a></h2>
 <ul>
 <li><a href="#kvcachemanager-サマリー">KVCacheManager</a></li>
 <li><a href="#enginecore-サマリー">EngineCore</a></li>
@@ -3467,6 +4504,27 @@ EngineCore.step()
 <p>各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは<code>null_block</code>で置換されメモリを節約する。</p>
 <h3 id="attention-sink-streamingllm"><a class="header" href="#attention-sink-streamingllm">Attention Sink (StreamingLLM)</a></h3>
 <p>先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。<code>SinkFullAttentionManager</code>が実装。</p>
+<h3 id="multimodalfeaturespec"><a class="header" href="#multimodalfeaturespec">MultiModalFeatureSpec</a></h3>
+<p>マルチモーダル入力1つ分のメタデータとテンソルデータを保持するデータクラス。<code>data</code>（処理済みテンソル、キャッシュヒット時はNone）、<code>identifier</code>（エンコーダキャッシュ用ハッシュ）、<code>mm_position</code>（PlaceholderRange）、<code>modality</code>（“image“等）を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:337</code></p>
+<h3 id="placeholderrange"><a class="header" href="#placeholderrange">PlaceholderRange</a></h3>
+<p>プロンプト内のマルチモーダルプレースホルダーの位置情報。<code>offset</code>（開始位置）、<code>length</code>（トークン数）、<code>is_embed</code>（埋め込みマスク）を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:170</code></p>
+<h3 id="multimodalhasher-1"><a class="header" href="#multimodalhasher-1">MultiModalHasher</a></h3>
+<p>マルチモーダルデータのコンテンツベースハッシュを計算するクラス。PIL Image、Tensor、ndarray等を決定的にシリアライズし、blake3（デフォルト）でハッシュ化する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50</code></p>
+<h3 id="processorcache-mm"><a class="header" href="#processorcache-mm">ProcessorCache (MM)</a></h3>
+<p>フロントエンド（P0）でHF Processor処理結果をキャッシュする仕組み。4種類の実装（processor_only/lru/shm/none）があり、P0-P1間のキャッシュEviction順序を同期させることでIPCなしにキャッシュ状態を推定できる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<h3 id="encodercachemanager"><a class="header" href="#encodercachemanager">EncoderCacheManager</a></h3>
+<p>バックエンド（P1）でビジョンエンコーダ出力のライフサイクルを管理するクラス。リファレンスカウント方式で複数リクエスト間のキャッシュ共有を実現し、FIFO順の遅延Evictionを行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17</code></p>
+<h3 id="siglipvisionmodel"><a class="header" href="#siglipvisionmodel">SiglipVisionModel</a></h3>
+<p>SIGLIP（Sigmoid Loss for Language Image Pre-training）ベースのViTビジョンエンコーダ。Gemma3のビジョンタワーとして使用される。パッチ埋め込み + 位置埋め込み → Transformer Encoder（双方向Attention）の構造。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:848</code></p>
+<h3 id="pan-and-scan"><a class="header" href="#pan-and-scan">Pan-and-Scan</a></h3>
+<p>アスペクト比が大きい画像を複数のクロップに分割して詳細認識を向上させるGemma3の仕組み。V1では簡略化されたアテンションパターンのため最適でない結果になりうる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109</code></p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ファイル索引"><a class="header" href="#ファイル索引">ファイル索引</a></h1>
 

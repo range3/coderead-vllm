@@ -35,10 +35,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-58528295.js";
+            window.path_to_searchindex_js = "../../searchindex-a88a02e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-d1c54e9e.js"></script>
+        <script src="../../toc-e3d8dfe5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -259,10 +259,21 @@
     → 外部IDを external_req_id に退避
     → 内部ID（外部ID + 8文字ランダム）を request_id に設定
 </code></pre>
+<h2 id="マルチモーダル処理"><a class="header" href="#マルチモーダル処理">マルチモーダル処理</a></h2>
+<p>テキスト入力に加えて画像等のマルチモーダルデータがある場合、InputProcessorは以下の追加処理を行う:</p>
+<ol>
+<li><strong>MM Registry から <code>BaseMultiModalProcessor</code> を取得</strong>（<code>_get_mm_processor()</code>）</li>
+<li><strong>マルチモーダルデータのパース</strong>: <code>mm_processor.info.parse_mm_data()</code> → <code>MultiModalDataItems</code></li>
+<li><strong>HF Processor 実行</strong>: <code>mm_processor.apply()</code> → <code>MultiModalInputs</code>（トークン列 + テンソル + ハッシュ + PlaceholderRange）</li>
+<li><strong>ProcessorCache</strong>: <code>mm_processor_cache</code> によるHF処理結果のキャッシュ（4種類: processor_only/lru/shm/none）</li>
+<li><strong>MultiModalFeatureSpec 構築</strong>: データ + 位置情報 + ハッシュを <code>EngineCoreRequest.mm_features</code> にセット</li>
+</ol>
+<p>詳細は <a href="../multimodal/mm-processing.html">マルチモーダル フロントエンド処理</a> を参照。</p>
 <h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
 <ul>
 <li><a href="../entrypoint/summary.html">エントリポイント</a></li>
 <li><a href="../../architecture/data-flow.html">データフロー</a></li>
+<li><a href="../multimodal/summary.html">マルチモーダル処理パイプライン</a></li>
 </ul>
 
                     </main>

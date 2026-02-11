@@ -35,10 +35,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-58528295.js";
+            window.path_to_searchindex_js = "../../searchindex-a88a02e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-d1c54e9e.js"></script>
+        <script src="../../toc-e3d8dfe5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -325,10 +325,19 @@
 <tr><td>CUDAGraph統合</td><td><code>_model_forward()</code>, CUDAGraphランナー</td><td>中</td></tr>
 <tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
 <tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位）</td></tr>
-<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位）</td></tr>
+<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位） → <strong>Phase 2bで調査済み</strong></td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="マルチモーダル処理"><a class="header" href="#マルチモーダル処理">マルチモーダル処理</a></h2>
+<p>マルチモーダル推論時、GPUModelRunnerは <code>execute_model()</code> 内で以下の追加処理を行う:</p>
+<ol>
+<li><strong><code>_execute_mm_encoder()</code></strong> (L2293): <code>model.embed_multimodal()</code> でビジョンエンコーダ実行。結果を <code>encoder_cache[mm_hash]</code> に格納</li>
+<li><strong><code>_gather_mm_embeddings()</code></strong> (L2449): <code>encoder_cache</code> からスケジュール範囲に対応する埋め込みをスライス。チャンクPrefill対応</li>
+<li><strong><code>embed_input_ids()</code></strong>: <code>masked_scatter_</code> でテキスト + ビジョン埋め込みをマージ → <code>inputs_embeds</code> として model.forward() に渡す</li>
+</ol>
+<p><code>encoder_cache: dict[str, torch.Tensor]</code> はGPU上のシンプルなdictキャッシュで、Schedulerの <code>free_encoder_mm_hashes</code> 指示で解放される。</p>
+<p>詳細は <a href="../multimodal/mm-engine-gpu.html">バックエンド MM処理パス</a> を参照。</p>
 <h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>

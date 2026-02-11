@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-58528295.js";
+            window.path_to_searchindex_js = "searchindex-a88a02e1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d1c54e9e.js"></script>
+        <script src="toc-e3d8dfe5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -267,6 +267,27 @@
 <p>各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは<code>null_block</code>で置換されメモリを節約する。</p>
 <h3 id="attention-sink-streamingllm"><a class="header" href="#attention-sink-streamingllm">Attention Sink (StreamingLLM)</a></h3>
 <p>先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。<code>SinkFullAttentionManager</code>が実装。</p>
+<h3 id="multimodalfeaturespec"><a class="header" href="#multimodalfeaturespec">MultiModalFeatureSpec</a></h3>
+<p>マルチモーダル入力1つ分のメタデータとテンソルデータを保持するデータクラス。<code>data</code>（処理済みテンソル、キャッシュヒット時はNone）、<code>identifier</code>（エンコーダキャッシュ用ハッシュ）、<code>mm_position</code>（PlaceholderRange）、<code>modality</code>（“image“等）を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:337</code></p>
+<h3 id="placeholderrange"><a class="header" href="#placeholderrange">PlaceholderRange</a></h3>
+<p>プロンプト内のマルチモーダルプレースホルダーの位置情報。<code>offset</code>（開始位置）、<code>length</code>（トークン数）、<code>is_embed</code>（埋め込みマスク）を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:170</code></p>
+<h3 id="multimodalhasher"><a class="header" href="#multimodalhasher">MultiModalHasher</a></h3>
+<p>マルチモーダルデータのコンテンツベースハッシュを計算するクラス。PIL Image、Tensor、ndarray等を決定的にシリアライズし、blake3（デフォルト）でハッシュ化する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50</code></p>
+<h3 id="processorcache-mm"><a class="header" href="#processorcache-mm">ProcessorCache (MM)</a></h3>
+<p>フロントエンド（P0）でHF Processor処理結果をキャッシュする仕組み。4種類の実装（processor_only/lru/shm/none）があり、P0-P1間のキャッシュEviction順序を同期させることでIPCなしにキャッシュ状態を推定できる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<h3 id="encodercachemanager"><a class="header" href="#encodercachemanager">EncoderCacheManager</a></h3>
+<p>バックエンド（P1）でビジョンエンコーダ出力のライフサイクルを管理するクラス。リファレンスカウント方式で複数リクエスト間のキャッシュ共有を実現し、FIFO順の遅延Evictionを行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17</code></p>
+<h3 id="siglipvisionmodel"><a class="header" href="#siglipvisionmodel">SiglipVisionModel</a></h3>
+<p>SIGLIP（Sigmoid Loss for Language Image Pre-training）ベースのViTビジョンエンコーダ。Gemma3のビジョンタワーとして使用される。パッチ埋め込み + 位置埋め込み → Transformer Encoder（双方向Attention）の構造。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:848</code></p>
+<h3 id="pan-and-scan"><a class="header" href="#pan-and-scan">Pan-and-Scan</a></h3>
+<p>アスペクト比が大きい画像を複数のクロップに分割して詳細認識を向上させるGemma3の仕組み。V1では簡略化されたアテンションパターンのため最適でない結果になりうる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109</code></p>
 
                     </main>
 

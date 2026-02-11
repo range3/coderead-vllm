@@ -1,0 +1,526 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED] - コードリーディング: vLLM</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-a88a02e1.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-e3d8dfe5.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="フロントエンド-マルチモーダル処理パス-medium-verified"><a class="header" href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<p>APIリクエストに含まれる画像データが、フロントエンドプロセス（P0）でどのように処理され、EngineCoreRequest として ZMQ 経由でバックエンド（P1）へ送信されるかを追跡する。テキスト推論パスとの差分を中心に記述する。</p>
+<h2 id="全体フロー"><a class="header" href="#全体フロー">全体フロー</a></h2>
+<pre class="mermaid">graph TD
+    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate適用"]
+    B --&gt; C["InputPreprocessor.preprocess()"]
+    C --&gt; D["_process_multimodal()"]
+    D --&gt; E["mm_processor.info.parse_mm_data()"]
+    E --&gt; F["mm_processor.apply()"]
+    F --&gt; G{"ProcessorCache&lt;br&gt;ヒット?"}
+    G --&gt;|HIT| H["キャッシュからitem+prompt_updates取得&lt;br&gt;(HF処理スキップ)"]
+    G --&gt;|MISS| I["HF Processor実行&lt;br&gt;pixel_values等テンソル生成"]
+    I --&gt; J["キャッシュに格納"]
+    H --&gt; K["MultiModalInputs 構築"]
+    J --&gt; K
+    K --&gt; L["InputProcessor.process_inputs()"]
+    L --&gt; M["MultiModalFeatureSpec 構築"]
+    M --&gt; N["EngineCoreRequest&lt;br&gt;(mm_features)"]
+    N --&gt; O["ZMQ IPC 送信"]
+</pre>
+
+<h2 id="1-チャットテンプレートとプレースホルダー"><a class="header" href="#1-チャットテンプレートとプレースホルダー">1. チャットテンプレートとプレースホルダー</a></h2>
+<h3 id="テンプレート適用前後の文字列gemma3の例"><a class="header" href="#テンプレート適用前後の文字列gemma3の例">テンプレート適用前後の文字列（Gemma3の例）</a></h3>
+<p><strong>適用前</strong>（OpenAI形式のメッセージ）:</p>
+<pre><code class="language-json">{
+  "messages": [
+    {"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+      {"type": "text", "text": "この画像は何ですか？"}
+    ]}
+  ]
+}
+</code></pre>
+<p><strong>チャットテンプレート適用後</strong>（テキスト）:</p>
+<pre><code>&lt;bos&gt;&lt;start_of_turn&gt;user
+&lt;start_of_image&gt;この画像は何ですか？&lt;end_of_turn&gt;
+&lt;start_of_turn&gt;model
+</code></pre>
+<p>ここで <code>&lt;start_of_image&gt;</code> がプレースホルダートークンとなる。</p>
+<h3 id="プレースホルダーの展開"><a class="header" href="#プレースホルダーの展開">プレースホルダーの展開</a></h3>
+<p><code>Gemma3ProcessingInfo.get_image_repl()</code> がプレースホルダーを展開する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:178</code></p>
+<pre><code>&lt;start_of_image&gt; → processor.full_image_sequence
+</code></pre>
+<p><code>processor.full_image_sequence</code> はHuggingFace Gemma3Processorが定義する完全なトークン列で、<code>&lt;start_of_image&gt;</code> + image_token × image_seq_length + <code>&lt;end_of_image&gt;</code> の形式。</p>
+<p><strong>Pan-and-Scan有効時</strong>（複数クロップ）:</p>
+<pre><code>"Here is the original image &lt;full_image_seq&gt; and here are some crops to help you see better &lt;full_image_seq&gt; &lt;full_image_seq&gt;"
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:196-211</code></p>
+<h3 id="画像1枚あたりのトークン数"><a class="header" href="#画像1枚あたりのトークン数">画像1枚あたりのトークン数</a></h3>
+<pre><code class="language-python">num_tokens = (num_crops + 1) * image_seq_length
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:213-230</code></p>
+<ul>
+<li><code>image_seq_length</code>: Gemma3Processorの設定値（典型的に256）</li>
+<li><code>num_crops</code>: Pan-and-Scan無効時は0、有効時はアスペクト比に基づいて計算（最大 <code>pan_and_scan_max_num_crops</code>）</li>
+<li>よって画像1枚で256〜1280+トークンを消費</li>
+</ul>
+<h3 id="トークン列の構造"><a class="header" href="#トークン列の構造">トークン列の構造</a></h3>
+<p>テキスト推論ではトークン列は純粋なテキストトークンのみ。マルチモーダルでは以下の構造になる:</p>
+<pre><code>[BOS] [start_of_turn] [user] [\n]
+[start_of_image] [image_token × 256] [end_of_image]    ← 画像プレースホルダー
+[テキストトークン列...]                                    ← "この画像は何ですか？"
+[end_of_turn] [\n] [start_of_turn] [model] [\n]
+</code></pre>
+<p><code>image_token</code> の位置がマスクで追跡され（<code>PlaceholderRange</code>）、後にビジョンエンコーダの出力で置換される。</p>
+<h3 id="改行トークンの結合処理"><a class="header" href="#改行トークンの結合処理">改行トークンの結合処理</a></h3>
+<p>Gemma3固有の問題：<code>\n\n\n</code> と <code>\n\n\n\n</code> が単一トークンとして存在する。画像置換テキストに <code>\n\n</code> が挿入されると、隣接する <code>\n</code> と結合が必要。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:351-385</code></p>
+<pre><code class="language-python"># _apply_token_matches() でトークンの結合を実行
+replace_token_matches(token_ids, [newline_1, newline_2], [newline_3])  # \n + \n\n → \n\n\n
+replace_token_matches(token_ids, [newline_2, newline_1], [newline_3])  # \n\n + \n → \n\n\n
+replace_token_matches(token_ids, [newline_2, newline_2], [newline_4])  # \n\n + \n\n → \n\n\n\n
+</code></pre>
+<h2 id="2-マルチモーダルデータの処理パイプライン"><a class="header" href="#2-マルチモーダルデータの処理パイプライン">2. マルチモーダルデータの処理パイプライン</a></h2>
+<h3 id="inputpreprocessor_process_multimodal"><a class="header" href="#inputpreprocessor_process_multimodal">InputPreprocessor._process_multimodal()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/inputs/preprocess.py:193-232</code></p>
+<pre><code>_process_multimodal(prompt, mm_data, mm_processor_kwargs, mm_uuids)
+  1. mm_processor.info.parse_mm_data(mm_data)
+     → MultiModalDataItems（モダリティごとに型付きデータアイテムに変換）
+  2. mm_processor.apply(prompt, mm_items, ...)
+     → MultiModalInputs（トークン列 + テンソルデータ + プレースホルダー位置 + ハッシュ）
+</code></pre>
+<h3 id="basemultimodalprocessorapply"><a class="header" href="#basemultimodalprocessorapply">BaseMultiModalProcessor.apply()</a></h3>
+<p>HFプロセッサ実行、プロンプト更新（プレースホルダー検出・展開）、キャッシュ管理を統合的に処理する。</p>
+<p>主な出力（<code>MultiModalInputs</code>）:</p>
+<ul>
+<li><code>prompt_token_ids</code>: プレースホルダー展開済みのトークン列</li>
+<li><code>mm_kwargs</code>: <code>dict[modality, list[MultiModalKwargsItem]]</code> — 処理済みテンソルデータ</li>
+<li><code>mm_hashes</code>: <code>dict[modality, list[str]]</code> — 各アイテムのハッシュ値</li>
+<li><code>mm_placeholders</code>: <code>dict[modality, list[PlaceholderRange]]</code> — プレースホルダー位置情報</li>
+</ul>
+<h3 id="gemma3multimodalprocessor_call_hf_processor"><a class="header" href="#gemma3multimodalprocessor_call_hf_processor">Gemma3MultiModalProcessor._call_hf_processor()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:277-310</code></p>
+<p>親クラスのHFプロセッサ呼び出し後、<code>num_patches</code> を追加計算する。HFプロセッサはこの値をpopしてしまうため、vLLM側で再計算が必要。</p>
+<pre><code class="language-python">num_crops = [self.info.get_num_crops(...) for size in image_sizes]
+processed_outputs["num_patches"] = torch.tensor(num_crops) + 1  # +1 for original
+</code></pre>
+<p>HFプロセッサの出力:</p>
+<ul>
+<li><code>pixel_values</code>: <code>(total_patches, 3, image_size, image_size)</code> — 全パッチのピクセルテンソル</li>
+<li><code>num_patches</code>: <code>(num_images,)</code> — 画像ごとのパッチ数（= num_crops + 1）</li>
+</ul>
+<h2 id="3-mmハッシュ"><a class="header" href="#3-mmハッシュ">3. MMハッシュ</a></h2>
+<h3 id="multimodalhasher"><a class="header" href="#multimodalhasher">MultiModalHasher</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50-162</code></p>
+<p>マルチモーダルデータのコンテンツベースハッシュを計算する。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>データ型</th><th>シリアライズ方法</th></tr>
+</thead>
+<tbody>
+<tr><td>PIL Image</td><td>ExifTags.ImageID (UUID型の場合) → 16バイト。なければ mode + pixel data (numpy配列)</td></tr>
+<tr><td>MediaWithBytes(Image)</td><td>ExifTags.ImageID → 16バイト。なければ original_bytes</td></tr>
+<tr><td>torch.Tensor</td><td>numpy変換 → dtype+shape+バイト列。bfloat16は uint8 view 経由</td></tr>
+<tr><td>np.ndarray</td><td>dtype.str + shape + contiguous バイト列</td></tr>
+<tr><td>その他</td><td>pickle フォールバック（警告あり）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ハッシュアルゴリズム</strong>: <code>VLLM_MM_HASHER_ALGORITHM</code> 環境変数で設定</p>
+<ul>
+<li><code>blake3</code>（デフォルト）: 高速</li>
+<li><code>sha256</code> / <code>sha512</code>: FIPS準拠用</li>
+</ul>
+<p><strong>hash_kwargs()</strong> はキーをソートしてから全データを逐次ハッシュに投入する（決定的）。</p>
+<h3 id="uuidオーバーライド"><a class="header" href="#uuidオーバーライド">UUIDオーバーライド</a></h3>
+<p>キャッシュとプレフィックスキャッシュの両方が無効な場合、コンテンツハッシュの代わりに <code>{request_id}-{modality}-{index}</code> 形式のUUIDを使用する（ハッシュ計算コストの回避）。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:551-574</code></p>
+<h3 id="lora対応のidentifier"><a class="header" href="#lora対応のidentifier">LoRA対応のidentifier</a></h3>
+<p>LoRAのtower_connector_loraが有効な場合、同じ画像でもLoRAによって埋め込みが変わるため、<code>identifier</code> に LoRA名をプレフィックスとして付加する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:490-506</code></p>
+<pre><code class="language-python">def _get_mm_identifier(self, mm_hash, lora_request):
+    if lora_request is None or not enable_tower_connector_lora:
+        return mm_hash
+    return f"{lora_request.lora_name}:{mm_hash}"
+</code></pre>
+<h2 id="4-プロセッサキャッシュp0側"><a class="header" href="#4-プロセッサキャッシュp0側">4. プロセッサキャッシュ（P0側）</a></h2>
+<h3 id="キャッシュタイプの選択"><a class="header" href="#キャッシュタイプの選択">キャッシュタイプの選択</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/registry.py:284-320</code></p>
+<pre><code>mm_processor_cache_gb &lt;= 0         → None（キャッシュ無効）
+IPC非対応 or API process &gt; 1       → processor_only
+mm_processor_cache_type == "lru"   → lru（Sender + Receiver）
+mm_processor_cache_type == "shm"   → shm（共有メモリ）
+</code></pre>
+<h3 id="4種類のキャッシュ実装"><a class="header" href="#4種類のキャッシュ実装">4種類のキャッシュ実装</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>実装</th><th>場所</th><th>格納内容</th><th>キャッシュヒット時の動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MultiModalProcessorOnlyCache</code> (L326)</td><td>P0のみ</td><td>テンソルデータ + prompt_updates</td><td>キャッシュから item + prompt_updates を返す（HF処理スキップ）</td></tr>
+<tr><td><code>MultiModalProcessorSenderCache</code> (L379)</td><td>P0</td><td>サイズメタデータ + prompt_updates</td><td>item=None を返す（P1にデータあり、IPC不要）</td></tr>
+<tr><td><code>ShmObjectStoreSenderCache</code> (L437)</td><td>P0</td><td>共有メモリ参照 + prompt_updates</td><td>item=None を返す（共有メモリ経由でP1に渡す）</td></tr>
+<tr><td><code>MultiModalReceiverCache</code> (L614)</td><td>P1</td><td>テンソルデータ</td><td>lru タイプ時に P1 側で使用</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="p0-p1-キャッシュの整合性"><a class="header" href="#p0-p1-キャッシュの整合性">P0-P1 キャッシュの整合性</a></h3>
+<p><strong>設計の核心</strong>: P0とP1のキャッシュは <strong>同一のEviction順序</strong> を維持する。</p>
+<pre><code>                 is_cached() × N    get_and_update()
+P0: From API ───────────────────&gt; ────────────────&gt; To P1
+
+                get_and_update()
+P1: From P0 ───────────────────&gt; To model
+</code></pre>
+<ul>
+<li><code>is_cached()</code> はP0キャッシュのみを参照（Eviction順序を変えない）</li>
+<li><code>get_and_update()</code> は P0 と P1 で順番に呼ぶ必要がある（Eviction順序を同期）</li>
+<li>これにより、P0のキャッシュ状態を見るだけでP1のキャッシュ状態を推定できる（IPC不要）</li>
+</ul>
+<h3 id="キャッシュヒット時にスキップされる処理"><a class="header" href="#キャッシュヒット時にスキップされる処理">キャッシュヒット時にスキップされる処理</a></h3>
+<ol>
+<li><strong>HF Processor実行</strong>（画像のリサイズ、正規化、パッチ分割 → <code>pixel_values</code> テンソル生成）</li>
+<li><strong>テンソルデータのIPC送信</strong>（<code>SenderCache</code>/<code>ShmCache</code> 使用時、<code>data=None</code> にしてZMQ転送量削減）</li>
+<li><strong>プロンプト更新の再計算は常に必要</strong>（キャッシュにprompt_updatesが保存されているため計算はスキップだが、取得は必要）</li>
+</ol>
+<h2 id="5-enginecorerequest-への組み立て"><a class="header" href="#5-enginecorerequest-への組み立て">5. EngineCoreRequest への組み立て</a></h2>
+<h3 id="multimodalfeaturespec-構築"><a class="header" href="#multimodalfeaturespec-構築">MultiModalFeatureSpec 構築</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:627-654</code></p>
+<pre><code class="language-python">mm_features = []
+for modality, idx in sorted_mm_idxs:
+    base_mm_hash = decoder_mm_hashes[modality][idx]
+    mm_features.append(
+        MultiModalFeatureSpec(
+            data=decoder_mm_inputs[modality][idx],     # MultiModalKwargsItem | None
+            modality=modality,                          # "image"
+            identifier=_get_mm_identifier(base_mm_hash, lora_request),
+            mm_position=decoder_mm_positions[modality][idx],  # PlaceholderRange
+            mm_hash=base_mm_hash,
+        )
+    )
+</code></pre>
+<p><code>sorted_mm_idxs</code> は <code>argsort_mm_positions()</code> でプロンプト内の出現順にソートされる。</p>
+<h3 id="multimodalfeaturespec-の構造"><a class="header" href="#multimodalfeaturespec-の構造">MultiModalFeatureSpec の構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:337-381</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>data</code></td><td><code>MultiModalKwargsItem | None</code></td><td>処理済みテンソルデータ。P0キャッシュヒット時は <code>None</code></td></tr>
+<tr><td><code>modality</code></td><td><code>str</code></td><td><code>"image"</code>, <code>"video"</code>, <code>"audio"</code> 等</td></tr>
+<tr><td><code>identifier</code></td><td><code>str</code></td><td>エンコーダキャッシュ用ハッシュ（LoRAプレフィックス付きの場合あり）</td></tr>
+<tr><td><code>mm_position</code></td><td><code>PlaceholderRange</code></td><td>プロンプト内のプレースホルダー位置</td></tr>
+<tr><td><code>mm_hash</code></td><td><code>str | None</code></td><td>プロセッサキャッシュ用ハッシュ（LoRAプレフィックスなし）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="placeholderrange-の構造"><a class="header" href="#placeholderrange-の構造">PlaceholderRange の構造</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:170-240</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>offset</code></td><td><code>int</code></td><td>プロンプト内の開始位置</td></tr>
+<tr><td><code>length</code></td><td><code>int</code></td><td>プレースホルダーの長さ（トークン数）</td></tr>
+<tr><td><code>is_embed</code></td><td><code>Tensor[bool] | None</code></td><td>各位置が埋め込みを受け取るかのマスク</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>get_num_embeds()</code> は実際のエンコーダ出力の埋め込み数を返す（<code>is_embed</code> のTrue数、またはlength）。</p>
+<h3 id="enginecorerequest"><a class="header" href="#enginecorerequest">EngineCoreRequest</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:55-101</code></p>
+<p>テキスト推論との差分:</p>
+<ul>
+<li><code>mm_features: list[MultiModalFeatureSpec] | None</code> — マルチモーダル時に設定される</li>
+<li><code>prompt_token_ids</code> にはプレースホルダー展開済みのトークン列が入る</li>
+</ul>
+<p>ZMQ送信時は <code>msgspec</code> によるバイナリシリアライゼーション。テンソルデータは <code>MultiModalKwargsItem</code> に含まれ、カスタムエンコーダで処理される。</p>
+<h2 id="6-キャッシュタイプ別のデータフロー"><a class="header" href="#6-キャッシュタイプ別のデータフロー">6. キャッシュタイプ別のデータフロー</a></h2>
+<h3 id="processor_onlyp0完結"><a class="header" href="#processor_onlyp0完結">processor_only（P0完結）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → cache store(tensor+prompt) → tensor をリクエストに含めて送信
+P0: hash → cache hit  → cache get(tensor+prompt) → tensor をリクエストに含めて送信
+</code></pre>
+<ul>
+<li>テンソルデータは常にZMQ経由で送信される</li>
+</ul>
+<h3 id="lrup0-sender--p1-receiver"><a class="header" href="#lrup0-sender--p1-receiver">lru（P0 Sender + P1 Receiver）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → meta store(size+prompt) → tensor をリクエストに含めて送信
+P1: hash → cache miss → tensor を受信 → cache store(tensor)
+
+P0: hash → cache hit  → meta get(prompt) → data=None で送信（テンソル省略）
+P1: hash → cache hit  → cache get(tensor)
+</code></pre>
+<ul>
+<li>キャッシュヒット時は <strong>テンソルデータのIPC転送がスキップ</strong> される</li>
+</ul>
+<h3 id="shm共有メモリ"><a class="header" href="#shm共有メモリ">shm（共有メモリ）</a></h3>
+<pre><code>P0: hash → cache miss → HF処理 → 共有メモリに書き込み → data=None で送信
+P1: hash → cache miss → 共有メモリから読み取り
+
+P0: hash → cache hit  → data=None で送信
+P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ）
+</code></pre>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>InputProcessor</code>, <code>process_inputs()</code>, <code>_get_mm_identifier()</code></td><td>L56, L521, L490</td></tr>
+<tr><td><code>target/vllm/vllm/inputs/preprocess.py</code></td><td><code>InputPreprocessor</code>, <code>_process_multimodal()</code>, <code>_get_mm_processor()</code></td><td>L60, L193, L182</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/hasher.py</code></td><td><code>MultiModalHasher</code>, <code>hash_kwargs()</code>, <code>serialize_item()</code></td><td>L50, L154, L52</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/cache.py</code></td><td><code>MultiModalProcessorOnlyCache</code>, <code>SenderCache</code>, <code>ShmCache</code>, <code>ReceiverCache</code></td><td>L326, L379, L437, L614</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/registry.py</code></td><td><code>MULTIMODAL_REGISTRY</code>, <code>processor_cache_from_config()</code></td><td>L305</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/inputs.py</code></td><td><code>MultiModalFeatureSpec</code>, <code>PlaceholderRange</code></td><td>L337, L170</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/__init__.py</code></td><td><code>EngineCoreRequest</code></td><td>L55</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td><code>Gemma3MultiModalProcessor</code>, <code>Gemma3ProcessingInfo</code></td><td>L276, L77</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="summary.html">マルチモーダル処理パイプライン概要</a></li>
+<li><a href="mm-engine-gpu.html">バックエンド MM処理パス</a></li>
+<li><a href="gemma3-vision.html">Gemma3 ビジョンエンコーダ</a></li>
+<li><a href="../input-processor/summary.html">InputProcessor</a></li>
+<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../components/multimodal/mm-engine-gpu.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../components/output-processor/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../components/multimodal/mm-engine-gpu.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../components/output-processor/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

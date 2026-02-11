@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>EngineCoreClient サマリー - コードリーディング: vLLM</title>
+        <title>マルチモーダル処理パイプライン サマリー - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -174,138 +174,140 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="enginecoreclient-サマリー"><a class="header" href="#enginecoreclient-サマリー">EngineCoreClient サマリー</a></h1>
+                        <h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-09</p>
+<strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p><code>EngineCoreClient</code>はフロントエンドプロセス（AsyncLLM / LLM）とバックエンドプロセス（EngineCore）間のプロセス間通信を抽象化するコンポーネントである。ZeroMQソケットとmsgpackシリアライゼーションを使用し、<code>EngineCoreRequest</code>の送信と<code>EngineCoreOutputs</code>の受信を効率的に行う。</p>
-<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
-<pre><code>フロントエンドプロセス            バックエンドプロセス
-┌───────────────────┐            ┌───────────────────┐
-│  AsyncMPClient    │            │  EngineCore       │
-│                   │            │                   │
-│  input_socket     ├──ROUTER──→│  (ZMQ受信)        │
-│  (zmq.ROUTER)     │  msgpack   │                   │
-│                   │            │                   │
-│  output_socket    │←──PULL────┤  (ZMQ送信)        │
-│  (zmq.PULL)       │  msgpack   │                   │
-│                   │            │                   │
-│  outputs_queue    │            │                   │
-│  (asyncio.Queue)  │            │                   │
-└───────────────────┘            └───────────────────┘
-</code></pre>
+<p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
+<h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
+<pre class="mermaid">graph TD
+    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate 適用&lt;br&gt;プレースホルダー挿入"]
+    B --&gt; C["InputPreprocessor&lt;br&gt;トークナイズ + HF Processor"]
+
+    C --&gt; D{"ProcessorCache&lt;br&gt;ヒット?"}
+    D --&gt;|HIT| E["キャッシュから取得&lt;br&gt;(HF処理スキップ)"]
+    D --&gt;|MISS| F["HF Processor 実行&lt;br&gt;pixel_values テンソル生成"]
+    E --&gt; G["MultiModalFeatureSpec 構築"]
+    F --&gt; G
+
+    G --&gt; H["EngineCoreRequest&lt;br&gt;ZMQ IPC 送信"]
+
+    H --&gt; I["Scheduler"]
+    I --&gt; J{"EncoderCacheManager&lt;br&gt;ヒット?"}
+    J --&gt;|HIT| K["エンコーダ計算スキップ"]
+    J --&gt;|MISS| L["encoder_compute_budget&lt;br&gt;から割り当て"]
+
+    K --&gt; M["GPUModelRunner"]
+    L --&gt; M
+
+    M --&gt; N["_execute_mm_encoder()&lt;br&gt;model.embed_multimodal()"]
+    N --&gt; O["encoder_cache に格納"]
+    O --&gt; P["_gather_mm_embeddings()&lt;br&gt;キャッシュからスライス"]
+    P --&gt; Q["embed_input_ids()&lt;br&gt;text + vision マージ&lt;br&gt;(masked_scatter_)"]
+    Q --&gt; R["model.forward()&lt;br&gt;統合推論"]
+</pre>
+
 <h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+<tr><th>コンポーネント</th><th>場所</th><th>役割</th></tr>
 </thead>
 <tbody>
-<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td><code>target/vllm/vllm/v1/engine/core_client.py:63</code></td></tr>
-<tr><td><code>MPClient</code></td><td>マルチプロセスクライアント基底</td><td><code>target/vllm/vllm/v1/engine/core_client.py:442</code></td></tr>
-<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセスクライアント（AsyncLLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py:822</code></td></tr>
-<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセスクライアント（LLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
-<tr><td><code>MsgpackEncoder</code></td><td>リクエストのシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
-<tr><td><code>MsgpackDecoder</code></td><td>レスポンスのデシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
+<tr><td><code>MULTIMODAL_REGISTRY</code></td><td><code>vllm/multimodal/registry.py</code></td><td>モデルごとのプロセッサ/情報を登録・取得</td></tr>
+<tr><td><code>BaseMultiModalProcessor</code></td><td><code>vllm/multimodal/processing/processor.py</code></td><td>HFプロセッサ実行、プロンプト更新管理</td></tr>
+<tr><td><code>MultiModalHasher</code></td><td><code>vllm/multimodal/hasher.py</code></td><td>コンテンツベースハッシュ（blake3）</td></tr>
+<tr><td><code>ProcessorCache</code> (4種)</td><td><code>vllm/multimodal/cache.py</code></td><td>P0側のHF処理結果キャッシュ</td></tr>
+<tr><td><code>EncoderCacheManager</code></td><td><code>vllm/v1/core/encoder_cache_manager.py</code></td><td>P1側のエンコーダ出力の論理管理</td></tr>
+<tr><td><code>encoder_cache</code></td><td><code>vllm/v1/worker/gpu_model_runner.py:439</code></td><td>GPU上のエンコーダ出力テンソルキャッシュ</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
-<h3 id="enginecoreclient-abc"><a class="header" href="#enginecoreclient-abc">EngineCoreClient (ABC)</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>メソッド</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>make_client()</code></td><td>ファクトリ。設定に応じた適切なサブクラスを返す</td></tr>
-<tr><td><code>make_async_mp_client()</code></td><td>AsyncLLM用ファクトリ。DP構成も考慮</td></tr>
-<tr><td><code>add_request()</code></td><td>EngineCoreRequestを送信</td></tr>
-<tr><td><code>get_output()</code></td><td>EngineCoreOutputsを受信</td></tr>
-<tr><td><code>abort_requests()</code></td><td>リクエストキャンセル</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="asyncmpclient"><a class="header" href="#asyncmpclient">AsyncMPClient</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>_ensure_output_queue_task()</code></td><td>L856</td><td>ZMQ出力受信タスクを起動</td></tr>
-<tr><td><code>get_output_async()</code></td><td>L902</td><td>asyncio.Queueから出力を取得</td></tr>
-<tr><td><code>_send_input()</code></td><td>L913</td><td>EngineCoreRequestをZMQで送信</td></tr>
-<tr><td><code>_send_input_message()</code></td><td>L925</td><td>ZMQ multipart送信（zero-copy対応）</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="ファクトリ選択ロジック"><a class="header" href="#ファクトリ選択ロジック">ファクトリ選択ロジック</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:99</code> (make_async_mp_client)</p>
-<pre><code>make_async_mp_client(vllm_config, executor_class, ...)
-  ├─ data_parallel_size &gt; 1 の場合:
-  │   ├─ external_lb → DPAsyncMPClient
-  │   └─ internal_lb → DPLBAsyncMPClient
-  └─ それ以外 → AsyncMPClient
+<h2 id="キャッシュの3層構造"><a class="header" href="#キャッシュの3層構造">キャッシュの3層構造</a></h2>
+<pre><code>P0（フロントエンド）               P1（Scheduler）              P1（GPU）
+┌──────────────────┐           ┌─────────────────┐        ┌──────────────┐
+│ ProcessorCache   │           │ EncoderCache    │        │ encoder_cache│
+│ LRU, サイズベース │           │ Manager         │        │ dict[str,    │
+│                  │           │ RefCount + FIFO │        │  Tensor]     │
+│ 何をキャッシュ:   │           │                 │        │              │
+│ HF処理済みテンソル │           │ 何を管理:       │        │ 何をキャッシュ:│
+│ + prompt_updates │           │ 容量・参照カウント│       │ エンコーダ出力│
+│                  │           │ Evictionリスト   │        │ (GPUテンソル) │
+└──────────────────┘           └─────────────────┘        └──────────────┘
+  ヒット時:                      ヒット時:                   ヒット時:
+  HF処理スキップ                 エンコーダ計算スキップ        テンソル再利用
+  IPC転送量削減                  予算節約                    再計算不要
 </code></pre>
-<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<h2 id="テキスト推論との主な差分"><a class="header" href="#テキスト推論との主な差分">テキスト推論との主な差分</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+<tr><th>処理段階</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
 </thead>
 <tbody>
-<tr><td><code>parallel_config.data_parallel_size</code></td><td>1</td><td>データ並列数。&gt;1でDP系クライアントを使用</td></tr>
-<tr><td><code>parallel_config.data_parallel_external_lb</code></td><td>—</td><td>外部ロードバランサ使用フラグ</td></tr>
+<tr><td>入力前処理</td><td>tokenize のみ</td><td>tokenize + HF Processor + ハッシュ + キャッシュ</td></tr>
+<tr><td>プロンプト</td><td>テキストトークンのみ</td><td>テキスト + プレースホルダートークン（<code>&lt;start_of_image&gt;</code> 等）</td></tr>
+<tr><td>EngineCoreRequest</td><td><code>mm_features = None</code></td><td><code>mm_features = [MultiModalFeatureSpec, ...]</code></td></tr>
+<tr><td>Scheduler</td><td>KVキャッシュ予算のみ</td><td>+ エンコーダ計算予算管理</td></tr>
+<tr><td>GPUModelRunner</td><td>input_ids → model.forward()</td><td>encoder実行 → embed_input_ids(masked_scatter_) → inputs_embeds → model.forward()</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
-<pre><code>[送信パス]
-AsyncLLM.add_request()
-  → engine_core.add_request_async(request)
-    → AsyncMPClient._send_input(REQUEST, request)
-      → MsgpackEncoder.encode(request)
-      → input_socket.send_multipart(msg, copy=False)
-        → ZMQ ROUTER → バックエンドプロセス
-
-[受信パス]
-process_outputs_socket() [バックグラウンドタスク]
-  → output_socket.recv_multipart()
-    → MsgpackDecoder.decode(frames) → EngineCoreOutputs
-    → outputs_queue.put_nowait(outputs)
-
-AsyncLLM._run_output_handler()
-  → engine_core.get_output_async()
-    → outputs_queue.get() → EngineCoreOutputs
-</code></pre>
-<h2 id="設計上の特徴"><a class="header" href="#設計上の特徴">設計上の特徴</a></h2>
+<h2 id="gemma3-固有の特徴"><a class="header" href="#gemma3-固有の特徴">Gemma3 固有の特徴</a></h2>
 <ul>
-<li><strong>プロセス分離</strong>: EngineCoreが別プロセスで動作するため、GILの影響を受けずスケジューリングとGPU実行を並行可能</li>
-<li><strong>msgpackシリアライゼーション</strong>: <code>msgspec.Struct</code>の<code>array_like</code>形式でコンパクトなバイナリ表現</li>
-<li><strong>zero-copy</strong>: ZMQ <code>copy=False</code> でメモリコピーを最小化。テンソルバッキングバッファの追跡（<code>add_pending_message</code>）</li>
-<li><strong>weakref</strong>: 出力タスクがクライアントへの循環参照を持たないよう<code>weakref</code>を使用</li>
+<li><strong>ビジョンエンコーダ</strong>: SiglipVisionModel（SIGLIP ViT、双方向Attention）</li>
+<li><strong>プロジェクタ</strong>: AvgPool2d → GemmaRMSNorm → Linear（vision → text空間）</li>
+<li><strong>プレースホルダー</strong>: <code>&lt;start_of_image&gt;</code> → <code>image_token × 256</code> に展開</li>
+<li><strong>Pan-and-Scan</strong>: アスペクト比が大きい画像を複数クロップ（V1では簡略化されたアテンション）</li>
+<li><strong>改行トークン結合</strong>: <code>\n</code> + <code>\n\n</code> → <code>\n\n\n</code> 等の特殊処理</li>
 </ul>
-<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<h2 id="詳細ドキュメント"><a class="header" href="#詳細ドキュメント">詳細ドキュメント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ドキュメント</th><th>内容</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="mm-processing.html">mm-processing.md</a></td><td>フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ</td></tr>
+<tr><td><a href="mm-engine-gpu.html">mm-engine-gpu.md</a></td><td>バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ</td></tr>
+<tr><td><a href="gemma3-vision.html">gemma3-vision.md</a></td><td>Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
 <ul>
-<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
-<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+<li><strong>上流</strong>: <a href="../entrypoint/summary.html">エントリポイント</a> → <a href="../input-processor/summary.html">InputProcessor</a></li>
+<li><strong>下流</strong>: <a href="../scheduler/summary.html">Scheduler</a> → <a href="../gpu-model-runner/summary.html">GPUModelRunner</a> → モデル層</li>
 </ul>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>概要</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/multimodal/</code></td><td>マルチモーダル処理の基盤（レジストリ、ハッシュ、キャッシュ、パース）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td>フロントエンドでのMM処理統合</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td>バックエンドのエンコーダキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td>GPU上でのエンコーダ実行と埋め込みマージ</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td>Gemma3のマルチモーダル実装</td></tr>
+<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td>SiglipVisionModel（ビジョンエンコーダ）</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../components/engine-core/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../components/kv-cache-manager/prefix-cache.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../components/entrypoint/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/multimodal/gemma3-vision.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -315,11 +317,11 @@ AsyncLLM._run_output_handler()
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../components/engine-core/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../components/kv-cache-manager/prefix-cache.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../components/entrypoint/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/multimodal/gemma3-vision.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
