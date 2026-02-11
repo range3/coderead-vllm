@@ -37,6 +37,7 @@
 
 # 調査報告
 
+- [Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]](investigations/gemma3-vision-caches.md)
 - [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](investigations/gemma3-vision-pipeline.md)
 
 ---

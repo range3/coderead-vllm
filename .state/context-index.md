@@ -35,6 +35,7 @@
 | ドキュメント | 内容 | 深度 | 確信度 | 最終更新 |
 | ------------ | ---- | ---- | ------ | -------- |
 | `docs/src/investigations/gemma3-vision-pipeline.md` | Gemma3 27Bビジョンパイプライン形状フロー。config.json導出値、Pan-and-Scan設定、APIリクエスト→デコーダ入力のフルステップ（ケース1: PaS無効=256トークン、ケース2: PaS有効=768トークン）、CPU/GPU処理フロー図 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
+| `docs/src/investigations/gemma3-vision-caches.md` | Gemma3ビジョンパイプラインの3層キャッシュ機構。ProcessorCache(CPU, blake3, Step3スキップ)、EncoderCache(GPU, identifier, Step4+5+6スキップ)、KVプレフィックスキャッシュ(GPU, extra_keys, Step7+8部分スキップ)。キャッシュ間のキー共有(mm_hash基盤)、4シナリオ別動作例 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 
 ## 外部リソース (target/ 内参照用)
 

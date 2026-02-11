@@ -33,5 +33,5 @@
 - [ ] HybridKVCacheCoordinatorの反復固定点アルゴリズムは実際のモデルで何回イテレーションするか？
 - [ ] BlockHashToBlockMapのUnion型最適化の実測パフォーマンス差は？
 - [ ] ProcessorCacheのshm（共有メモリ）モードのSingleWriterShmRingBufferの具体的な動作は？
-- [ ] マルチモーダルのプレフィックスキャッシュとProcessorCacheの相互作用の詳細は？（同じ画像のリクエストでKVキャッシュヒットする条件）
+- [x] マルチモーダルのプレフィックスキャッシュとProcessorCacheの相互作用の詳細は？（同じ画像のリクエストでKVキャッシュヒットする条件） — **回答**: 3つのキャッシュは独立に動作し、共通のmm_hashをキー基盤として共有。同一画像・同一プロンプト→全ヒット、同一画像・異なるプロンプト→ProcessorCache+EncoderCacheヒット+KVプレフィックスは画像ブロック部分のみヒット可能。extra_keysにidentifierが含まれるため異なる画像は必ずミス。詳細は `docs/src/investigations/gemma3-vision-caches.md`
 - [ ] 複数画像入力時のエンコーダバッチ処理のパフォーマンス特性は？
