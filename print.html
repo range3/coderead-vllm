@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-45bc5577.js";
+            window.path_to_searchindex_js = "searchindex-7573ed73.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3c0baeba.js"></script>
+        <script src="toc-3f3d2a41.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4409,6 +4409,317 @@ EngineCore.step()
 <li><a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a></li>
 <li><a href="#テキスト推論データフロー">データフロー</a></li>
 <li><a href="#用語集">用語集: Continuous Batching, Unified Compute Model</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="gemma3-ビジョンパイプライン-キャッシュ機構-medium-verified"><a class="header" href="#gemma3-ビジョンパイプライン-キャッシュ機構-medium-verified">Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<p><a href="#gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ">gemma3-vision-pipeline.md</a> で追跡した Gemma3 27B ビジョンパイプライン上には、3つの独立したキャッシュ層が存在する。各キャッシュは異なるステップの重い処理をスキップし、同一画像の再利用や同一プロンプトの再送時に大幅な計算量削減を実現する。</p>
+<hr>
+<h2 id="1-パイプラインとキャッシュの位置関係"><a class="header" href="#1-パイプラインとキャッシュの位置関係">1. パイプラインとキャッシュの位置関係</a></h2>
+<pre><code>                      Step 1: API Request
+                             │
+                      Step 2: chat_template 適用
+                             │
+                ┌────────────┴────────────────┐
+                │  Step 3: Gemma3Processor     │
+                │  (CPU, P0 フロントエンド)      │
+                │                              │
+                │  3a. image_processor          │
+                │      resize(896×896)          │
+                │      rescale(×1/255)          │  ◀── ProcessorCache ヒット時
+                │      normalize(0.5, 0.5)      │      Step 3 全体をスキップ
+                │      Pan-and-Scan crop        │
+                │  3b. num_crops 取得            │
+                │  3c. プロンプト書き換え         │
+                │  3d. boi→full_image_seq 展開   │
+                │  3e. tokenize                 │
+                │  3f. token_type_ids 生成       │
+                └────────────┬────────────────┘
+                             │
+                  pixel_values: (N, 3, 896, 896)
+                  prompt_token_ids, mm_hashes
+                             │
+              ═══════════════╪═══════════════ CPU → GPU (ZMQ IPC)
+                             │
+                ┌────────────┴────────────────┐
+                │  Step 4: SiglipVisionModel   │
+                │  (GPU, P1 バックエンド)        │
+                │  Conv2d → 4096 patches        │
+                │  + position_embedding          │  ◀── EncoderCache ヒット時
+                │  SiglipEncoder × 27層          │      Step 4+5+6 をスキップ
+                │  post_layernorm               │
+                ├───────────────────────────────┤
+                │  Step 5: Projector            │
+                │  AvgPool2d(k=4) → 256 tokens  │
+                │  GemmaRMSNorm                  │
+                │  Linear(1152→5376)             │
+                ├───────────────────────────────┤
+                │  Step 6: split + flatten       │
+                └────────────┬────────────────┘
+                             │
+                  encoder output: (N×256, 5376)
+                             │
+                ┌────────────┴────────────────┐
+                │  Step 7: embed_input_ids     │
+                │  text_embeds × normalizer     │
+                │  masked_scatter_(mm_embeds)    │  ◀── KVプレフィックスキャッシュ ヒット時
+                ├───────────────────────────────┤      プレフィックス一致分の
+                │  Step 8: Gemma3 Decoder       │      Step 7+8 をスキップ
+                │  62層 Transformer              │      (KV再計算不要)
+                └──────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="2-キャッシュ比較テーブル"><a class="header" href="#2-キャッシュ比較テーブル">2. キャッシュ比較テーブル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>ProcessorCache</th><th>EncoderCache</th><th>KVプレフィックスキャッシュ</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>場所</strong></td><td>CPU (P0 フロントエンド)</td><td>GPU (P1 バックエンド)</td><td>GPU (P1 バックエンド)</td></tr>
+<tr><td><strong>キャッシュキー</strong></td><td>blake3(model_id, 画像ピクセル, processor_kwargs, tokenizer_kwargs)</td><td><code>mm_feature.identifier</code> (= mm_hash or <code>{lora}:{mm_hash}</code>)</td><td>hash(parent_hash, token_ids, extra_keys) — extra_keysにidentifier含む</td></tr>
+<tr><td><strong>保存される値</strong></td><td>HF処理済みテンソル (pixel_values, num_patches) + prompt_updates</td><td>エンコーダ出力テンソル (post-Projector, GPU上)</td><td>デコーダ各層のKV状態 (KVCacheブロック)</td></tr>
+<tr><td><strong>ヒット時にスキップ</strong></td><td>Step 3全体 (CPU前処理)</td><td>Step 4+5+6 (エンコーダ+プロジェクタ)</td><td>Step 7+8の一部 (プレフィックス分のデコーダ)</td></tr>
+<tr><td><strong>Eviction方式</strong></td><td>LRU (サイズベース)</td><td>FIFO (RefCount管理)</td><td>LRU (ブロック単位)</td></tr>
+<tr><td><strong>容量設定</strong></td><td><code>mm_processor_cache_gb</code> (default: 4GB)</td><td><code>encoder_cache_size</code> (埋め込み数単位)</td><td>KVCacheの一部 (BlockPool管理)</td></tr>
+<tr><td><strong>管理クラス</strong></td><td><code>MultiModalProcessorOnlyCache</code> 等4種</td><td><code>EncoderCacheManager</code> + <code>encoder_cache</code> dict</td><td><code>KVCacheManager</code> (prefix_cache)</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="3-processorcache--cpu側前処理キャッシュ"><a class="header" href="#3-processorcache--cpu側前処理キャッシュ">3. ProcessorCache — CPU側前処理キャッシュ</a></h2>
+<h3 id="ハッシュ計算"><a class="header" href="#ハッシュ計算">ハッシュ計算</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50-162</code>, <code>target/vllm/vllm/multimodal/processing/processor.py:1299-1363</code></p>
+<pre><code class="language-python">MultiModalHasher.hash_kwargs(
+    model_id=model_id,          # モデル識別子（例: "google/gemma-3-27b-it"）
+    image=PIL_Image,            # 画像データ
+    **hf_processor_mm_kwargs,   # HF Processorへの追加引数
+    **tokenization_kwargs,      # トークナイザ設定
+)
+</code></pre>
+<p>ハッシュに投入されるデータ:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>入力</th><th>シリアライズ方法</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model_id</code> (str)</td><td>UTF-8エンコード</td></tr>
+<tr><td><code>image</code> (PIL.Image)</td><td>EXIF ImageID (UUID型) → 16バイト。なければ mode + ピクセルデータ (numpy配列)</td></tr>
+<tr><td><code>image</code> (MediaWithBytes)</td><td>EXIF ImageID → 16バイト。なければ original_bytes</td></tr>
+<tr><td><code>hf_processor_mm_kwargs</code> (dict)</td><td>キーソート → 再帰的シリアライズ</td></tr>
+<tr><td><code>tokenization_kwargs</code> (dict)</td><td>同上</td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li><strong>ハッシュアルゴリズム</strong>: <code>VLLM_MM_HASHER_ALGORITHM</code> 環境変数で設定（<code>blake3</code> デフォルト、<code>sha256</code>/<code>sha512</code> はFIPS準拠用）</li>
+<li>キーはアルファベット順にソートされてから逐次ハッシュに投入される（決定的）</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:154-162</code> (hash_kwargs)</p>
+<h3 id="保存される情報"><a class="header" href="#保存される情報">保存される情報</a></h3>
+<ul>
+<li><strong>テンソルデータ</strong>: <code>pixel_values</code> (形状: <code>(N, 3, 896, 896)</code>), <code>num_patches</code> (形状: <code>(num_images,)</code>)</li>
+<li><strong>prompt_updates</strong>: プレースホルダー位置情報、展開パターン</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py:326-725</code></p>
+<h3 id="cpugpu"><a class="header" href="#cpugpu">CPU/GPU</a></h3>
+<p><strong>CPU</strong>。P0フロントエンドプロセスのメモリ上で管理される。</p>
+<h3 id="スキップされる処理"><a class="header" href="#スキップされる処理">スキップされる処理</a></h3>
+<p><strong>Step 3 全体</strong>（<code>Gemma3Processor.__call__()</code>）:</p>
+<ul>
+<li>3a: <code>image_processor</code> — resize(896×896), rescale(×1/255), normalize(mean=0.5, std=0.5), Pan-and-Scan時のクロップ生成</li>
+<li>3b: <code>num_crops</code> 取得</li>
+<li>3c: プロンプト書き換え（Pan-and-Scan時のみ）</li>
+<li>3d: <code>boi_token</code> → <code>full_image_sequence</code> 展開</li>
+<li>3e: tokenizer による <code>token_ids</code> 変換</li>
+<li>3f: <code>token_type_ids</code> 生成</li>
+</ul>
+<p>さらに、Sender/Shm タイプ使用時は <strong>ZMQ IPC でのテンソルデータ転送もスキップ</strong> される（<code>data=None</code> で送信）。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/processing/processor.py:1513-1596</code> (_cached_apply_hf_processor)</p>
+<h3 id="キャッシュフロー詳細"><a class="header" href="#キャッシュフロー詳細">キャッシュフロー詳細</a></h3>
+<pre><code>_cached_apply_hf_processor():
+  1. _hash_mm_items()          → MultiModalHashes（各画像のblake3ハッシュ）
+  2. _get_cache_missing_items() → 各画像がキャッシュにあるか判定
+  3. _apply_hf_processor_main() → キャッシュミスの画像だけHF Processor実行
+  4. _merge_mm_kwargs()         → キャッシュ済み + 新規処理の結果をマージ
+     ※ マージ前に全ハッシュを touch() して LRU Eviction を防止
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/processing/processor.py:1365-1400</code> (_get_cache_missing_items)</p>
+<h3 id="4種の実装"><a class="header" href="#4種の実装">4種の実装</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>実装</th><th>用途</th><th>格納先</th><th>ヒット時の動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>MultiModalProcessorOnlyCache</code></td><td>P0完結（IPC無効時）</td><td>P0メモリ</td><td>テンソル+prompt返却</td></tr>
+<tr><td><code>MultiModalProcessorSenderCache</code></td><td>P0→P1（LRUモード）</td><td>P0にメタデータのみ</td><td><code>data=None</code>で送信、IPC転送省略</td></tr>
+<tr><td><code>ShmObjectStoreSenderCache</code></td><td>P0→P1（共有メモリ）</td><td>共有メモリ</td><td>共有メモリ参照を返却</td></tr>
+<tr><td><code>MultiModalReceiverCache</code></td><td>P1側（LRUモード）</td><td>P1メモリ</td><td>P0と同期したLRUでテンソル取得</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/registry.py:284-320</code> (キャッシュタイプ選択ロジック)</p>
+<hr>
+<h2 id="4-encodercache--gpuエンコーダ出力キャッシュ"><a class="header" href="#4-encodercache--gpuエンコーダ出力キャッシュ">4. EncoderCache — GPUエンコーダ出力キャッシュ</a></h2>
+<h3 id="キャッシュキー"><a class="header" href="#キャッシュキー">キャッシュキー</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:490-506</code></p>
+<pre><code class="language-python">identifier = mm_hash                          # 通常
+identifier = f"{lora_name}:{mm_hash}"         # LoRA tower connector有効時
+</code></pre>
+<p><code>mm_hash</code> は ProcessorCache と同じ blake3 ハッシュ値。LoRA が有効な場合は、同一画像でも LoRA によってエンコーダ出力が変わるため、LoRA名をプレフィックスとして付加する。</p>
+<h3 id="保存される情報-1"><a class="header" href="#保存される情報-1">保存される情報</a></h3>
+<ul>
+<li><strong>GPU上のテンソル</strong>: SiglipVisionModel + Gemma3MultiModalProjector の出力
+<ul>
+<li>Gemma3の場合: <code>(N×256, 5376)</code> — Projector出力をflattenしたもの</li>
+</ul>
+</li>
+<li><strong>論理管理</strong>: <code>EncoderCacheManager</code> が RefCount + FIFO で管理</li>
+<li><strong>物理格納</strong>: <code>gpu_model_runner.encoder_cache: dict[str, torch.Tensor]</code></li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17-267</code>, <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:439</code></p>
+<h3 id="cpugpu-1"><a class="header" href="#cpugpu-1">CPU/GPU</a></h3>
+<p><strong>GPU</strong>。エンコーダ出力テンソルはGPUメモリ上に保持される。論理管理（RefCount、Eviction判定）はCPU上の <code>EncoderCacheManager</code> が行う。</p>
+<h3 id="スキップされる処理-1"><a class="header" href="#スキップされる処理-1">スキップされる処理</a></h3>
+<p><strong>Step 4 + Step 5 + Step 6</strong>:</p>
+<ul>
+<li>Step 4: <strong>SiglipVisionModel forward</strong> — Conv2d(3→1152) + position_embedding + 27層 Transformer Encoder + post_layernorm</li>
+<li>Step 5: <strong>Gemma3MultiModalProjector forward</strong> — reshape + AvgPool2d(k=4, s=4) + GemmaRMSNorm + Linear(1152→5376)</li>
+<li>Step 6: <strong>split + flatten</strong> — num_patchesに基づく分割と結合</li>
+</ul>
+<p>これらはGPU上で最も計算量の大きいビジョン処理であり、特に SiglipEncoder の 27層の双方向 Attention が支配的。</p>
+<h3 id="scheduler連携"><a class="header" href="#scheduler連携">Scheduler連携</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1060-1215</code></p>
+<pre><code>Scheduler._get_encoder_budget():
+  1. 各 mm_feature について:
+  2. encoder_cache_manager.check_and_update_cache(req, i) を呼ぶ
+     → True: scheduled_encoder_inputs に含めない（スキップ）
+     → False: can_allocate() → allocate() → scheduled_encoder_inputs に追加
+  3. SchedulerOutput.scheduled_encoder_inputs = {req_id: [input_ids]}
+</code></pre>
+<p>GPUModelRunner 側:</p>
+<pre><code>_execute_mm_encoder():
+  → scheduled_encoder_inputs にあるもののみ model.embed_multimodal() 実行
+  → 出力を encoder_cache[mm_hash] に格納
+
+_gather_mm_embeddings():
+  → 全ての mm_feature について encoder_cache[mm_hash] からスライス取得
+  → キャッシュヒットしたものも、ミスして今回計算したものも、同じキャッシュから取得
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2293-2447</code> (_execute_mm_encoder), <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2449-2527</code> (_gather_mm_embeddings)</p>
+<hr>
+<h2 id="5-kvプレフィックスキャッシュ--デコーダkv状態キャッシュ"><a class="header" href="#5-kvプレフィックスキャッシュ--デコーダkv状態キャッシュ">5. KVプレフィックスキャッシュ — デコーダKV状態キャッシュ</a></h2>
+<h3 id="ブロックハッシュ計算"><a class="header" href="#ブロックハッシュ計算">ブロックハッシュ計算</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:525-552</code></p>
+<pre><code class="language-python">BlockHash(
+    hash_function((parent_block_hash, curr_block_token_ids_tuple, extra_keys))
+)
+</code></pre>
+<p><code>extra_keys</code> は以下の要素の結合:</p>
+<pre><code class="language-python">extra_keys = lora_extra_keys + mm_extra_keys + cache_salt_keys + prompt_embeds_keys
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:487-522</code> (generate_block_hash_extra_keys)</p>
+<h4 id="mm-extra-keys-の生成"><a class="header" href="#mm-extra-keys-の生成">MM extra keys の生成</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:387-448</code></p>
+<p>MMトークン（<code>&lt;image&gt;</code> token_id=262144）を含むブロックでは、そのブロックに重なる <code>mm_feature.identifier</code> が <code>extra_keys</code> に追加される。</p>
+<pre><code>ブロック [start_token_idx, end_token_idx) が
+mm_feature の [offset, offset+length) と重なる場合:
+  → extra_keys.append(mm_feature.identifier)
+</code></pre>
+<p>これにより:</p>
+<ul>
+<li><strong>同一テキスト・異なる画像</strong> → 異なるブロックハッシュ → キャッシュミス</li>
+<li><strong>同一テキスト・同一画像</strong> → 同一ブロックハッシュ → キャッシュヒット</li>
+</ul>
+<h3 id="保存される情報-2"><a class="header" href="#保存される情報-2">保存される情報</a></h3>
+<ul>
+<li><strong>GPUメモリ上のKVCacheブロック</strong>: デコーダ62層分のKey/Value状態</li>
+<li>BlockPool が物理ブロックを管理、prefix_cache がハッシュ→ブロック対応を管理</li>
+</ul>
+<h3 id="cpugpu-2"><a class="header" href="#cpugpu-2">CPU/GPU</a></h3>
+<p><strong>GPU</strong>。KV状態はGPUメモリ上のブロックに格納される。ハッシュ計算とブロック対応管理はCPU上の <code>KVCacheManager</code> が行う。</p>
+<h3 id="スキップされる処理-2"><a class="header" href="#スキップされる処理-2">スキップされる処理</a></h3>
+<p><strong>Step 7 + Step 8 の一部</strong>（プレフィックスが一致するトークン分）:</p>
+<ul>
+<li>Step 7: <strong>embed_input_ids</strong> — テキスト埋め込み × normalizer + masked_scatter_(mm_embeds)</li>
+<li>Step 8: <strong>Gemma3 Decoder forward</strong> — 62層 Transformer の KV 計算</li>
+</ul>
+<p>プレフィックスキャッシュがヒットすると <code>num_computed_tokens</code> が増加し、新規に forward pass が必要なトークン数が減少する。例えば 1000 トークンのプロンプトで 800 トークン分のプレフィックスがヒットすれば、残り 200 トークンだけ計算すればよい。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:164-204</code> (get_computed_blocks)</p>
+<hr>
+<h2 id="6-キャッシュの独立性と相互作用"><a class="header" href="#6-キャッシュの独立性と相互作用">6. キャッシュの独立性と相互作用</a></h2>
+<p>3つのキャッシュは独立に動作する。各キャッシュのヒット/ミスは他のキャッシュの判定に影響しない。</p>
+<h3 id="典型シナリオ"><a class="header" href="#典型シナリオ">典型シナリオ</a></h3>
+<h4 id="シナリオ1-初回リクエスト全ミス"><a class="header" href="#シナリオ1-初回リクエスト全ミス">シナリオ1: 初回リクエスト（全ミス）</a></h4>
+<pre><code>画像A + "この画像は何？"  →  全ステップ実行
+  ProcessorCache: MISS → Step 3 実行、結果をキャッシュ
+  EncoderCache:   MISS → Step 4+5+6 実行、結果をキャッシュ
+  KV Prefix:      MISS → Step 7+8 全トークン実行、KVブロック格納
+</code></pre>
+<h4 id="シナリオ2-同一画像同一プロンプト再送全ヒット"><a class="header" href="#シナリオ2-同一画像同一プロンプト再送全ヒット">シナリオ2: 同一画像・同一プロンプト再送（全ヒット）</a></h4>
+<pre><code>画像A + "この画像は何？"（2回目）
+  ProcessorCache: HIT  → Step 3 スキップ（pixel_values をキャッシュから取得）
+  EncoderCache:   HIT  → Step 4+5+6 スキップ（エンコーダ出力をGPUキャッシュから取得）
+  KV Prefix:      HIT  → Step 7+8 のプレフィックス分スキップ（KV状態再利用）
+</code></pre>
+<h4 id="シナリオ3-同一画像異なるプロンプト"><a class="header" href="#シナリオ3-同一画像異なるプロンプト">シナリオ3: 同一画像・異なるプロンプト</a></h4>
+<pre><code>画像A + "この画像を要約して"
+  ProcessorCache: HIT  → Step 3 スキップ（同一画像なのでハッシュ一致）
+  EncoderCache:   HIT  → Step 4+5+6 スキップ（同一 identifier）
+  KV Prefix:      部分HIT → 画像トークン部分（ブロック単位）はヒットする可能性あり
+                           テキスト部分は異なるためミス
+</code></pre>
+<h4 id="シナリオ4-異なる画像全ミス"><a class="header" href="#シナリオ4-異なる画像全ミス">シナリオ4: 異なる画像（全ミス）</a></h4>
+<pre><code>画像B + "この画像は何？"
+  ProcessorCache: MISS → ピクセルデータが異なるためハッシュ不一致
+  EncoderCache:   MISS → identifier が異なる
+  KV Prefix:      MISS → extra_keys の identifier が異なりブロックハッシュ不一致
+</code></pre>
+<h3 id="キャッシュ間のキー共有"><a class="header" href="#キャッシュ間のキー共有">キャッシュ間のキー共有</a></h3>
+<p>3つのキャッシュは同一の <strong>mm_hash</strong>（blake3ハッシュ）を基盤として共有している:</p>
+<pre><code>MultiModalHasher.hash_kwargs(model_id, image, kwargs...)
+        │
+        ▼
+    mm_hash (blake3 hex digest)
+        │
+        ├──▶ ProcessorCache のキー（そのまま使用）
+        │
+        ├──▶ EncoderCache のキー（= identifier = mm_hash or lora:mm_hash）
+        │
+        └──▶ KV Prefix Cache の extra_keys の一部（= identifier）
+</code></pre>
+<hr>
+<h2 id="7-主要ファイル参照"><a class="header" href="#7-主要ファイル参照">7. 主要ファイル参照</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/multimodal/hasher.py</code></td><td><code>MultiModalHasher</code>, <code>hash_kwargs()</code>, <code>serialize_item()</code></td><td>L50, L154, L52</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/cache.py</code></td><td><code>MultiModalProcessorOnlyCache</code>, <code>SenderCache</code>, <code>ShmCache</code>, <code>ReceiverCache</code></td><td>L326, L379, L437, L614</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/processing/processor.py</code></td><td><code>_cached_apply_hf_processor()</code>, <code>_hash_mm_items()</code>, <code>_get_cache_missing_items()</code></td><td>L1513, L1299, L1365</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/registry.py</code></td><td><code>processor_cache_from_config()</code></td><td>L305</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>_get_mm_identifier()</code></td><td>L490</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td><code>EncoderCacheManager</code>, <code>check_and_update_cache()</code></td><td>L17, L91</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>encoder_cache</code>, <code>_execute_mm_encoder()</code>, <code>_gather_mm_embeddings()</code></td><td>L439, L2293, L2449</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/kv_cache_utils.py</code></td><td><code>_gen_mm_extra_hash_keys()</code>, <code>generate_block_hash_extra_keys()</code>, <code>hash_block_tokens()</code></td><td>L387, L487, L525</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code></td><td><code>get_computed_blocks()</code></td><td>L164</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>_get_encoder_budget()</code></td><td>L1060</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント-12"><a class="header" href="#関連ドキュメント-12">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ">Gemma3 ビジョンパイプライン: 形状フローと数値まとめ</a></li>
+<li><a href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド MM処理パス</a></li>
+<li><a href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド MM処理パス</a></li>
+<li><a href="#kvcachemanager-サマリー">KVCacheManager</a> — プレフィックスキャッシュの詳細</li>
+<li><a href="#プレフィックスキャッシュ詳細">KVCacheManager: プレフィックスキャッシュ</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ"><a class="header" href="#gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ">Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ</a></h1>
