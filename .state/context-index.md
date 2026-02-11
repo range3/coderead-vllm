@@ -30,6 +30,19 @@
 | `docs/src/components/multimodal/mm-engine-gpu.md` | バックエンドMM処理。EncoderCacheManager(RefCount+FIFO遅延Eviction)、Schedulerエンコーダ予算管理、GPUModelRunnerのencoder_cache/execute/gather/merge | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/multimodal/gemma3-vision.md` | Gemma3ビジョン。SiglipVisionModel(パッチ埋め込み→双方向Transformer)、Gemma3MultiModalProjector(AvgPool→RMSNorm→Linear)、Pan-and-Scan、masked_scatter_マージ | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 
+## 調査報告 (Investigations)
+
+| ドキュメント | 内容 | 深度 | 確信度 | 最終更新 |
+| ------------ | ---- | ---- | ------ | -------- |
+| `docs/src/investigations/gemma3-vision-pipeline.md` | Gemma3 27Bビジョンパイプライン形状フロー。config.json導出値、Pan-and-Scan設定、APIリクエスト→デコーダ入力のフルステップ（ケース1: PaS無効=256トークン、ケース2: PaS有効=768トークン）、CPU/GPU処理フロー図 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
+
+## 外部リソース (target/ 内参照用)
+
+| パス | 内容 | 用途 |
+| ---- | ---- | ---- |
+| `target/gemma3-27b-it/` | Gemma3-27b-it HF公開モデル設定ファイル群（config.json, preprocessor_config.json, chat_template.json等8ファイル。weightなし） | モデルパラメータ・トークンID・Pan-and-Scan設定の一次情報源 |
+| `target/transformers/src/transformers/models/gemma3/` | HF transformers Gemma3実装（8ファイル: configuration, modeling, processing, image_processing等） | vLLMが直接呼び出す上流コード。ProcessorCacheがGemma3Processorを呼び、Gemma3ProcessorがGemma3ImageProcessorを呼ぶ。processing_gemma3.pyのデフォルト値定義・boi展開ロジック、image_processing_gemma3.pyのPan-and-Scan・リサイズ実装が特に重要 |
+
 ## 付録
 
 | ドキュメント                      | 内容             | 深度 | 確信度 | 最終更新 |

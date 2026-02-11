@@ -17,6 +17,8 @@
 - **リファレンス**: `vllm/model_executor/models/gemma3.py` を基準とする（マルチモーダル対応モデル）
 - **差分記録**: 他240+モデルは Gemma3 との差分のみ記録
 - **理由**: Gemma3は画像入力を含むマルチモーダル対応であり、ユーザーの関心領域に合致
+- **HF transformers Gemma3コード**: `target/transformers/src/transformers/models/gemma3/` に配置済み。vLLMのProcessorCacheが直接呼び出す上流コード（Gemma3Processor→Gemma3ImageProcessor）。前処理ロジック（PaS判定・リサイズ・トークン展開）の一次情報源
+- **HFモデル設定**: `target/gemma3-27b-it/` に config.json 等を配置済み。パラメータ値・トークンID・PaS設定の確認に利用
 
 ### プラットフォーム/バックエンド
 
