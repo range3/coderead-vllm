@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a88a02e1.js";
+            window.path_to_searchindex_js = "searchindex-45bc5577.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e3d8dfe5.js"></script>
+        <script src="toc-3c0baeba.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4410,6 +4410,490 @@ EngineCore.step()
 <li><a href="#テキスト推論データフロー">データフロー</a></li>
 <li><a href="#用語集">用語集: Continuous Batching, Unified Compute Model</a></li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ"><a class="header" href="#gemma3-27b-ビジョンパイプライン-形状フローと数値まとめ">Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ</a></h1>
+<h2 id="モデルパラメータconfigjson--preprocessor_configjson"><a class="header" href="#モデルパラメータconfigjson--preprocessor_configjson">モデルパラメータ（config.json + preprocessor_config.json）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>値</th><th>出典</th></tr>
+</thead>
+<tbody>
+<tr><td>image_size</td><td>896</td><td>vision_config</td></tr>
+<tr><td>patch_size</td><td>14</td><td>vision_config</td></tr>
+<tr><td>vision hidden_size</td><td>1152</td><td>vision_config</td></tr>
+<tr><td>vision num_heads</td><td>16</td><td>vision_config</td></tr>
+<tr><td>vision num_layers</td><td>27</td><td>vision_config</td></tr>
+<tr><td>text hidden_size</td><td>5376</td><td>text_config</td></tr>
+<tr><td>text num_heads</td><td>32</td><td>text_config</td></tr>
+<tr><td>text num_layers</td><td>62</td><td>text_config</td></tr>
+<tr><td>mm_tokens_per_image</td><td>256</td><td>config.json</td></tr>
+<tr><td>image_token_index</td><td>262144</td><td>config.json</td></tr>
+<tr><td>boi_token_index</td><td>255999</td><td>config.json</td></tr>
+<tr><td>eoi_token_index</td><td>256000</td><td>config.json</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="導出値"><a class="header" href="#導出値">導出値</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>導出パラメータ</th><th>計算</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>patches_per_image</td><td>896 / 14</td><td><strong>64</strong></td></tr>
+<tr><td>エンコーダ入力パッチ数</td><td>64²</td><td><strong>4096</strong></td></tr>
+<tr><td>tokens_per_side</td><td>√256</td><td><strong>16</strong></td></tr>
+<tr><td>AvgPool2d kernel_size</td><td>64 / 16</td><td><strong>4</strong></td></tr>
+<tr><td>Projector 出力トークン/画像</td><td>16²</td><td><strong>256</strong> (= mm_tokens_per_image ✅)</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="pan-and-scan-設定"><a class="header" href="#pan-and-scan-設定">Pan-and-Scan 設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>preprocessor_config.json</th><th>フォールバックデフォルト</th><th>出典</th></tr>
+</thead>
+<tbody>
+<tr><td>do_pan_and_scan</td><td>null</td><td><strong>False</strong></td><td>processing_gemma3.py L44</td></tr>
+<tr><td>pan_and_scan_min_crop_size</td><td>null</td><td><strong>256</strong></td><td>processing_gemma3.py L45</td></tr>
+<tr><td>pan_and_scan_max_num_crops</td><td>null</td><td><strong>4</strong></td><td>processing_gemma3.py L46</td></tr>
+<tr><td>pan_and_scan_min_ratio_to_activate</td><td>null</td><td><strong>1.2</strong></td><td>processing_gemma3.py L47</td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>Google はモデル配布時にこれらを<strong>すべて null</strong> にしている</li>
+<li>デフォルト値は HF transformers の <code>Gemma3ProcessorKwargs._defaults</code> で定義</li>
+<li><strong>デフォルトでは Pan-and-Scan は無効</strong></li>
+<li>有効化: vLLM では <code>--hf-overrides '{"do_pan_and_scan": true}'</code></li>
+</ul>
+<hr>
+<h2 id="api-リクエストからデコーダ入力までの全体フロー"><a class="header" href="#api-リクエストからデコーダ入力までの全体フロー">API リクエストからデコーダ入力までの全体フロー</a></h2>
+<h3 id="step-1-ユーザーの-api-リクエスト"><a class="header" href="#step-1-ユーザーの-api-リクエスト">Step 1: ユーザーの API リクエスト</a></h3>
+<pre><code class="language-json">{
+  "model": "gemma-3-27b-it",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+        {"type": "text", "text": "この文書を要約して"}
+      ]
+    }
+  ]
+}
+</code></pre>
+<p>ユーザーは画像を1枚渡すだけ。クロップの存在を意識する必要はない。</p>
+<h3 id="step-2-chat_template-適用"><a class="header" href="#step-2-chat_template-適用">Step 2: chat_template 適用</a></h3>
+<p>vLLM が chat_template を適用してプロンプト文字列を生成:</p>
+<pre><code>&lt;start_of_turn&gt;user
+&lt;start_of_image&gt;この文書を要約して&lt;end_of_turn&gt;
+&lt;start_of_turn&gt;model
+</code></pre>
+<p><code>&lt;start_of_image&gt;</code> は <code>boi_token</code> (token_id=255999)。この時点ではプレースホルダが <strong>1個だけ</strong>。</p>
+<h3 id="step-3-gemma3processorcall--cpu-側前処理"><a class="header" href="#step-3-gemma3processorcall--cpu-側前処理">Step 3: Gemma3Processor.<strong>call</strong>() — CPU 側前処理</a></h3>
+<h4 id="3a-image_processor-による画像前処理"><a class="header" href="#3a-image_processor-による画像前処理">3a: image_processor による画像前処理</a></h4>
+<pre><code class="language-python">image_inputs = self.image_processor(images, **output_kwargs["images_kwargs"])
+</code></pre>
+<p>画像をリサイズ・正規化し、Pan-and-Scan が有効ならクロップも生成する。</p>
+<h4 id="3b-num_crops-の取得"><a class="header" href="#3b-num_crops-の取得">3b: num_crops の取得</a></h4>
+<pre><code class="language-python">num_crops = to_py_obj(image_inputs.pop("num_crops"))
+</code></pre>
+<h4 id="3c-プロンプトの自動書き換えpan-and-scan-時のみ"><a class="header" href="#3c-プロンプトの自動書き換えpan-and-scan-時のみ">3c: プロンプトの自動書き換え（Pan-and-Scan 時のみ）</a></h4>
+<pre><code class="language-python">for num, idx in reversed(list(zip(num_crops, image_indexes))):
+    if num:  # num=0 なら falsy → この書き換えは発生しない
+        formatted_image_text = (
+            f"Here is the original image {self.boi_token} "
+            f"and here are some crops to help you see better "
+            + " ".join([self.boi_token] * num)
+        )
+        prompt = prompt[:idx] + formatted_image_text + prompt[idx + len(self.boi_token):]
+</code></pre>
+<p><strong>Pan-and-Scan 無効（num=0）時</strong>: <code>if num:</code> が falsy なので、書き換えは<strong>一切発生しない</strong>。
+<code>&lt;start_of_image&gt;</code> は1個のまま次のステップへ。</p>
+<p><strong>Pan-and-Scan 有効（num=2）時</strong>: 1個の <code>&lt;start_of_image&gt;</code> が以下に置き換えられる:</p>
+<pre><code>Here is the original image &lt;start_of_image&gt; and here are some crops to help you see better &lt;start_of_image&gt; &lt;start_of_image&gt;
+</code></pre>
+<h4 id="3d-boi_token--full_image_sequence-への展開"><a class="header" href="#3d-boi_token--full_image_sequence-への展開">3d: boi_token → full_image_sequence への展開</a></h4>
+<pre><code class="language-python">self.full_image_sequence = f"\n\n{boi_token}{image_token * 256}{eoi_token}\n\n"
+# = "\n\n&lt;start_of_image&gt;&lt;image&gt;×256&lt;end_of_image&gt;\n\n"
+
+text = [prompt.replace(self.boi_token, self.full_image_sequence) for prompt in text]
+</code></pre>
+<p>全ての <code>&lt;start_of_image&gt;</code> がそれぞれ 256個の <code>&lt;image&gt;</code> トークンを含む <code>full_image_sequence</code> に展開される。</p>
+<h4 id="3e-tokenizer-で-token_ids-に変換"><a class="header" href="#3e-tokenizer-で-token_ids-に変換">3e: tokenizer で token_ids に変換</a></h4>
+<pre><code class="language-python">text_inputs = self.tokenizer(text=text, **output_kwargs["text_kwargs"])
+</code></pre>
+<p><code>&lt;image&gt;</code> トークン (token_id=262144) が並んだ input_ids が生成される。</p>
+<h4 id="3f-token_type_ids-の生成"><a class="header" href="#3f-token_type_ids-の生成">3f: token_type_ids の生成</a></h4>
+<pre><code class="language-python">mm_token_type_ids[array_ids == self.image_token_id] = 1
+# → &lt;image&gt; トークン位置が 1、それ以外が 0
+</code></pre>
+<hr>
+<h2 id="ケース1-デフォルトpan-and-scan-無効"><a class="header" href="#ケース1-デフォルトpan-and-scan-無効">ケース1: デフォルト（Pan-and-Scan 無効）</a></h2>
+<p>入力例: A4 150dpi 画像 (1240 × 1754 pixel)</p>
+<h3 id="プロンプト変換の流れ"><a class="header" href="#プロンプト変換の流れ">プロンプト変換の流れ</a></h3>
+<pre><code>ユーザー入力:
+  画像1枚 + "この文書を要約して"
+
+chat_template 適用後:
+  "...&lt;start_of_image&gt;この文書を要約して..."
+                ↑
+          boi_token 1個
+
+do_pan_and_scan=False → num_crops=0 → プロンプト書き換えなし
+
+boi_token → full_image_sequence 展開後:
+  "...\n\n&lt;start_of_image&gt;&lt;image&gt;×256&lt;end_of_image&gt;\n\nこの文書を要約して..."
+           ↑              ↑×256  ↑
+         255999         262144  256000
+
+tokenize 後の input_ids (概念的):
+  [..., 255999, 262144, 262144, ...(×256)..., 262144, 256000, ..., テキスト, ...]
+</code></pre>
+<h3 id="cpu-側前処理"><a class="header" href="#cpu-側前処理">CPU 側前処理</a></h3>
+<pre><code>元画像 (1240×1754)
+    │  resize(896×896, bilinear)   ← アスペクト比無視の正方形リサイズ
+    │  rescale(× 1/255)            ← [0,255] → [0,1]
+    │  normalize(mean=0.5, std=0.5) ← [0,1] → [-1,1]
+    ▼
+pixel_values: (1, 3, 896, 896)
+num_patches:  tensor([1])
+</code></pre>
+<h3 id="gpu-側-siglipvisionmodel"><a class="header" href="#gpu-側-siglipvisionmodel">GPU 側: SiglipVisionModel</a></h3>
+<pre><code>(1, 3, 896, 896)
+    │  Conv2d(3 → 1152, kernel=14, stride=14)
+    ▼
+(1, 1152, 64, 64)              ← 896/14 = 64
+    │  flatten + transpose
+    ▼
+(1, 4096, 1152)                ← 64² = 4096 パッチ
+    │  + position_embedding(4096, 1152)
+    ▼
+(1, 4096, 1152)
+    │  SiglipEncoder × 27層
+    │  （双方向 Attention, heads=16, 4096トークン間全対全）
+    ▼
+(1, 4096, 1152)
+    │  post_layernorm
+    ▼
+(1, 4096, 1152)
+</code></pre>
+<h3 id="gpu-側-gemma3multimodalprojector"><a class="header" href="#gpu-側-gemma3multimodalprojector">GPU 側: Gemma3MultiModalProjector</a></h3>
+<pre><code>(1, 4096, 1152)
+    │  transpose → (1, 1152, 4096)
+    │  reshape  → (1, 1152, 64, 64)     ← 2Dグリッドに復元
+    │
+    │  AvgPool2d(kernel_size=4, stride=4)
+    ▼
+(1, 1152, 16, 16)                       ← 64/4 = 16
+    │  flatten(2) → (1, 1152, 256)
+    │  transpose  → (1, 256, 1152)       ← 16² = 256 トークン
+    │
+    │  GemmaRMSNorm(1152)
+    ▼
+(1, 256, 1152)
+    │
+    │  matmul(mm_input_projection_weight)  ← shape: (1152, 5376)
+    ▼
+(1, 256, 5376)                           ← text hidden_size 空間
+</code></pre>
+<h3 id="gpu-側-split--flatten"><a class="header" href="#gpu-側-split--flatten">GPU 側: split + flatten</a></h3>
+<pre><code>(1, 256, 5376)
+    │  split by num_patches=[1] → [(1, 256, 5376)]
+    │  flatten(0, 1)
+    ▼
+(256, 5376)                              ← 最終出力
+</code></pre>
+<h3 id="gpu-側-テキスト埋め込みとマージ"><a class="header" href="#gpu-側-テキスト埋め込みとマージ">GPU 側: テキスト埋め込みとマージ</a></h3>
+<pre><code class="language-python">text_embeds = embed_tokens(input_ids) * normalizer   # (seq_len, 5376)
+# token_id=262144 は vocab 外 → handle_oov_mm_token=True でゼロ埋め
+# is_multimodal: (seq_len,) ← 256箇所が True
+
+merged = masked_scatter_(text_embeds, is_multimodal, mm_embeds)  # (256, 5376)
+# → 262144 だった256箇所をビジョン埋め込みで上書き
+# ※ ビジョン埋め込みには normalizer スケーリングは適用されない
+
+→ (seq_len, 5376) として Gemma3 Decoder (62層) へ
+</code></pre>
+<h3 id="消費トークン数-256"><a class="header" href="#消費トークン数-256">消費トークン数: <strong>256</strong></a></h3>
+<hr>
+<h2 id="ケース2-pan-and-scan-有効"><a class="header" href="#ケース2-pan-and-scan-有効">ケース2: Pan-and-Scan 有効</a></h2>
+<p>入力例: 同じ A4 150dpi 画像 (1240 × 1754 pixel)</p>
+<h3 id="プロンプト変換の流れ-1"><a class="header" href="#プロンプト変換の流れ-1">プロンプト変換の流れ</a></h3>
+<pre><code>ユーザー入力:
+  画像1枚 + "この文書を要約して"
+
+chat_template 適用後:
+  "...&lt;start_of_image&gt;この文書を要約して..."
+                ↑
+          boi_token 1個
+
+do_pan_and_scan=True → ratio=1754/1240≈1.415 &gt; 1.2 → num_crops=2
+
+Processor がプロンプトを自動書き換え (Step 3c):
+  "...Here is the original image &lt;start_of_image&gt; and here are
+   some crops to help you see better &lt;start_of_image&gt; &lt;start_of_image&gt;
+   この文書を要約して..."
+                                      ↑               ↑              ↑
+                                 original 用       crop 0 用      crop 1 用
+
+boi_token → full_image_sequence 展開後:
+  "...Here is the original image \n\n&lt;boi&gt;&lt;image&gt;×256&lt;eoi&gt;\n\n and here are
+   some crops to help you see better \n\n&lt;boi&gt;&lt;image&gt;×256&lt;eoi&gt;\n\n
+   \n\n&lt;boi&gt;&lt;image&gt;×256&lt;eoi&gt;\n\nこの文書を要約して..."
+
+tokenize 後:
+  [..., "Here", "is", ...,
+   255999, 262144×256, 256000,          ← original
+   ..., "and", "here", ...,
+   255999, 262144×256, 256000,          ← crop 0
+   ...,
+   255999, 262144×256, 256000,          ← crop 1
+   ..., テキスト, ...]
+</code></pre>
+<h3 id="cpu-側-pan-and-scan-判定"><a class="header" href="#cpu-側-pan-and-scan-判定">CPU 側: Pan-and-Scan 判定</a></h3>
+<pre><code class="language-python"># 縦長画像 (height &gt; width)
+ratio = 1754 / 1240 ≈ 1.415
+min_ratio_to_activate = 1.2
+1.415 &gt; 1.2 → ✅ 発動
+</code></pre>
+<h3 id="cpu-側-クロップ数計算"><a class="header" href="#cpu-側-クロップ数計算">CPU 側: クロップ数計算</a></h3>
+<pre><code class="language-python"># 縦長パス (image_height &gt; image_width)
+num_crops_h = min(
+    floor(1754 / 256),          # = 6  ← min_crop_size 制約
+    floor(1754 / 1240 + 0.5),   # = 1  ← アスペクト比近似
+)
+# → min(6, 1) = 1
+num_crops_h = max(2, 1) = 2    # 最低2クロップに強制
+num_crops_h = min(4, 2) = 2    # max_num_crops でクリップ
+num_crops_w = 1
+
+# クロップサイズ検証
+crop_size_w = ceil(1240 / 1) = 1240
+crop_size_h = ceil(1754 / 2) = 877
+min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
+
+結果: 1 × 2 = 2 クロップ
+</code></pre>
+<h3 id="cpu-側-クロップ切り出し--リサイズ"><a class="header" href="#cpu-側-クロップ切り出し--リサイズ">CPU 側: クロップ切り出し + リサイズ</a></h3>
+<pre><code>元画像 (1240×1754)
+  ├── original  (1240×1754) → resize(896×896) → normalize → (3, 896, 896)
+  ├── crop 0    (1240×877)  → resize(896×896) → normalize → (3, 896, 896)
+  └── crop 1    (1240×877)  → resize(896×896) → normalize → (3, 896, 896)
+                                                              │ stack
+                                                pixel_values: (3, 3, 896, 896)
+                                                num_patches:  tensor([3])
+</code></pre>
+<h3 id="gpu-側-siglipvisionmodel-1"><a class="header" href="#gpu-側-siglipvisionmodel-1">GPU 側: SiglipVisionModel</a></h3>
+<pre><code>(3, 3, 896, 896)
+    │  Conv2d(3 → 1152, kernel=14, stride=14)
+    ▼
+(3, 1152, 64, 64)
+    │  flatten + transpose
+    ▼
+(3, 4096, 1152)                 ← 3枚 × 4096パッチ
+    │  + position_embedding
+    ▼
+(3, 4096, 1152)
+    │  SiglipEncoder × 27層（双方向 Attention）
+    ▼
+(3, 4096, 1152)
+</code></pre>
+<h3 id="gpu-側-gemma3multimodalprojector-1"><a class="header" href="#gpu-側-gemma3multimodalprojector-1">GPU 側: Gemma3MultiModalProjector</a></h3>
+<pre><code>(3, 4096, 1152)
+    │  → reshape → (3, 1152, 64, 64)
+    │  AvgPool2d(k=4, s=4)
+    ▼
+(3, 1152, 16, 16)
+    │  flatten + transpose
+    ▼
+(3, 256, 1152)
+    │  RMSNorm → matmul(1152 → 5376)
+    ▼
+(3, 256, 5376)
+</code></pre>
+<h3 id="gpu-側-split--flatten-1"><a class="header" href="#gpu-側-split--flatten-1">GPU 側: split + flatten</a></h3>
+<pre><code>(3, 256, 5376)
+    │  split by num_patches=[3] → [(3, 256, 5376)]
+    │  flatten(0, 1)
+    ▼
+(768, 5376)                     ← 3 × 256 = 768 トークン
+</code></pre>
+<h3 id="gpu-側-テキスト埋め込みとマージ-1"><a class="header" href="#gpu-側-テキスト埋め込みとマージ-1">GPU 側: テキスト埋め込みとマージ</a></h3>
+<pre><code>input_ids 中の token_id=262144 が768箇所
+↓ masked_scatter_ で (768, 5376) を順番に書き込み
+→ (seq_len, 5376) として Gemma3 Decoder へ
+</code></pre>
+<h3 id="消費トークン数-768--256--3"><a class="header" href="#消費トークン数-768--256--3">消費トークン数: <strong>768</strong> (= 256 × 3)</a></h3>
+<hr>
+<h2 id="プロンプト比較"><a class="header" href="#プロンプト比較">プロンプト比較</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Pan-and-Scan 無効（デフォルト）</th><th>Pan-and-Scan 有効</th></tr>
+</thead>
+<tbody>
+<tr><td>プロンプト書き換え</td><td>なし</td><td>“Here is the original image … crops …” 挿入</td></tr>
+<tr><td>boi_token 数</td><td>1</td><td>1 + num_crops (= 3)</td></tr>
+<tr><td><code>&lt;image&gt;</code> トークン数</td><td>256</td><td>256 × (1 + num_crops) = 768</td></tr>
+<tr><td>装飾テキスト</td><td>なし</td><td>“Here is the original image”, “and here are some crops to help you see better”</td></tr>
+<tr><td>pixel_values shape</td><td>(1, 3, 896, 896)</td><td>(3, 3, 896, 896)</td></tr>
+<tr><td>num_patches</td><td>tensor([1])</td><td>tensor([3])</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="全体データフロー図"><a class="header" href="#全体データフロー図">全体データフロー図</a></h2>
+<pre><code>                        ┌─────────────────────────────┐
+                        │  OpenAI 互換 API リクエスト    │
+                        │  画像1枚 + テキスト           │
+                        └────────────┬────────────────┘
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  chat_template 適用           │
+                        │  → "&lt;start_of_image&gt;テキスト"  │
+                        │    boi_token(255999) が1個    │
+                        └────────────┬────────────────┘
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  CPU: Gemma3Processor        │
+                        │                              │
+                        │  image_processor:             │
+                        │    resize(896×896)            │
+                        │    rescale(×1/255)            │
+                        │    normalize(0.5, 0.5)        │
+                        │    Pan-and-Scan 時はクロップ生成│
+                        │                              │
+                        │  do_pan_and_scan?             │
+                        │  ├── False:                   │
+                        │  │   書き換えなし              │
+                        │  │   boi_token 1個のまま       │
+                        │  │   pixel_values: (1,3,896,896)│
+                        │  │                            │
+                        │  └── True &amp; ratio &gt; 1.2:      │
+                        │      "Here is the original    │
+                        │       image &lt;boi&gt; and here    │
+                        │       are some crops ...      │
+                        │       &lt;boi&gt; &lt;boi&gt;"            │
+                        │      boi_token 3個に増加       │
+                        │      pixel_values: (3,3,896,896)│
+                        │                              │
+                        │  各 boi_token を展開:          │
+                        │  "\n\n&lt;boi&gt;&lt;img&gt;×256&lt;eoi&gt;\n\n" │
+                        │                              │
+                        │  tokenizer → input_ids        │
+                        │  token_type_ids 生成           │
+                        └────────────┬────────────────┘
+                                     │
+                        input_ids:     [..., 262144×256, ...(×N)...]
+                        pixel_values:  (total_patches, 3, 896, 896)
+                        num_patches:   (num_images,)
+                                     │
+                        ═════════════╪═══════════════ CPU → GPU
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  GPU: SiglipVisionEmbeddings │
+                        │  Conv2d(3→1152, k=14, s=14)  │
+                        │  + position_embedding         │
+                        └────────────┬────────────────┘
+                                     │
+                        (total_patches, 4096, 1152)
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  GPU: SiglipEncoder           │
+                        │  27層 双方向 Transformer       │
+                        │  heads=16, hidden=1152        │
+                        └────────────┬────────────────┘
+                                     │
+                        (total_patches, 4096, 1152)
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  GPU: Gemma3MultiModalProjector│
+                        │  reshape → (*, 1152, 64, 64) │
+                        │  AvgPool2d(k=4, s=4)          │
+                        │  → (*, 1152, 16, 16)          │
+                        │  flatten + transpose           │
+                        │  → (*, 256, 1152)             │
+                        │  GemmaRMSNorm(1152)            │
+                        │  matmul(1152 → 5376)           │
+                        └────────────┬────────────────┘
+                                     │
+                        (total_patches, 256, 5376)
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  split by num_patches         │
+                        │  flatten(0, 1) per image      │
+                        │  → list[(N×256, 5376)]        │
+                        └────────────┬────────────────┘
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  GPU: embed_input_ids()       │
+                        │                              │
+                        │  text = embed_tokens(ids)     │
+                        │         × normalizer          │
+                        │  ※ 262144 は vocab 外         │
+                        │    → handle_oov_mm_token=True │
+                        │    → ゼロ埋め                  │
+                        │                              │
+                        │  masked_scatter_(             │
+                        │    text, is_multimodal,       │
+                        │    mm_embeds)                 │
+                        │                              │
+                        │  ※ vision embeds には          │
+                        │    normalizer 未適用            │
+                        └────────────┬────────────────┘
+                                     │
+                        (seq_len, 5376)
+                                     │
+                        ┌────────────┴────────────────┐
+                        │  GPU: Gemma3 Decoder          │
+                        │  62層, heads=32, kv_heads=16  │
+                        │  sliding_window=1024          │
+                        │  head_dim=128                 │
+                        └──────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="注意事項"><a class="header" href="#注意事項">注意事項</a></h2>
+<ol>
+<li>
+<p><strong>ビジョン埋め込みの正規化</strong>: テキスト埋め込みには <code>embed_tokens(ids) × normalizer</code> のスケーリングが適用されるが、ビジョン埋め込みには <code>mm_soft_emb_norm</code>（RMSNorm）のみが適用され、<code>normalizer</code> スケーリングは適用されない。</p>
+</li>
+<li>
+<p><strong>V1 での制限</strong>: Pan-and-Scan 有効時、V1 エンジンでは画像トークン間の双方向アテンションが簡略化されたパターンで実装されており、元モデルのアテンションパターンと完全には一致しない。</p>
+</li>
+<li>
+<p><strong>AvgPool2d の役割</strong>: エンコーダは 4096 パッチ（64×64 グリッド）の高解像度で処理しつつ、AvgPool2d(k=4, s=4) で 256 トークン（16×16）に圧縮して LLM に渡す。これにより計算量と情報量のバランスを取っている。</p>
+</li>
+<li>
+<p><strong>Pan-and-Scan のプロンプト</strong>: クロップありの場合のみ、Processor が “Here is the original image … and here are some crops to help you see better …” という装飾テキストを自動挿入する。クロップなしの場合この装飾テキストは存在せず、<code>&lt;image&gt;</code> トークン列のみとなる。ユーザーはクロップの存在を意識する必要はない。</p>
+</li>
+<li>
+<p><strong>token_id=262144 の扱い</strong>: <code>&lt;image&gt;</code> トークンの token_id=262144 は通常の vocab 範囲外（OOV）。<code>handle_oov_mm_token=True</code> により安全にゼロ埋めされ、後続の <code>masked_scatter_</code> でビジョン埋め込みに上書きされる。</p>
+</li>
+<li>
+<p><strong>Pan-and-Scan のデフォルト値の出典</strong>: <code>min_ratio_to_activate=1.2</code> 等の値は Google がモデルと共に配布した設定ではなく（preprocessor_config.json では全て null）、HF transformers の <code>processing_gemma3.py</code> 内の <code>Gemma3ProcessorKwargs._defaults</code> にハードコードされたフォールバック値。</p>
+</li>
+</ol>
+<hr>
+<h2 id="主要ファイル参照"><a class="header" href="#主要ファイル参照">主要ファイル参照</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td>vllm/…/gemma3_mm.py</td><td>Gemma3ForConditionalGeneration, Gemma3MultiModalProjector, Gemma3ProcessingInfo</td></tr>
+<tr><td>vllm/…/siglip.py</td><td>SiglipVisionModel, SiglipVisionEmbeddings, SiglipEncoder</td></tr>
+<tr><td>vllm/…/utils.py</td><td>_merge_multimodal_embeddings()</td></tr>
+<tr><td>HF transformers/…/processing_gemma3.py</td><td>Gemma3Processor, Gemma3ProcessorKwargs (デフォルト値定義)</td></tr>
+<tr><td>HF transformers/…/image_processing_gemma3.py</td><td>Gemma3ImageProcessor (Pan-and-Scan 実装)</td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="用語集"><a class="header" href="#用語集">用語集</a></h1>
 <!-- 調査中に発見した対象OSS固有の用語をここに蓄積する -->
