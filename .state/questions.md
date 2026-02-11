@@ -7,10 +7,10 @@
 - [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？
 - [ ] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
-- [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？
+- [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？（block_idsがSchedulerOutputに含まれ、GPUModelRunnerに渡される。詳細はGPUModelRunner深堀りで調査）
 - [ ] FastIncrementalDetokenizer vs SlowIncrementalDetokenizer の実際のパフォーマンス差は？
 - [ ] batch_queue パイプライン並列化は実際にどう動作するか？（max_concurrent_batches > 1 時のオーバーラップ）
-- [ ] block_size の設定方法とパフォーマンスへの影響は？
+- [x] block_size の設定方法とパフォーマンスへの影響は？ — **回答**: block_sizeはKVCacheSpecから取得され、モデルのアテンションタイプに依存。DCP/PCP > 1の場合は並列度倍に拡大。Hybrid modelでは異なるblock_sizeのグループが共存し、hash_block_size（最小のblock_size）でハッシュを計算後、BlockHashListWithBlockSizeで粒度変換。詳細は `docs/src/components/kv-cache-manager/prefix-cache.md` と `attention-type-managers.md`
 - [ ] async_scheduling と Speculative Decoding のドラフトトークンタイミングの相互作用は？
 
 ## 解決済み
@@ -29,4 +29,6 @@
 - [ ] torch.compile統合（`vllm/compilation/`）の仕組み
 - [ ] InputPreprocessor内部のトークナイザ呼び出しフロー詳細
 - [ ] n>1サンプリング時のParentRequest/子リクエスト管理の仕組み
-- [ ] プリエンプション発生のメモリ圧力閾値の具体的な決定方法
+- [x] プリエンプション発生のメモリ圧力閾値の具体的な決定方法 — **回答**: 明示的な閾値はない。allocate_slots()で `num_blocks_to_allocate > block_pool.get_num_free_blocks()` の場合にNoneを返し、Schedulerがプリエンプション（RUNNING）またはスキップ（WAITING）を実行。空きブロック数は動的に変化し、Evictionも含めた現在の空き状況で判定。詳細は `docs/src/components/kv-cache-manager/summary.md`
+- [ ] HybridKVCacheCoordinatorの反復固定点アルゴリズムは実際のモデルで何回イテレーションするか？
+- [ ] BlockHashToBlockMapのUnion型最適化の実測パフォーマンス差は？

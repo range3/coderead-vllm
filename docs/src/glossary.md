@@ -116,3 +116,37 @@ GPUModelRunnerの2フェーズ実行パターンで使用される一時状態�
 マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。
 
 **参照**: `target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py`
+
+### FreeKVCacheBlockQueue
+空きKVキャッシュブロックをLRU順序で管理する双方向リンクリスト。Pythonの`deque`ではなく独自実装を採用し、O(1)の中間要素削除をサポートする。センチネルノード（fake_head/fake_tail）を使用。
+
+**参照**: `target/vllm/vllm/v1/core/kv_cache_utils.py:156`
+
+### BlockHashWithGroupId
+`BlockHash`（ブロックのハッシュ値）にKVキャッシュグループID（4バイトBE）を結合したバイト列。Tuple生成を避けてGC負荷を低減する。プレフィックスキャッシュのキーとして使用。
+
+**参照**: `target/vllm/vllm/v1/core/kv_cache_utils.py:39`
+
+### null_block
+BlockPoolが保持する特殊なKVCacheBlock（block_id=0, is_null=True）。Sliding Window Attentionのウィンドウ外位置やMambaのスキップ位置を埋めるプレースホルダ。物理メモリを消費せず、解放・Eviction対象外。
+
+**参照**: `target/vllm/vllm/v1/core/block_pool.py:174`
+
+### KVCacheCoordinator
+複数のKVキャッシュグループ（異なるアテンションタイプのレイヤー群）を統括する抽象クラス。NoPrefixCache、Unitary（単一グループ）、Hybrid（複数グループ）の3実装がある。
+
+**参照**: `target/vllm/vllm/v1/core/kv_cache_coordinator.py:28`
+
+### SingleTypeKVCacheManager
+1種類のアテンションタイプのKVキャッシュ管理ロジックを担当する抽象基底クラス。FullAttention、SlidingWindow、ChunkedLocalAttention、Mamba、CrossAttention、SinkFullAttentionの7実装がある。
+
+**参照**: `target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24`
+
+### Cascade Attention
+全リクエストで共有される共通プレフィックスの再計算をスキップする最適化。`get_num_common_prefix_blocks()`で共通ブロック数を判定し、アテンション計算から除外する。
+
+### Sliding Window Attention
+各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは`null_block`で置換されメモリを節約する。
+
+### Attention Sink (StreamingLLM)
+先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。`SinkFullAttentionManager`が実装。

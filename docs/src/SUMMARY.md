@@ -22,6 +22,9 @@
 - [GPUModelRunner](components/gpu-model-runner/summary.md)
 - [InputProcessor サマリー](components/input-processor/summary.md)
 - [KVCacheManager サマリー](components/kv-cache-manager/summary.md)
+  - [アテンションタイプ別 Manager 詳細](components/kv-cache-manager/attention-type-managers.md)
+  - [BlockPool 詳細](components/kv-cache-manager/block-pool.md)
+  - [プレフィックスキャッシュ詳細](components/kv-cache-manager/prefix-cache.md)
 - [OutputProcessor](components/output-processor/summary.md)
 - [Scheduler サマリー](components/scheduler/summary.md)
 
