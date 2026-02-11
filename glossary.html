@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9f7dca1f.js";
+            window.path_to_searchindex_js = "searchindex-58528295.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e9f58a38.js"></script>
+        <script src="toc-d1c54e9e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -246,6 +246,27 @@
 <h3 id="mm_cache-マルチモーダルキャッシュ"><a class="header" href="#mm_cache-マルチモーダルキャッシュ">mm_cache (マルチモーダルキャッシュ)</a></h3>
 <p>マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py</code></p>
+<h3 id="freekvcacheblockqueue"><a class="header" href="#freekvcacheblockqueue">FreeKVCacheBlockQueue</a></h3>
+<p>空きKVキャッシュブロックをLRU順序で管理する双方向リンクリスト。Pythonの<code>deque</code>ではなく独自実装を採用し、O(1)の中間要素削除をサポートする。センチネルノード（fake_head/fake_tail）を使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></p>
+<h3 id="blockhashwithgroupid"><a class="header" href="#blockhashwithgroupid">BlockHashWithGroupId</a></h3>
+<p><code>BlockHash</code>（ブロックのハッシュ値）にKVキャッシュグループID（4バイトBE）を結合したバイト列。Tuple生成を避けてGC負荷を低減する。プレフィックスキャッシュのキーとして使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:39</code></p>
+<h3 id="null_block"><a class="header" href="#null_block">null_block</a></h3>
+<p>BlockPoolが保持する特殊なKVCacheBlock（block_id=0, is_null=True）。Sliding Window Attentionのウィンドウ外位置やMambaのスキップ位置を埋めるプレースホルダ。物理メモリを消費せず、解放・Eviction対象外。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:174</code></p>
+<h3 id="kvcachecoordinator"><a class="header" href="#kvcachecoordinator">KVCacheCoordinator</a></h3>
+<p>複数のKVキャッシュグループ（異なるアテンションタイプのレイヤー群）を統括する抽象クラス。NoPrefixCache、Unitary（単一グループ）、Hybrid（複数グループ）の3実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:28</code></p>
+<h3 id="singletypekvcachemanager"><a class="header" href="#singletypekvcachemanager">SingleTypeKVCacheManager</a></h3>
+<p>1種類のアテンションタイプのKVキャッシュ管理ロジックを担当する抽象基底クラス。FullAttention、SlidingWindow、ChunkedLocalAttention、Mamba、CrossAttention、SinkFullAttentionの7実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></p>
+<h3 id="cascade-attention"><a class="header" href="#cascade-attention">Cascade Attention</a></h3>
+<p>全リクエストで共有される共通プレフィックスの再計算をスキップする最適化。<code>get_num_common_prefix_blocks()</code>で共通ブロック数を判定し、アテンション計算から除外する。</p>
+<h3 id="sliding-window-attention"><a class="header" href="#sliding-window-attention">Sliding Window Attention</a></h3>
+<p>各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは<code>null_block</code>で置換されメモリを節約する。</p>
+<h3 id="attention-sink-streamingllm"><a class="header" href="#attention-sink-streamingllm">Attention Sink (StreamingLLM)</a></h3>
+<p>先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。<code>SinkFullAttentionManager</code>が実装。</p>
 
                     </main>
 

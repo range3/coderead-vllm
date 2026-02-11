@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9f7dca1f.js";
+            window.path_to_searchindex_js = "searchindex-58528295.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e9f58a38.js"></script>
+        <script src="toc-d1c54e9e.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1711,31 +1711,116 @@ EngineCore.step()（続き）
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="kvcachemanager-サマリー"><a class="header" href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM]
+<p><strong>深度</strong>: [DEEP]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
 <h2 id="概要-8"><a class="header" href="#概要-8">概要</a></h2>
-<p><code>KVCacheManager</code>はPagedAttentionに基づくKVキャッシュブロックの割り当て・解放・プレフィックスキャッシュ検索を管理するクラスである。階層設計を採用し、<code>KVCacheManager</code> → <code>KVCacheCoordinator</code> → <code>SingleTypeKVCacheManager</code> → <code>BlockPool</code> の4層でマルチグループKVキャッシュを統括する。Schedulerから呼び出され、各リクエストに必要なGPUメモリブロックを確保する。</p>
+<p><code>KVCacheManager</code> は PagedAttention に基づく KV キャッシュブロックの割り当て・解放・プレフィックスキャッシュ検索を管理するクラスである。4層の階層設計（<code>KVCacheManager</code> → <code>KVCacheCoordinator</code> → <code>SingleTypeKVCacheManager</code> → <code>BlockPool</code>）でマルチグループ KV キャッシュを統括する。Scheduler から呼び出され、各リクエストに必要な GPU メモリブロックを確保する。</p>
 <h2 id="アーキテクチャ-4"><a class="header" href="#アーキテクチャ-4">アーキテクチャ</a></h2>
 <h3 id="クラス階層-1"><a class="header" href="#クラス階層-1">クラス階層</a></h3>
 <pre class="mermaid">graph TD
-    KVM["KVCacheManager&lt;br&gt;公開API"]
-    Coord["KVCacheCoordinator&lt;br&gt;マルチグループ統括"]
-    STM["SingleTypeKVCacheManager&lt;br&gt;アテンションタイプ別管理"]
-    BP["BlockPool&lt;br&gt;物理ブロック管理"]
-    BH["BlockHashToBlockMap&lt;br&gt;ハッシュ→ブロック対応"]
-    FQ["FreeKVCacheBlockQueue&lt;br&gt;空きブロックキュー"]
-    KB["KVCacheBlock&lt;br&gt;ブロック単位"]
+    KVM["KVCacheManager&lt;br&gt;公開 API"]
+    Factory["get_kv_cache_coordinator()&lt;br&gt;ファクトリ関数"]
 
-    KVM --&gt; Coord
-    Coord --&gt; STM
-    STM --&gt; BP
+    NPC["NoPrefixCache&lt;br&gt;キャッシュ無効時"]
+    UC["UnitaryCoordinator&lt;br&gt;単一グループ"]
+    HC["HybridCoordinator&lt;br&gt;複数グループ"]
+
+    FAM["FullAttentionManager"]
+    SWM["SlidingWindowManager"]
+    CLM["ChunkedLocalManager"]
+    MM["MambaManager"]
+    CAM["CrossAttentionManager"]
+    SFM["SinkFullAttentionManager"]
+
+    BP["BlockPool&lt;br&gt;物理ブロック管理"]
+    BH["BlockHashToBlockMap"]
+    FQ["FreeKVCacheBlockQueue"]
+    KB["KVCacheBlock"]
+
+    KVM --&gt; Factory
+    Factory --&gt; NPC
+    Factory --&gt; UC
+    Factory --&gt; HC
+
+    UC --&gt; FAM
+    UC --&gt; SWM
+    HC --&gt; FAM
+    HC --&gt; SWM
+    HC --&gt; CLM
+    HC --&gt; MM
+    HC --&gt; CAM
+    HC --&gt; SFM
+
+    FAM --&gt; BP
+    SWM --&gt; BP
+    CLM --&gt; BP
+    MM --&gt; BP
+    CAM --&gt; BP
+    SFM --&gt; BP
+
     BP --&gt; BH
     BP --&gt; FQ
     FQ --&gt; KB
 </pre>
 
+<h3 id="coordinator-選択ロジック"><a class="header" href="#coordinator-選択ロジック">Coordinator 選択ロジック</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:542</code></p>
+<pre><code>get_kv_cache_coordinator()
+  ├─ enable_caching == False  → KVCacheCoordinatorNoPrefixCache
+  ├─ kv_cache_groups == 1     → UnitaryKVCacheCoordinator
+  └─ kv_cache_groups &gt; 1      → HybridKVCacheCoordinator
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Coordinator</th><th>用途</th><th>find_longest_cache_hit</th></tr>
+</thead>
+<tbody>
+<tr><td><code>NoPrefixCache</code></td><td>キャッシュ無効</td><td>空リスト、0 トークン</td></tr>
+<tr><td><code>Unitary</code></td><td>単一アテンションタイプ</td><td>単一 Manager に委譲</td></tr>
+<tr><td><code>Hybrid</code></td><td>複数アテンションタイプ</td><td>反復固定点アルゴリズム</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="kv-キャッシュグループ"><a class="header" href="#kv-キャッシュグループ">KV キャッシュグループ</a></h3>
+<p><strong>KV キャッシュグループ</strong>とは、同一の <code>KVCacheSpec</code>（アテンションタイプ・ブロックサイズ）を共有するモデルレイヤーの集合である。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モデル例</th><th>グループ構成</th></tr>
+</thead>
+<tbody>
+<tr><td>全層 Full Attention</td><td>1 グループ</td></tr>
+<tr><td>12 層 Full + 12 層 Sliding Window</td><td>2 グループ</td></tr>
+<tr><td>デコーダ + クロスアテンション</td><td>2-3 グループ</td></tr>
+</tbody>
+</table>
+</div>
+<p>各グループは独立した <code>SingleTypeKVCacheManager</code> を持ち、異なるキャッシュ検索アルゴリズム・スキップポリシーを適用する。</p>
+<h2 id="kvcacheblocks-deep-verified"><a class="header" href="#kvcacheblocks-deep-verified">KVCacheBlocks [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:21</code></p>
+<p>Scheduler と KVCacheManager のインターフェース。内部データ構造を隠蔽する。</p>
+<pre><code class="language-python">@dataclass
+class KVCacheBlocks:
+    blocks: tuple[Sequence[KVCacheBlock], ...]
+    # blocks[i][j] = i 番目の kv_cache_group、j 番目のブロック
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>__add__</code></td><td>2 つの KVCacheBlocks を結合</td></tr>
+<tr><td><code>get_block_ids()</code></td><td><code>tuple[list[int], ...]</code> に変換（GPU カーネル用）</td></tr>
+<tr><td><code>get_unhashed_block_ids()</code></td><td>未ハッシュブロックの ID リスト（ドラフトトークン用）</td></tr>
+<tr><td><code>new_empty()</code></td><td>空の KVCacheBlocks を生成</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>GC 最適化</strong>: <code>KVCacheManager</code> は <code>empty_kv_cache_blocks</code> を事前生成し、空の結果を返す際に再利用する。</p>
 <h3 id="ブロック配置図allocate_slots"><a class="header" href="#ブロック配置図allocate_slots">ブロック配置図（allocate_slots）</a></h3>
 <p><code>allocate_slots()</code> がリクエストに割り当てるブロックの論理構造:</p>
 <pre><code>|  comp  | new_comp | ext_comp |   new   | lookahead |
@@ -1745,9 +1830,9 @@ EngineCore.step()（続き）
 <ul>
 <li><code>comp</code>: <code>request.num_computed_tokens</code> — 前ステップまでに計算済み</li>
 <li><code>new_comp</code>: <code>num_new_computed_tokens</code> — プレフィックスキャッシュから新規にヒットしたトークン</li>
-<li><code>ext_comp</code>: <code>num_external_computed_tokens</code> — KVコネクタ（LMCache等）から取得したトークン</li>
+<li><code>ext_comp</code>: <code>num_external_computed_tokens</code> — KV コネクタ（LMCache 等）から取得したトークン</li>
 <li><code>new</code>: <code>num_new_tokens</code> — 今回計算するトークン</li>
-<li><code>lookahead</code>: <code>num_lookahead_tokens</code> — Speculative Decoding用の先読みトークン</li>
+<li><code>lookahead</code>: <code>num_lookahead_tokens</code> — Speculative Decoding 用の先読みトークン</li>
 </ul>
 <h2 id="主要コンポーネント-5"><a class="header" href="#主要コンポーネント-5">主要コンポーネント</a></h2>
 <div class="table-wrapper">
@@ -1756,13 +1841,13 @@ EngineCore.step()（続き）
 <tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
 </thead>
 <tbody>
-<tr><td><code>KVCacheManager</code></td><td>Scheduler向け公開API</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py:94</code></td></tr>
-<tr><td><code>KVCacheCoordinator</code></td><td>複数KVキャッシュグループの統括</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code> 内部</td></tr>
-<tr><td><code>SingleTypeKVCacheManager</code></td><td>アテンションタイプ別（Full/SlidingWindow等）のブロック管理</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code> 内部</td></tr>
-<tr><td><code>BlockPool</code></td><td>物理ブロックの割り当て・解放・キャッシュ管理</td><td><code>target/vllm/vllm/v1/core/block_pool.py:128</code></td></tr>
+<tr><td><code>KVCacheManager</code></td><td>Scheduler 向け公開 API</td><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py:94</code></td></tr>
+<tr><td><code>KVCacheCoordinator</code></td><td>マルチグループ統括（3 実装）</td><td><code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:28</code></td></tr>
+<tr><td><code>SingleTypeKVCacheManager</code></td><td>アテンションタイプ別管理（7 実装）</td><td><code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></td></tr>
+<tr><td><code>BlockPool</code></td><td>物理ブロック割り当て・解放・キャッシュ管理</td><td><code>target/vllm/vllm/v1/core/block_pool.py:128</code></td></tr>
 <tr><td><code>KVCacheBlock</code></td><td>ブロックメタデータ（block_id, ref_cnt, block_hash）</td><td><code>target/vllm/vllm/v1/core/kv_cache_utils.py:107</code></td></tr>
-<tr><td><code>BlockHashToBlockMap</code></td><td>プレフィックスキャッシュ用ハッシュ→ブロック対応表</td><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td></tr>
-<tr><td><code>FreeKVCacheBlockQueue</code></td><td>LRU順序の空きブロック管理キュー</td><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td></tr>
+<tr><td><code>BlockHashToBlockMap</code></td><td>プレフィックスキャッシュ用ハッシュ→ブロック対応表</td><td><code>target/vllm/vllm/v1/core/block_pool.py:32</code></td></tr>
+<tr><td><code>FreeKVCacheBlockQueue</code></td><td>LRU 順序の空きブロック管理（双方向リンクリスト）</td><td><code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -1773,53 +1858,51 @@ EngineCore.step()（続き）
 <tr><th>メソッド</th><th>行</th><th>説明</th></tr>
 </thead>
 <tbody>
-<tr><td><code>allocate_slots()</code></td><td>L206</td><td>リクエストにKVキャッシュブロックを割り当て。成功時<code>KVCacheBlocks</code>、失敗時<code>None</code></td></tr>
+<tr><td><code>allocate_slots()</code></td><td>L206</td><td>リクエストに KV キャッシュブロックを割り当て。成功時 <code>KVCacheBlocks</code>、失敗時 <code>None</code></td></tr>
 <tr><td><code>get_computed_blocks()</code></td><td>L164</td><td>プレフィックスキャッシュから最長ヒットを検索。<code>(KVCacheBlocks, int)</code></td></tr>
 <tr><td><code>free()</code></td><td>L378</td><td>リクエストのブロックをプールに返却</td></tr>
-<tr><td><code>usage</code> (property)</td><td>L143</td><td>KVキャッシュ使用率 (0.0-1.0)</td></tr>
+<tr><td><code>usage</code> (property)</td><td>L143</td><td>KV キャッシュ使用率 (0.0-1.0)</td></tr>
 <tr><td><code>reset_prefix_cache()</code></td><td>L409</td><td>プレフィックスキャッシュ全体をリセット</td></tr>
-<tr><td><code>get_num_common_prefix_blocks()</code></td><td>L425</td><td>全リクエスト共通の先頭ブロック数（Cascade Attention用）</td></tr>
+<tr><td><code>get_num_common_prefix_blocks()</code></td><td>L425</td><td>全リクエスト共通の先頭ブロック数（Cascade Attention 用）</td></tr>
 <tr><td><code>cache_blocks()</code></td><td>L475</td><td>ブロックをプレフィックスキャッシュに登録</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="allocate_slots-の詳細"><a class="header" href="#allocate_slots-の詳細">allocate_slots() の詳細</a></h2>
+<h2 id="allocate_slots-の-5-段階フロー-deep-verified"><a class="header" href="#allocate_slots-の-5-段階フロー-deep-verified">allocate_slots() の 5 段階フロー [DEEP] [VERIFIED]</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:206</code></p>
-<pre><code class="language-python">def allocate_slots(
-    self,
-    request: Request,
-    num_new_tokens: int,
-    num_new_computed_tokens: int = 0,
-    new_computed_blocks: KVCacheBlocks | None = None,
-    num_lookahead_tokens: int = 0,
-    num_external_computed_tokens: int = 0,
-    delay_cache_blocks: bool = False,
-    num_encoder_tokens: int = 0,
-) -&gt; KVCacheBlocks | None
+<pre><code>allocate_slots(request, num_new_tokens, ...)
+  │
+  ├─ Stage 1: スキップブロック解放（Sliding Window 用）
+  │  └─ coordinator.remove_skipped_blocks(request_id, total_computed_tokens)
+  │
+  ├─ Stage 2: 容量チェック
+  │  ├─ coordinator.get_num_blocks_to_allocate(...)
+  │  └─ 空きブロック不足 → return None（プリエンプション誘発）
+  │
+  ├─ Stage 3: キャッシュヒットブロック割り当て
+  │  └─ new_computed_blocks 非空 or external_computed &gt; 0:
+  │     └─ coordinator.allocate_new_computed_blocks(...)
+  │
+  ├─ Stage 4: 新規ブロック割り当て
+  │  └─ coordinator.allocate_new_blocks(request_id, num_tokens_need_slot, ...)
+  │
+  └─ Stage 5: キャッシュ登録判定
+     ├─ NOT enable_caching or delay_cache_blocks → スキップ
+     └─ coordinator.cache_blocks(request, num_tokens_to_cache)
+        ※ num_tokens_to_cache はドラフトトークンを除外
 </code></pre>
-<p>処理フロー:</p>
-<ol>
-<li>必要ブロック数を計算（<code>coordinator.get_num_blocks_to_allocate()</code>）</li>
-<li>空きブロック数と比較 → 不足なら <code>None</code> を返す（プリエンプション誘発）</li>
-<li>プレフィックスキャッシュヒットのブロックをリクエストに追加</li>
-<li>新規ブロックを割り当て（<code>coordinator.allocate_new_blocks()</code>）</li>
-<li>キャッシング有効時、計算済みブロックをプレフィックスキャッシュに登録</li>
-</ol>
-<p><strong>割り当て失敗時</strong> (L336-338):</p>
-<pre><code class="language-python">if num_blocks_to_allocate &gt; self.block_pool.get_num_free_blocks():
-    return None  # → Scheduler がプリエンプションを実行
-</code></pre>
+<p><strong>delay_cache_blocks</strong>: P/D（Prefill/Decode 分離）構成で KV Transfer 完了前にキャッシュ登録を遅延する。</p>
 <h2 id="プレフィックスキャッシュ"><a class="header" href="#プレフィックスキャッシュ">プレフィックスキャッシュ</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:164</code> (get_computed_blocks)</p>
-<p>プロンプトトークン列をブロックサイズ単位でハッシュ化し、<code>BlockHashToBlockMap</code> で過去に計算済みのブロックを検索する。ハッシュチェーンを前方から走査し、最長一致を見つける。</p>
+<p>プロンプトトークン列をブロックサイズ単位でハッシュ化し、<code>BlockHashToBlockMap</code> で過去に計算済みのブロックを検索する。ハッシュチェーン（各ブロックのハッシュが前ブロックのハッシュに依存）により、プレフィックスの最長一致を効率的に検索する。</p>
 <pre><code>get_computed_blocks(request)
   → coordinator.find_longest_cache_hit(request.block_hashes, max_length)
-    → block_pool.get_cached_block(block_hash) を順次検索
-    → キャッシュミスで検索終了
+    → アテンションタイプ別の検索アルゴリズム
   → (キャッシュ済みブロック, ヒットトークン数) を返却
 </code></pre>
-<p><strong>制約</strong>: 全トークンがキャッシュヒットしても、logits取得のため最後の1トークンは再計算が必要（<code>max_cache_hit_length = request.num_tokens - 1</code>）。</p>
-<h2 id="参照カウントとeviction"><a class="header" href="#参照カウントとeviction">参照カウントとEviction</a></h2>
+<p><strong>制約</strong>: 全トークンがキャッシュヒットしても、logits 取得のため最後の 1 トークンは再計算が必要（<code>max_cache_hit_length = request.num_tokens - 1</code>）。</p>
+<p>→ 詳細は <a href="#プレフィックスキャッシュ詳細">プレフィックスキャッシュ詳細</a> を参照</p>
+<h2 id="参照カウントと-eviction"><a class="header" href="#参照カウントと-eviction">参照カウントと Eviction</a></h2>
 <p><strong>KVCacheBlock</strong> (L107) の <code>ref_cnt</code> フィールドでブロックの使用状況を管理:</p>
 <div class="table-wrapper">
 <table>
@@ -1827,23 +1910,35 @@ EngineCore.step()（続き）
 <tr><th>ref_cnt</th><th>状態</th></tr>
 </thead>
 <tbody>
-<tr><td>0</td><td>空きブロックキュー（<code>FreeKVCacheBlockQueue</code>）内。Eviction候補</td></tr>
-<tr><td>≥ 1</td><td>リクエストに使用中。Eviction対象外</td></tr>
+<tr><td>0</td><td>空きブロックキュー（<code>FreeKVCacheBlockQueue</code>）内。Eviction 候補</td></tr>
+<tr><td>≥ 1</td><td>リクエストに使用中。Eviction 対象外</td></tr>
 </tbody>
 </table>
 </div>
 <ul>
-<li><strong>touch()</strong>: キャッシュヒット時に<code>ref_cnt</code>を増加し、空きキューから除外</li>
-<li><strong>free_blocks()</strong>: <code>ref_cnt</code>を減少。0になったら空きキューに戻す（逆順追加でLRU効率化）</li>
-<li><strong>_maybe_evict_cached_block()</strong>: 新規ブロック要求時に空きキューの先頭（最古）からEvict。ハッシュメタデータをリセット</li>
+<li><strong>touch()</strong>: キャッシュヒット時に <code>ref_cnt</code> を増加し、空きキューから除外</li>
+<li><strong>free_blocks()</strong>: <code>ref_cnt</code> を減少。0 になったら空きキューに戻す（逆順追加で LRU 効率化）</li>
+<li><strong>_maybe_evict_cached_block()</strong>: 新規ブロック要求時に空きキューの先頭（最古）から Evict。ハッシュメタデータをリセット</li>
 </ul>
-<h2 id="スライディングウィンドウ対応"><a class="header" href="#スライディングウィンドウ対応">スライディングウィンドウ対応</a></h2>
-<p>アテンションウィンドウ外のブロックを<code>null_block</code>（ダミーブロック）で置換し、物理メモリを解放する:</p>
-<pre><code>remove_skipped_blocks(request_id, total_computed_tokens)
-  → num_skipped_tokens = get_num_skipped_tokens(total_computed_tokens)
-  → 前方のブロックをnull_blockで置換
-  → 解放したブロックをBlockPoolに返却
-</code></pre>
+<p>→ 詳細は <a href="#blockpool-詳細">BlockPool 詳細</a> を参照</p>
+<h2 id="アテンションタイプ対応"><a class="header" href="#アテンションタイプ対応">アテンションタイプ対応</a></h2>
+<p>7 種の <code>SingleTypeKVCacheManager</code> がアテンションタイプごとのブロック管理を担当:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Manager</th><th>KVCacheSpec</th><th>スキップ計算</th><th>キャッシュ検索</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FullAttentionManager</code></td><td>FullAttention / MLA</td><td>0</td><td>左→右</td></tr>
+<tr><td><code>SlidingWindowManager</code></td><td>SlidingWindow</td><td><code>max(0, n-w+1)</code></td><td>右→左（連続）</td></tr>
+<tr><td><code>ChunkedLocalAttentionManager</code></td><td>ChunkedLocal</td><td><code>(n//c)*c</code></td><td>null_pad + 左→右</td></tr>
+<tr><td><code>MambaManager</code></td><td>Mamba</td><td><code>n - 1</code></td><td>右→左（単一）</td></tr>
+<tr><td><code>CrossAttentionManager</code></td><td>CrossAttention</td><td>N/A</td><td>非対応</td></tr>
+<tr><td><code>SinkFullAttentionManager</code></td><td>SinkFullAttention</td><td>0</td><td>左→右</td></tr>
+</tbody>
+</table>
+</div>
+<p>→ 詳細は <a href="#アテンションタイプ別-manager-詳細">アテンションタイプ別 Manager</a> を参照</p>
 <h2 id="設定-4"><a class="header" href="#設定-4">設定</a></h2>
 <div class="table-wrapper">
 <table>
@@ -1851,9 +1946,12 @@ EngineCore.step()（続き）
 <tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
 </thead>
 <tbody>
-<tr><td><code>block_size</code></td><td>モデル依存</td><td>1ブロックあたりのトークン数</td></tr>
+<tr><td><code>block_size</code></td><td>モデル依存</td><td>1 ブロックあたりのトークン数</td></tr>
 <tr><td><code>enable_caching</code></td><td>設定依存</td><td>プレフィックスキャッシュの有効化</td></tr>
-<tr><td><code>num_gpu_blocks</code></td><td>プロファイリングで決定</td><td>GPUメモリから算出される総ブロック数</td></tr>
+<tr><td><code>num_gpu_blocks</code></td><td>プロファイリングで決定</td><td>GPU メモリから算出される総ブロック数</td></tr>
+<tr><td><code>hash_block_size</code></td><td>block_size と同値</td><td>ハッシュ計算に使用するブロックサイズ</td></tr>
+<tr><td><code>prefix_caching_hash_algo</code></td><td><code>sha256_cbor</code></td><td>ハッシュ関数（sha256/sha256_cbor/xxhash/xxhash_cbor）</td></tr>
+<tr><td><code>enable_kv_cache_events</code></td><td>False</td><td>KV Transfer 用イベント発行</td></tr>
 </tbody>
 </table>
 </div>
@@ -1864,12 +1962,1031 @@ EngineCore.step()（続き）
   │   └─ None の場合 → プリエンプション実行
   └─ （完了時）kv_cache_manager.free(request)           # ブロック解放
 </code></pre>
+<h2 id="ソースファイル一覧"><a class="header" href="#ソースファイル一覧">ソースファイル一覧</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>行数</th><th>内容</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kv_cache_manager.py</code></td><td>490</td><td>KVCacheManager、KVCacheBlocks</td></tr>
+<tr><td><code>kv_cache_coordinator.py</code></td><td>586</td><td>Coordinator 3 実装</td></tr>
+<tr><td><code>single_type_kv_cache_manager.py</code></td><td>1065</td><td>Manager 7 種</td></tr>
+<tr><td><code>block_pool.py</code></td><td>490</td><td>BlockPool、BlockHashToBlockMap</td></tr>
+<tr><td><code>kv_cache_utils.py</code></td><td>1644</td><td>KVCacheBlock、Queue、ハッシュ計算</td></tr>
+<tr><td><code>kv_cache_metrics.py</code></td><td>96</td><td>メトリクス収集</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="詳細ドキュメント"><a class="header" href="#詳細ドキュメント">詳細ドキュメント</a></h2>
+<ul>
+<li><strong><a href="#blockpool-詳細">BlockPool 詳細</a></strong> — FreeKVCacheBlockQueue、BlockHashToBlockMap、KVCacheBlock ライフサイクル、Eviction、KV Cache Events</li>
+<li><strong><a href="#プレフィックスキャッシュ詳細">プレフィックスキャッシュ詳細</a></strong> — ハッシュチェーン計算、Extra Keys、Lookup アルゴリズム、Hybrid fixed-point</li>
+<li><strong><a href="#アテンションタイプ別-manager-詳細">アテンションタイプ別 Manager</a></strong> — 7 種 Manager の詳細、スキップ計算、キャッシュ検索アルゴリズム</li>
+</ul>
 <h2 id="関連ドキュメント-4"><a class="header" href="#関連ドキュメント-4">関連ドキュメント</a></h2>
 <ul>
 <li><a href="#scheduler-サマリー">Scheduler</a></li>
 <li><a href="#enginecore-サマリー">EngineCore</a></li>
 <li><a href="#テキスト推論データフロー">データフロー</a></li>
-<li><a href="#用語集">用語集: PagedAttention, KVCacheBlock, BlockPool</a></li>
+<li><a href="#用語集">用語集</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="アテンションタイプ別-manager-詳細"><a class="header" href="#アテンションタイプ別-manager-詳細">アテンションタイプ別 Manager 詳細</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
+<p><code>SingleTypeKVCacheManager</code> は1種類のアテンションタイプの KV キャッシュ管理ロジックを担当する抽象基底クラスである。アテンションタイプごとにサブクラスが存在し、ブロックの割り当て・解放・プレフィックスキャッシュ検索をそれぞれのセマンティクスに合わせて実装する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py</code></p>
+<h2 id="spec_manager_map-deep-verified"><a class="header" href="#spec_manager_map-deep-verified">spec_manager_map [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:1049</code></p>
+<pre><code class="language-python">spec_manager_map = {
+    FullAttentionSpec:            FullAttentionManager,
+    MLAAttentionSpec:             FullAttentionManager,       # MLA も Full 扱い
+    SlidingWindowSpec:            SlidingWindowManager,
+    ChunkedLocalAttentionSpec:    ChunkedLocalAttentionManager,
+    MambaSpec:                    MambaManager,
+    CrossAttentionSpec:           CrossAttentionManager,
+    SinkFullAttentionSpec:        SinkFullAttentionManager,
+}
+</code></pre>
+<p><code>get_manager_for_kv_cache_spec(spec, **kwargs)</code> ファクトリ関数がこのマップから Manager クラスをディスパッチする。</p>
+<h2 id="基底クラス-singletypekvcachemanager-deep-verified"><a class="header" href="#基底クラス-singletypekvcachemanager-deep-verified">基底クラス: SingleTypeKVCacheManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></p>
+<h3 id="状態管理"><a class="header" href="#状態管理">状態管理</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>req_to_blocks</code></td><td><code>defaultdict[str, list[KVCacheBlock]]</code></td><td>リクエスト ID → 割り当て済みブロックリスト</td></tr>
+<tr><td><code>num_cached_block</code></td><td><code>dict[str, int]</code></td><td>リクエスト ID → キャッシュ登録済みブロック数。RUNNING リクエストのみ追跡</td></tr>
+<tr><td><code>block_size</code></td><td><code>int</code></td><td>1 ブロックあたりのトークン数。DCP/PCP &gt; 1 の場合は乗算される</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="コンストラクタ"><a class="header" href="#コンストラクタ">コンストラクタ</a></h3>
+<pre><code class="language-python">def __init__(self, kv_cache_spec, block_pool, enable_caching,
+             kv_cache_group_id, dcp_world_size=1, pcp_world_size=1):
+    self.block_size = kv_cache_spec.block_size
+    if dcp_world_size * pcp_world_size &gt; 1:
+        self.block_size *= dcp_world_size * pcp_world_size
+</code></pre>
+<p>DCP（Decode Context Parallelism）/ PCP（Prefill Context Parallelism）ではブロックサイズが並列度倍に拡大される。</p>
+<h3 id="get_num_blocks_to_allocate-deep-verified"><a class="header" href="#get_num_blocks_to_allocate-deep-verified">get_num_blocks_to_allocate() [DEEP] [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L73</p>
+<p>リクエストに必要な新規ブロック数を算出する。2 つのパスが存在:</p>
+<pre><code>get_num_blocks_to_allocate(request_id, num_tokens, new_computed_blocks, ...)
+  │
+  ├─ Fast-path: request_id in num_cached_block（RUNNING リクエスト）
+  │  └─ max(num_required_blocks - num_req_blocks, 0)
+  │     ※ Speculative Decoding のリジェクトで num_req_blocks &gt; num_required_blocks もあり得る
+  │
+  └─ Slow-path: 新規リクエスト（プレフィックスキャッシュヒットあり）
+     ├─ num_skipped_tokens = get_num_skipped_tokens(total_computed_tokens)
+     ├─ num_skipped_blocks = num_skipped_tokens // block_size
+     ├─ num_new_blocks = max(required - max(skipped, local_computed), 0)
+     ├─ num_evictable_blocks = Σ(ref_cnt==0 かつ非null)
+     │  ← touch() 時にキューから除去されるブロック分を加算
+     └─ return num_new_blocks + num_evictable_blocks
+</code></pre>
+<p><strong>Evictable blocks の加算理由</strong>: <code>new_computed_blocks</code> 内のブロックが空きキュー内（<code>ref_cnt == 0</code>）にある場合、<code>touch()</code> で空きキューから除去されるため、実質的に空きブロック数が減る。この分を事前に計上する。</p>
+<h3 id="allocate_new_computed_blocks-deep-verified"><a class="header" href="#allocate_new_computed_blocks-deep-verified">allocate_new_computed_blocks() [DEEP] [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L137</p>
+<p>プレフィックスキャッシュヒットしたブロックをリクエストに追加する。</p>
+<pre><code>allocate_new_computed_blocks(request_id, new_computed_blocks, ...)
+  │
+  ├─ RUNNING → assert len(new_computed_blocks) == 0 → return
+  │
+  └─ 新規リクエスト:
+     ├─ num_skipped_blocks 計算
+     ├─ スキップ分を new_computed_blocks から除去
+     ├─ enable_caching → block_pool.touch(new_computed_blocks)
+     ├─ req_blocks に null_block × num_skipped_blocks を追加
+     ├─ req_blocks に new_computed_blocks を追加
+     ├─ num_cached_block[request_id] = len(req_blocks)
+     └─ external_computed_tokens &gt; 0 → 追加ブロック割り当て
+</code></pre>
+<h3 id="allocate_new_blocks-verified"><a class="header" href="#allocate_new_blocks-verified">allocate_new_blocks() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L208</p>
+<pre><code class="language-python">def allocate_new_blocks(self, request_id, num_tokens, num_tokens_main_model):
+    num_required_blocks = cdiv(num_tokens, self.block_size)
+    num_new_blocks = num_required_blocks - len(req_blocks)
+    if num_new_blocks &lt;= 0:
+        return []
+    new_blocks = self.block_pool.get_new_blocks(num_new_blocks)
+    req_blocks.extend(new_blocks)
+    return new_blocks  # 新規分のみ返す
+</code></pre>
+<h3 id="cache_blocks-verified"><a class="header" href="#cache_blocks-verified">cache_blocks() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L235</p>
+<pre><code class="language-python">def cache_blocks(self, request, num_tokens):
+    num_full_blocks = num_tokens // self.block_size
+    if num_cached_blocks &gt;= num_full_blocks:
+        return  # 既に登録済み
+    block_pool.cache_full_blocks(request, req_blocks, num_cached_blocks,
+                                  num_full_blocks, block_size, group_id)
+    num_cached_block[request_id] = num_full_blocks
+</code></pre>
+<h3 id="free-verified"><a class="header" href="#free-verified">free() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L261</p>
+<pre><code class="language-python">def free(self, request_id):
+    req_blocks = self.req_to_blocks.pop(request_id, [])
+    ordered_blocks = reversed(req_blocks)  # 逆順でLRU最適化
+    self.block_pool.free_blocks(ordered_blocks)
+    self.num_cached_block.pop(request_id, None)
+</code></pre>
+<p><strong>逆順の理由</strong>: チェーン末尾（最新トークン）がキューの先頭側に来ることで、次の割り当て時に最初に evict される。先頭ブロック（プレフィックス）は長く残り、共有確率が上がる。</p>
+<h3 id="remove_skipped_blocks-verified"><a class="header" href="#remove_skipped_blocks-verified">remove_skipped_blocks() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L343</p>
+<pre><code class="language-python">def remove_skipped_blocks(self, request_id, total_computed_tokens):
+    num_skipped_tokens = self.get_num_skipped_tokens(total_computed_tokens)
+    if num_skipped_tokens &lt;= 0:
+        return  # Full Attention: 何もしない
+    # 後方から走査して null_block に遭遇したら停止
+    for i in range(num_skipped_blocks - 1, -1, -1):
+        if blocks[i] == null_block:
+            break  # 前回の呼び出しで既に解放済み
+        removed_blocks.append(blocks[i])
+        blocks[i] = null_block
+    block_pool.free_blocks(removed_blocks)
+</code></pre>
+<h3 id="get_num_skipped_tokens-verified"><a class="header" href="#get_num_skipped_tokens-verified">get_num_skipped_tokens() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L386</p>
+<p>デフォルト実装は <code>return 0</code>（全トークンがアテンション対象）。サブクラスでオーバーライド。</p>
+<h2 id="fullattentionmanager-deep-verified"><a class="header" href="#fullattentionmanager-deep-verified">FullAttentionManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:400</code></p>
+<p>標準的な全トークンアテンション。基底クラスの動作をそのまま継承し、2 つのメソッドのみ実装。</p>
+<h3 id="find_longest_cache_hit"><a class="header" href="#find_longest_cache_hit">find_longest_cache_hit()</a></h3>
+<p><strong>参照</strong>: L401</p>
+<pre><code>左→右にブロックハッシュを走査:
+  キャッシュヒット → computed_blocks に追加
+  キャッシュミス → break（チェーンが途切れたら以降は必ずミス）
+
+EAGLE 使用時:
+  最後のブロックを削除（hidden states 再計算が必要）
+
+alignment_tokens でアライメント調整:
+  Hybrid モデルで LCM ブロックサイズの倍数に切り詰め
+</code></pre>
+<p><strong>Downward-closed 性質</strong>: Full Attention では blocks[0..n] がヒットするなら blocks[0..n-1] も必ずヒットする。この性質により、左→右の貪欲スキャンで最適解が得られる。</p>
+<h3 id="get_num_common_prefix_blocks"><a class="header" href="#get_num_common_prefix_blocks">get_num_common_prefix_blocks()</a></h3>
+<p><strong>参照</strong>: L450</p>
+<pre><code class="language-python">def get_num_common_prefix_blocks(self, running_request_id):
+    for block in blocks:
+        if block.ref_cnt == len(self.req_to_blocks):
+            num_common_blocks += 1
+        else:
+            break
+    return num_common_blocks
+</code></pre>
+<p><strong>原理</strong>: <code>ref_cnt == 全リクエスト数</code> なら、そのブロックは全リクエストで共有されている → 共通プレフィックス。Cascade Attention で共通プレフィックスの再計算をスキップするために使用。</p>
+<h2 id="slidingwindowmanager-deep-verified"><a class="header" href="#slidingwindowmanager-deep-verified">SlidingWindowManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:461</code></p>
+<p>Sliding Window Attention 用。ウィンドウ外のトークンの KV キャッシュを解放してメモリを節約する。</p>
+<h3 id="コンストラクタ-1"><a class="header" href="#コンストラクタ-1">コンストラクタ</a></h3>
+<pre><code class="language-python">def __init__(self, kv_cache_spec: SlidingWindowSpec, **kwargs):
+    super().__init__(kv_cache_spec, **kwargs)
+    self.sliding_window = kv_cache_spec.sliding_window
+</code></pre>
+<h3 id="get_num_skipped_tokens"><a class="header" href="#get_num_skipped_tokens">get_num_skipped_tokens()</a></h3>
+<p><strong>参照</strong>: L556</p>
+<pre><code class="language-python">def get_num_skipped_tokens(self, num_computed_tokens):
+    return max(0, num_computed_tokens - self.sliding_window + 1)
+</code></pre>
+<pre><code>例: sliding_window=4, num_computed_tokens=7
+
+Tokens: [0 1 2 3 4 5 6 | 7]
+                          ↑ 次に計算するトークン
+                  [4 5 6 7]  ← sliding window（サイズ4）
+        [0 1 2 3]            ← skipped（4トークン）
+</code></pre>
+<h3 id="find_longest_cache_hit-1"><a class="header" href="#find_longest_cache_hit-1">find_longest_cache_hit()</a></h3>
+<p><strong>参照</strong>: L466</p>
+<pre><code>右→左にブロックハッシュを走査:
+  キャッシュヒット → computed_blocks[i] にセット、連続カウント++
+  キャッシュミス → 連続カウント = 0（リセット）
+
+  連続カウント &gt;= sliding_window_contiguous_blocks:
+    末尾をトリミングして break
+
+sliding_window_contiguous_blocks = ceil((window - 1) / block_size)
+</code></pre>
+<p><strong>Right-to-left の理由</strong>: Sliding Window は最新のトークン付近のブロックが重要。右端から連続ヒットを探すことで、ウィンドウ内の有用なキャッシュを効率的に発見する。</p>
+<p><strong>初期値</strong>: <code>computed_blocks</code> は <code>null_block</code> で埋められ、ヒットした位置のみ実ブロックで置換される。</p>
+<p><strong>制約事項</strong>:</p>
+<ul>
+<li>DCP/PCP 非対応 (<code>assert dcp_world_size == 1</code>)</li>
+<li>EAGLE 使用時は <code>sliding_window_contiguous_blocks += 1</code></li>
+</ul>
+<h3 id="get_num_common_prefix_blocks-1"><a class="header" href="#get_num_common_prefix_blocks-1">get_num_common_prefix_blocks()</a></h3>
+<p><strong>参照</strong>: L584</p>
+<p>常に <code>0</code> を返す。プレフィックスブロックは全て null_block に置換されているため、Cascade Attention は使用不可。</p>
+<h2 id="chunkedlocalattentionmanager-deep-verified"><a class="header" href="#chunkedlocalattentionmanager-deep-verified">ChunkedLocalAttentionManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:594</code></p>
+<p>チャンク境界でアテンションが分割されるモデル用。各チャンク内のトークンのみが互いにアテンションする。</p>
+<h3 id="コンストラクタ-2"><a class="header" href="#コンストラクタ-2">コンストラクタ</a></h3>
+<pre><code class="language-python">def __init__(self, kv_cache_spec: ChunkedLocalAttentionSpec, **kwargs):
+    super().__init__(kv_cache_spec, **kwargs)
+    self.attention_chunk_size = kv_cache_spec.attention_chunk_size
+</code></pre>
+<h3 id="get_num_skipped_tokens-1"><a class="header" href="#get_num_skipped_tokens-1">get_num_skipped_tokens()</a></h3>
+<p><strong>参照</strong>: L691</p>
+<pre><code class="language-python">def get_num_skipped_tokens(self, num_computed_tokens):
+    return (num_computed_tokens // self.attention_chunk_size) * self.attention_chunk_size
+</code></pre>
+<pre><code>例1: chunk_size=8, computed=13 → skipped=8  (チャンク[0,7]全体)
+例2: chunk_size=8, computed=8  → skipped=8  (チャンク[0,7]全体)
+例3: chunk_size=8, computed=7  → skipped=0  (まだチャンク内)
+</code></pre>
+<h3 id="find_longest_cache_hit-2"><a class="header" href="#find_longest_cache_hit-2">find_longest_cache_hit()</a></h3>
+<p><strong>参照</strong>: L599</p>
+<pre><code>1. local_attention_start_idx = (max_length // chunk_size) * chunk_size
+2. computed_blocks = [null_block] × (start_idx // block_size)  ← ウィンドウ外
+3. start_idx から max_num_blocks まで左→右スキャン:
+   ヒット → append、ミス → break
+</code></pre>
+<p>ウィンドウ外のブロックは null_block でパディングし、ウィンドウ内のみ FullAttention と同様の左→右スキャンを行う。</p>
+<p><strong>制約事項</strong>:</p>
+<ul>
+<li>EAGLE 非対応 (<code>assert use_eagle is False</code>)</li>
+<li>DCP/PCP 非対応</li>
+<li>異なるブロックサイズの混在非対応</li>
+</ul>
+<h2 id="mambamanager-deep-verified"><a class="header" href="#mambamanager-deep-verified">MambaManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:744</code></p>
+<p>Mamba（State Space Model / 線形アテンション）用の Manager。Transformer ベースのアテンションとは根本的に異なり、KV キャッシュではなく「状態」を管理する。</p>
+<h3 id="2つのキャッシュモード"><a class="header" href="#2つのキャッシュモード">2つのキャッシュモード</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モード</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>none</code>（デフォルト）</td><td>基底クラスの動作 + speculative blocks 追加</td></tr>
+<tr><td><code>align</code></td><td>最後の状態ブロックのみ追跡、null_block パディング、speculative blocks 再利用</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="追加状態align-モード"><a class="header" href="#追加状態align-モード">追加状態（align モード）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>last_state_block_idx</code></td><td><code>dict[str, int]</code></td><td>前ステップで割り当てた状態ブロックのインデックス</td></tr>
+<tr><td><code>_allocated_block_reqs</code></td><td><code>set[str]</code></td><td>ブロック割り当て済みリクエストの集合</td></tr>
+<tr><td><code>num_speculative_blocks</code></td><td><code>int</code></td><td>Speculative Decoding 用の余分なブロック数</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="get_num_skipped_tokens-2"><a class="header" href="#get_num_skipped_tokens-2">get_num_skipped_tokens()</a></h3>
+<p><strong>参照</strong>: L967</p>
+<pre><code class="language-python">def get_num_skipped_tokens(self, num_computed_tokens):
+    return num_computed_tokens - 1  # 最後の状態のみ必要
+</code></pre>
+<p>Mamba は状態の累積的な更新なので、最後のトークンの状態さえあれば以前のトークンの状態は不要。</p>
+<h3 id="find_longest_cache_hit-3"><a class="header" href="#find_longest_cache_hit-3">find_longest_cache_hit()</a></h3>
+<p><strong>参照</strong>: L756</p>
+<pre><code>右→左に走査:
+  最初のヒットで即座に break
+  ヒット位置の前を null_block で埋める
+</code></pre>
+<p>最後の状態のみ必要なため、最右のヒット 1 つで十分。</p>
+<h3 id="get_num_blocks_to_allocatealign-モード-deep-verified"><a class="header" href="#get_num_blocks_to_allocatealign-モード-deep-verified">get_num_blocks_to_allocate()（align モード） [DEEP] [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L832</p>
+<pre><code>align モード:
+  ├─ 既存リクエスト（_allocated_block_reqs に存在）:
+  │  └─ 最大 1 ブロック追加（speculative blocks 再利用のため）
+  │
+  └─ 新規リクエスト:
+     └─ 1 + num_speculative_blocks ブロック
+</code></pre>
+<h3 id="allocate_new_blocksalign-モード-deep-verified"><a class="header" href="#allocate_new_blocksalign-モード-deep-verified">allocate_new_blocks()（align モード） [DEEP] [VERIFIED]</a></h3>
+<p><strong>参照</strong>: L885</p>
+<p>align モードの割り当ては複雑:</p>
+<pre><code>1. num_tokens を main model 分に制限（lookahead 除外）
+2. last_state_block_idx を記録:
+   - 既存: prev_len - 1 - num_speculative_blocks
+   - 新規（キャッシュヒット有）: prev_len - 1
+3. null_block でスキップ位置をパディング
+4. 既存リクエスト: speculative blocks をスキップ位置に移動して再利用
+5. 残りの新規ブロックを割り当て
+</code></pre>
+<h3 id="remove_skipped_blocksalign-モード"><a class="header" href="#remove_skipped_blocksalign-モード">remove_skipped_blocks()（align モード）</a></h3>
+<p><strong>参照</strong>: L804</p>
+<p>基底クラスの <code>remove_skipped_blocks()</code> に加え、<code>last_state_block_idx</code> のブロックも解放する:</p>
+<pre><code class="language-python">if last_state_block_idx &lt; cdiv(num_computed_tokens, block_size) - 1:
+    block_pool.free_blocks([blocks[last_state_block_idx]])
+    blocks[last_state_block_idx] = null_block
+</code></pre>
+<p>2 ステップ前のブロックが不要になるタイミングで解放する。</p>
+<h3 id="free"><a class="header" href="#free">free()</a></h3>
+<p><strong>参照</strong>: L961</p>
+<pre><code class="language-python">def free(self, request_id):
+    if self.mamba_cache_mode == "align":
+        self._allocated_block_reqs.discard(request_id)
+        self.last_state_block_idx.pop(request_id, None)
+    super().free(request_id)
+</code></pre>
+<h2 id="crossattentionmanager-deep-verified"><a class="header" href="#crossattentionmanager-deep-verified">CrossAttentionManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:976</code></p>
+<p>エンコーダ-デコーダモデル（Whisper 等）のクロスアテンション用。エンコーダ出力はリクエスト固有（異なる音声/画像入力）のため、プレフィックスキャッシュの恩恵がない。</p>
+<h3 id="制約"><a class="header" href="#制約">制約</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>allocate_new_computed_blocks()</code></td><td><code>assert len(new_computed_blocks) == 0</code></td></tr>
+<tr><td><code>cache_blocks()</code></td><td><code>raise ValueError</code></td></tr>
+<tr><td><code>find_longest_cache_hit()</code></td><td><code>raise NotImplementedError</code></td></tr>
+<tr><td><code>get_num_common_prefix_blocks()</code></td><td><code>return 0</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>エンコーダブロックはリクエスト開始時に <code>num_encoder_tokens</code> に基づいて静的に割り当てられ、デコード中は変化しない。</p>
+<h2 id="sinkfullattentionmanager-deep-verified"><a class="header" href="#sinkfullattentionmanager-deep-verified">SinkFullAttentionManager [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:1025</code></p>
+<p>StreamingLLM のための Attention Sink 実装。<code>FullAttentionManager</code> を継承し、初期化時に先頭の sink ブロックを事前確保する。</p>
+<h3 id="コンストラクタ-3"><a class="header" href="#コンストラクタ-3">コンストラクタ</a></h3>
+<pre><code class="language-python">class SinkFullAttentionManager(FullAttentionManager):
+    def __init__(self, kv_cache_spec: SinkFullAttentionSpec, ...):
+        super().__init__(...)
+        sink_len = kv_cache_spec.sink_len
+        assert sink_len &gt; 0 and sink_len % self.block_size == 0
+        num_sink_block = sink_len // self.block_size
+        self.sink_blocks = self.block_pool.free_block_queue.popleft_n(num_sink_block)
+</code></pre>
+<p><strong>特徴</strong>:</p>
+<ul>
+<li><code>sink_len</code> は <code>block_size</code> の倍数でなければならない</li>
+<li>sink ブロックは初期化時に <code>popleft_n()</code> で確保され、以降解放されない</li>
+<li>FullAttentionManager の <code>find_longest_cache_hit()</code> と <code>get_num_common_prefix_blocks()</code> をそのまま使用</li>
+</ul>
+<h2 id="各-manager-の比較表-verified"><a class="header" href="#各-manager-の比較表-verified">各 Manager の比較表 [VERIFIED]</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Manager</th><th>スキップ計算</th><th>キャッシュ検索</th><th>Cascade</th><th>DCP/PCP</th><th>EAGLE</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>FullAttention</strong></td><td>0（全トークン）</td><td>左→右</td><td>ref_cnt 基準</td><td>対応</td><td>対応</td></tr>
+<tr><td><strong>SlidingWindow</strong></td><td><code>max(0, n-w+1)</code></td><td>右→左（連続）</td><td>非対応</td><td>非対応</td><td>対応</td></tr>
+<tr><td><strong>ChunkedLocal</strong></td><td><code>(n//c)*c</code></td><td>null_pad + 左→右</td><td>非対応</td><td>非対応</td><td>非対応</td></tr>
+<tr><td><strong>Mamba</strong></td><td><code>n - 1</code></td><td>右→左（単一）</td><td>非対応</td><td>非対応</td><td>-</td></tr>
+<tr><td><strong>CrossAttention</strong></td><td>0</td><td>非対応</td><td>非対応</td><td>-</td><td>-</td></tr>
+<tr><td><strong>SinkFullAttention</strong></td><td>0</td><td>左→右</td><td>ref_cnt 基準</td><td>対応</td><td>対応</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント-5"><a class="header" href="#関連ドキュメント-5">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></li>
+<li><a href="#blockpool-詳細">BlockPool 詳細</a></li>
+<li><a href="#プレフィックスキャッシュ詳細">プレフィックスキャッシュ詳細</a></li>
+<li><a href="#scheduler-サマリー">Scheduler</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="blockpool-詳細"><a class="header" href="#blockpool-詳細">BlockPool 詳細</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
+<p><code>BlockPool</code> はKVキャッシュの物理ブロックを管理するクラスである。ブロックの割り当て・解放・プレフィックスキャッシュ索引を一元管理し、LRU Eviction によるメモリ再利用を実現する。3つの内部データ構造（<code>FreeKVCacheBlockQueue</code>、<code>BlockHashToBlockMap</code>、<code>KVCacheBlock</code>）で構成される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:128</code></p>
+<h2 id="kvcacheblock-deep-verified"><a class="header" href="#kvcacheblock-deep-verified">KVCacheBlock [DEEP] [VERIFIED]</a></h2>
+<p>KVキャッシュブロック1つのメタデータを保持する dataclass。物理メモリ自体は GPU 上にあり、このオブジェクトは CPU 側のメタデータのみを管理する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:107</code></p>
+<h3 id="フィールド"><a class="header" href="#フィールド">フィールド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>block_id</code></td><td><code>int</code></td><td>0 〜 <code>num_gpu_blocks - 1</code> の一意識別子</td></tr>
+<tr><td><code>ref_cnt</code></td><td><code>int</code></td><td>参照カウント。0なら空きキュー内（Eviction候補）</td></tr>
+<tr><td><code>_block_hash</code></td><td><code>BlockHashWithGroupId | None</code></td><td>プレフィックスキャッシュ用ハッシュキー。fullブロックでキャッシュ登録済みの場合のみ設定</td></tr>
+<tr><td><code>prev_free_block</code></td><td><code>KVCacheBlock | None</code></td><td>空きキューの前ノードポインタ</td></tr>
+<tr><td><code>next_free_block</code></td><td><code>KVCacheBlock | None</code></td><td>空きキューの次ノードポインタ</td></tr>
+<tr><td><code>is_null</code></td><td><code>bool</code></td><td>null_block フラグ。True の場合は解放・Eviction 対象外</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="block_hash-プロパティ"><a class="header" href="#block_hash-プロパティ">block_hash プロパティ</a></h3>
+<pre><code class="language-python">@block_hash.setter
+def block_hash(self, block_hash: BlockHashWithGroupId):
+    assert self.block_hash is None  # 二重設定を禁止
+    self._block_hash = block_hash
+
+def reset_hash(self):
+    self._block_hash = None  # Eviction時にリセット
+</code></pre>
+<p><strong>制約</strong>: setter は <code>assert self.block_hash is None</code> で二重設定を防止する。ハッシュのリセットは <code>reset_hash()</code> のみで行う。これによりブロックのライフサイクルが「未設定 → 設定 → リセット → 再設定」の順序で制御される。</p>
+<h3 id="ライフサイクル"><a class="header" href="#ライフサイクル">ライフサイクル</a></h3>
+<pre><code>1. 生成: BlockPool.__init__() で全ブロック生成（ref_cnt=0）
+2. 割り当て: get_new_blocks() → ref_cnt=1
+3. キャッシュ登録: cache_full_blocks() → block_hash 設定
+4. 再利用（キャッシュヒット）: touch() → ref_cnt++
+5. 解放: free_blocks() → ref_cnt-- → 0なら空きキューへ
+6. Eviction: _maybe_evict_cached_block() → hash リセット → 再割り当て
+</code></pre>
+<h2 id="freekvcacheblockqueue-deep-verified"><a class="header" href="#freekvcacheblockqueue-deep-verified">FreeKVCacheBlockQueue [DEEP] [VERIFIED]</a></h2>
+<p>空きブロックを LRU 順序で管理する<strong>双方向リンクリスト</strong>。Python 組み込みの <code>deque</code> ではなく独自実装を採用している。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></p>
+<h3 id="なぜ独自実装か"><a class="header" href="#なぜ独自実装か">なぜ独自実装か</a></h3>
+<p><code>deque</code> では中間要素の削除が O(n) であるのに対し、この実装では O(1) で削除できる。<code>touch()</code> でキャッシュヒットしたブロックを空きキューの中間から即座に除去する必要があるため、O(1) の <code>remove()</code> が不可欠である。</p>
+<p>また、Python オブジェクトのアロケーションを行わず、<code>KVCacheBlock</code> の <code>prev_free_block</code>/<code>next_free_block</code> ポインタを直接操作するため、GC 負荷が低い。</p>
+<h3 id="センチネルノード"><a class="header" href="#センチネルノード">センチネルノード</a></h3>
+<pre><code>fake_head ⇄ block_0 ⇄ block_1 ⇄ ... ⇄ block_n ⇄ fake_tail
+</code></pre>
+<ul>
+<li><code>fake_free_list_head</code>: <code>block_id=-1</code> のダミーノード。先頭の前に配置</li>
+<li><code>fake_free_list_tail</code>: <code>block_id=-1</code> のダミーノード。末尾の後に配置</li>
+<li><strong>目的</strong>: null チェックの分岐を減らし、コードを簡素化</li>
+</ul>
+<h3 id="操作一覧"><a class="header" href="#操作一覧">操作一覧</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>計算量</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>popleft()</code></td><td>L208</td><td>O(1)</td><td>先頭ブロックを取り出し</td></tr>
+<tr><td><code>popleft_n(n)</code></td><td>L245</td><td>O(n)</td><td>先頭から n 個を一括取り出し</td></tr>
+<tr><td><code>remove(block)</code></td><td>L278</td><td>O(1)</td><td>中間のブロックを除去（touch 用）</td></tr>
+<tr><td><code>append(block)</code></td><td>L298</td><td>O(1)</td><td>末尾にブロックを追加</td></tr>
+<tr><td><code>append_n(blocks)</code></td><td>L321</td><td>O(n)</td><td>末尾に複数ブロックを一括追加</td></tr>
+<tr><td><code>get_all_free_blocks()</code></td><td>L346</td><td>O(m)</td><td>全空きブロック取得（テスト用）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="lru-順序の維持"><a class="header" href="#lru-順序の維持">LRU 順序の維持</a></h3>
+<ul>
+<li><strong>初期状態</strong>: <code>block_id</code> 順（0, 1, 2, …）</li>
+<li><strong>再挿入時</strong>: <code>free_blocks()</code> でブロックが返却される際に<strong>逆順</strong>で追加される
+<ul>
+<li>理由: リクエストのブロックチェーンの末尾（最新トークン）は先に evict されるべき。先頭（古いプレフィックス）は他のリクエストと共有される可能性が高いため後回し</li>
+<li>逆順操作は <code>SingleTypeKVCacheManager.free()</code> 側で実行される（BlockPool 外）</li>
+</ul>
+</li>
+</ul>
+<h2 id="blockhashtoblockmap-deep-verified"><a class="header" href="#blockhashtoblockmap-deep-verified">BlockHashToBlockMap [DEEP] [VERIFIED]</a></h2>
+<p>プレフィックスキャッシュのハッシュ→ブロック対応表。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:32</code></p>
+<h3 id="データ構造"><a class="header" href="#データ構造">データ構造</a></h3>
+<pre><code class="language-python">_cache: dict[BlockHashWithGroupId, KVCacheBlock | dict[int, KVCacheBlock]]
+</code></pre>
+<p><strong>Union 型の最適化</strong>: 大半のハッシュキーには 1 ブロックしか対応しないため、単一ブロックは直接格納し、2つ以上の場合のみ内部 dict に昇格する。これにより内部 dict の GC コストを削減。</p>
+<h3 id="重複排除なし設計"><a class="header" href="#重複排除なし設計">重複排除なし設計</a></h3>
+<p>同一ハッシュのブロックが複数存在しても<strong>重複排除しない</strong>。理由: ブロック ID をリクエストに割り当てた後は追加のみ（append-only）を保証するため。重複排除するとブロック ID が変わり、ブロックテーブルの安定性が崩れる。</p>
+<h3 id="操作"><a class="header" href="#操作">操作</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>get_one_block(key)</code></td><td>L60</td><td>ハッシュキーに対応する任意の1ブロックを返す。複数あれば先頭</td></tr>
+<tr><td><code>insert(key, block)</code></td><td>L73</td><td>ブロックをキャッシュに追加。1→dict 昇格を自動処理</td></tr>
+<tr><td><code>pop(key, block_id)</code></td><td>L91</td><td>特定の block_id を除去。残りがあれば dict を復元</td></tr>
+<tr><td><code>__len__()</code></td><td>L121</td><td>ハッシュキー数（ブロック数ではない）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="insert-の分岐"><a class="header" href="#insert-の分岐">insert の分岐</a></h3>
+<pre><code>key なし       → _cache[key] = block          (単一格納)
+key に 1 block → _cache[key] = {id: blk, ...}  (dict 昇格)
+key に dict    → dict[block.block_id] = block   (dict 追加)
+</code></pre>
+<h2 id="null_block-deep-verified"><a class="header" href="#null_block-deep-verified">null_block [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:174</code></p>
+<h3 id="特性"><a class="header" href="#特性">特性</a></h3>
+<ul>
+<li><strong>block_id = 0</strong>: 初期化時に空きキューから最初に popleft される</li>
+<li><strong>is_null = True</strong>: 解放・Eviction の対象外</li>
+<li><strong>ref_cnt 未管理</strong>: <code>touch()</code> や <code>free_blocks()</code> で特別にスキップされる</li>
+</ul>
+<h3 id="用途"><a class="header" href="#用途">用途</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>用途</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td>Sliding Window Attention</td><td>ウィンドウ外のブロック位置を埋める。物理メモリを消費しない</td></tr>
+<tr><td>Mamba (align モード)</td><td>スキップされたブロック位置のパディング</td></tr>
+<tr><td>ブロックテーブルの長さ統一</td><td>Attention カーネルにはブロックテーブルの連続性が必要。null_block で長さを揃える</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="ガード条件"><a class="header" href="#ガード条件">ガード条件</a></h3>
+<pre><code class="language-python"># touch() (L383)
+if block.ref_cnt == 0 and not block.is_null:
+    self.free_block_queue.remove(block)
+
+# free_blocks() (L401-402)
+[block for block in blocks_list if block.ref_cnt == 0 and not block.is_null]
+
+# cache_full_blocks() (L260-261)
+if blk.is_null:
+    continue  # null ブロックはキャッシュしない
+</code></pre>
+<h2 id="ブロック割り当てフロー-deep-verified"><a class="header" href="#ブロック割り当てフロー-deep-verified">ブロック割り当てフロー [DEEP] [VERIFIED]</a></h2>
+<h3 id="get_new_blocks"><a class="header" href="#get_new_blocks">get_new_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:300</code></p>
+<pre><code>get_new_blocks(num_blocks)
+  │
+  ├─ 空きブロック数チェック → 不足なら ValueError
+  │
+  ├─ free_block_queue.popleft_n(num_blocks)
+  │  └─ LRU 先頭（最古）から取り出し
+  │
+  ├─ enable_caching の場合:
+  │  ├─ _maybe_evict_cached_block(block)  ← ハッシュクリア
+  │  ├─ assert block.ref_cnt == 0
+  │  ├─ block.ref_cnt += 1
+  │  └─ metrics_collector.on_block_allocated(block)  ← サンプリング
+  │
+  └─ enable_caching でない場合:
+     ├─ assert block.ref_cnt == 0
+     ├─ block.ref_cnt += 1
+     └─ metrics_collector.on_block_allocated(block)
+</code></pre>
+<p><strong>注意</strong>: この関数はキャッシュ検索を行わない。キャッシュヒットの確認は <code>get_cached_block()</code> で別途行う。</p>
+<h3 id="get_cached_block"><a class="header" href="#get_cached_block">get_cached_block()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:182</code></p>
+<pre><code>get_cached_block(block_hash, kv_cache_group_ids)
+  │
+  ├─ 各 group_id について:
+  │  ├─ make_block_hash_with_group_id(block_hash, group_id)
+  │  ├─ cached_block_hash_to_block.get_one_block(hash_with_id)
+  │  └─ 1つでも miss → None を返す（全グループ一致が必須）
+  │
+  └─ 全ヒット → list[KVCacheBlock] を返す
+</code></pre>
+<p><strong>All-or-nothing セマンティクス</strong>: 複数の KV キャッシュグループがある場合、全グループでヒットしなければキャッシュミスとして扱う。</p>
+<h2 id="ブロック解放フロー-deep-verified"><a class="header" href="#ブロック解放フロー-deep-verified">ブロック解放フロー [DEEP] [VERIFIED]</a></h2>
+<h3 id="free_blocks"><a class="header" href="#free_blocks">free_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:389</code></p>
+<pre><code class="language-python">def free_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -&gt; None:
+    blocks_list = list(ordered_blocks)           # イテレータを実体化
+    for block in blocks_list:
+        block.ref_cnt -= 1                       # 参照カウント減少
+    self.free_block_queue.append_n(
+        [block for block in blocks_list
+         if block.ref_cnt == 0 and not block.is_null]  # 0 到達 &amp; 非 null のみ
+    )
+</code></pre>
+<p><strong>逆順解放の理由</strong>: 呼び出し元（<code>SingleTypeKVCacheManager.free()</code>）がブロックを逆順にして渡す。チェーン末尾（最新トークン）がキューの先頭側に来るため、次回の <code>get_new_blocks()</code> で最初に evict される。先頭ブロック（プレフィックス）は末尾側に来るため、プレフィックスキャッシュとして長く生き残る。</p>
+<h3 id="touch"><a class="header" href="#touch">touch()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:372</code></p>
+<p>プレフィックスキャッシュヒット時に呼ばれ、ブロックの再利用を記録する。</p>
+<pre><code>touch(blocks)
+  │
+  ├─ ref_cnt == 0 かつ非 null の場合:
+  │  └─ free_block_queue.remove(block)  ← 空きキューから除去
+  │
+  ├─ ref_cnt += 1
+  │
+  └─ metrics_collector.on_block_accessed(block)
+</code></pre>
+<h2 id="eviction-メカニズム-deep-verified"><a class="header" href="#eviction-メカニズム-deep-verified">Eviction メカニズム [DEEP] [VERIFIED]</a></h2>
+<h3 id="_maybe_evict_cached_block"><a class="header" href="#_maybe_evict_cached_block">_maybe_evict_cached_block()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:332</code></p>
+<p>新規ブロック割り当て時に、そのブロックがプレフィックスキャッシュに登録されている場合にキャッシュから除去する。</p>
+<pre><code>_maybe_evict_cached_block(block)
+  │
+  ├─ metrics_collector.on_block_evicted(block)  ← 先にメトリクス記録
+  │
+  ├─ block.block_hash is None → return False（キャッシュ未登録）
+  │
+  ├─ cached_block_hash_to_block.pop(hash, block_id)
+  │  └─ None → return False（マップに不在）
+  │
+  ├─ block.reset_hash()  ← ハッシュをクリア
+  │
+  ├─ enable_kv_cache_events の場合:
+  │  └─ kv_event_queue.append(BlockRemoved(...))
+  │
+  └─ return True
+</code></pre>
+<p><strong>タイミング</strong>: <code>get_new_blocks()</code> 内で <code>ref_cnt</code> をインクリメントする<strong>前</strong>に呼ばれる。</p>
+<h3 id="evict_blocks"><a class="header" href="#evict_blocks">evict_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:405</code></p>
+<p>外部（KV コネクタ）から特定の block_id 群を明示的に evict する。<code>_maybe_evict_cached_block()</code> を各ブロックに対して呼ぶ。ブロックは空きキューからは除去しない（ハッシュの除去のみ）。</p>
+<h3 id="reset_prefix_cache"><a class="header" href="#reset_prefix_cache">reset_prefix_cache()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:424</code></p>
+<p>全プレフィックスキャッシュのリセット。RLHF でモデル重み更新後にキャッシュを無効化する用途。</p>
+<p><strong>前提条件</strong>: 使用中のブロックが null_block のみ（<code>num_used_blocks == 1</code>）。条件を満たさない場合は <code>False</code> を返して失敗。</p>
+<pre><code>reset_prefix_cache()
+  ├─ 使用中ブロック数 != 1 → return False
+  ├─ cached_block_hash_to_block を新規インスタンスで置換
+  ├─ 全ブロックの hash をリセット
+  ├─ metrics_collector.reset()
+  ├─ kv_event_queue.append(AllBlocksCleared())
+  └─ return True
+</code></pre>
+<h2 id="kv-cache-events-deep-verified"><a class="header" href="#kv-cache-events-deep-verified">KV Cache Events [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:177-178, 480-490</code></p>
+<p>KV Transfer（Disaggregated Prefill）連携のためのイベントシステム。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>イベント型</th><th>発行タイミング</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>BlockStored</code></td><td><code>cache_full_blocks()</code></td><td>新規ブロックがキャッシュ登録された</td></tr>
+<tr><td><code>BlockRemoved</code></td><td><code>_maybe_evict_cached_block()</code></td><td>ブロックがキャッシュから除去された</td></tr>
+<tr><td><code>AllBlocksCleared</code></td><td><code>reset_prefix_cache()</code></td><td>全キャッシュがリセットされた</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-python">def take_events(self) -&gt; list[KVCacheEvent]:
+    """アトミックにイベントキューを排出"""
+    events = self.kv_event_queue
+    self.kv_event_queue = []  # 新規リストで置換（参照スワップ）
+    return events
+</code></pre>
+<h2 id="キャッシュ使用率-verified"><a class="header" href="#キャッシュ使用率-verified">キャッシュ使用率 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:467</code></p>
+<pre><code class="language-python">def get_usage(self) -&gt; float:
+    total_gpu_blocks = self.num_gpu_blocks - 1  # null_block を除外
+    return 1.0 - (self.get_num_free_blocks() / total_gpu_blocks)
+</code></pre>
+<p>null_block は常に「使用中」だが、使用率の計算からは除外される。</p>
+<h2 id="メトリクス収集-deep-verified"><a class="header" href="#メトリクス収集-deep-verified">メトリクス収集 [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_metrics.py:46</code></p>
+<p><code>KVCacheMetricsCollector</code> はサンプリングベースのブロック滞留メトリクスを収集する。</p>
+<h3 id="blockmetricsstate"><a class="header" href="#blockmetricsstate">BlockMetricsState</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_metrics.py:16</code></p>
+<p>個別ブロックのライフサイクル指標:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>birth_time_ns</code></td><td>割り当て時刻（<code>time.monotonic_ns()</code>）</td></tr>
+<tr><td><code>last_access_ns</code></td><td>最終アクセス時刻</td></tr>
+<tr><td><code>access_history</code></td><td>アクセス履歴（最大4件、<code>deque(maxlen=4)</code>）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="サンプリング"><a class="header" href="#サンプリング">サンプリング</a></h3>
+<pre><code class="language-python">sample_rate: float = 0.01  # デフォルト1%
+def should_sample_block(self) -&gt; bool:
+    return random.random() &lt; self.sample_rate
+</code></pre>
+<p>全ブロックを追跡するとオーバーヘッドが大きいため、割り当て時に確率的にサンプリングする。サンプリングされたブロックのみ <code>BlockMetricsState</code> が生成される。</p>
+<h3 id="イベントフック"><a class="header" href="#イベントフック">イベントフック</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フック</th><th>タイミング</th><th>処理</th></tr>
+</thead>
+<tbody>
+<tr><td><code>on_block_allocated(block)</code></td><td><code>get_new_blocks()</code></td><td>サンプル判定、<code>BlockMetricsState</code> 生成</td></tr>
+<tr><td><code>on_block_accessed(block)</code></td><td><code>touch()</code></td><td><code>record_access()</code> 呼び出し</td></tr>
+<tr><td><code>on_block_evicted(block)</code></td><td><code>_maybe_evict_cached_block()</code></td><td><code>KVCacheEvictionEvent</code> を生成・蓄積</td></tr>
+</tbody>
+</table>
+</div>
+<p>Eviction 時に生成される <code>KVCacheEvictionEvent</code> には <code>lifetime_seconds</code>、<code>idle_seconds</code>、<code>reuse_gaps_seconds</code> が含まれ、<code>drain_events()</code> で一括取得できる。</p>
+<h2 id="blockpool-初期化-verified"><a class="header" href="#blockpool-初期化-verified">BlockPool 初期化 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:147</code></p>
+<pre><code class="language-python">def __init__(self, num_gpu_blocks, enable_caching, hash_block_size,
+             enable_kv_cache_events=False, metrics_collector=None):
+    self.blocks = [KVCacheBlock(idx) for idx in range(num_gpu_blocks)]
+    self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
+    self.cached_block_hash_to_block = BlockHashToBlockMap()
+    self.null_block = self.free_block_queue.popleft()  # block_id=0
+    self.null_block.is_null = True
+</code></pre>
+<ul>
+<li><code>hash_block_size</code>: ハッシュ計算に使うブロックサイズ。通常は実際のブロックサイズと一致するが、Hybrid モデル（異なるブロックサイズの KV キャッシュグループ）では異なる場合がある</li>
+<li><code>enable_kv_cache_events</code>: KV Transfer 連携用のイベント発行を有効化</li>
+<li><code>metrics_collector</code>: サンプリングベースの滞留メトリクス収集（オプション）</li>
+</ul>
+<h2 id="関連ドキュメント-6"><a class="header" href="#関連ドキュメント-6">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></li>
+<li><a href="#プレフィックスキャッシュ詳細">プレフィックスキャッシュ詳細</a></li>
+<li><a href="#アテンションタイプ別-manager-詳細">アテンションタイプ別 Manager</a></li>
+<li><a href="#scheduler-サマリー">Scheduler</a></li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="プレフィックスキャッシュ詳細"><a class="header" href="#プレフィックスキャッシュ詳細">プレフィックスキャッシュ詳細</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要-11"><a class="header" href="#概要-11">概要</a></h2>
+<p>プレフィックスキャッシュは、異なるリクエスト間で共通するプロンプトプレフィックスの KV キャッシュブロックを再利用する機構である。トークン列をブロック単位でハッシュ化し、ハッシュチェーン（各ブロックのハッシュが前のブロックのハッシュに依存）を構築することで、プレフィックスの最長一致を効率的に検索する。</p>
+<h2 id="ハッシュチェーン計算-deep-verified"><a class="header" href="#ハッシュチェーン計算-deep-verified">ハッシュチェーン計算 [DEEP] [VERIFIED]</a></h2>
+<h3 id="hash_block_tokens"><a class="header" href="#hash_block_tokens">hash_block_tokens()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:525</code></p>
+<p>各ブロックのハッシュは 3 要素のタプルから計算される:</p>
+<pre><code class="language-python">def hash_block_tokens(hash_function, parent_block_hash, curr_block_token_ids,
+                      extra_keys=None) -&gt; BlockHash:
+    if not parent_block_hash:
+        parent_block_hash = NONE_HASH      # 先頭ブロック用のシード
+    curr_block_token_ids_tuple = tuple(curr_block_token_ids)
+    return BlockHash(
+        hash_function((parent_block_hash, curr_block_token_ids_tuple, extra_keys))
+    )
+</code></pre>
+<p><strong>ハッシュ入力の 3 要素</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>要素</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>parent_block_hash</code></td><td>前ブロックのハッシュ（先頭ブロックは <code>NONE_HASH</code>）</td></tr>
+<tr><td><code>curr_block_token_ids_tuple</code></td><td>現ブロックのトークン ID 列（tuple 化）</td></tr>
+<tr><td><code>extra_keys</code></td><td>LoRA、マルチモーダル、cache_salt、prompt_embeds（後述）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="チェーン依存性"><a class="header" href="#チェーン依存性">チェーン依存性</a></h3>
+<pre><code>Block 0: hash(NONE_HASH, tokens[0:B], extra)   → H0
+Block 1: hash(H0,        tokens[B:2B], extra)  → H1
+Block 2: hash(H1,        tokens[2B:3B], extra) → H2
+  ...
+</code></pre>
+<p><strong>なぜチェーンか</strong>: 各ハッシュが全ての先行ブロックに依存するため、プレフィックスが異なれば後続のハッシュも必ず異なる。これにより左から右へのスキャンで「最初のミスで停止」すれば最長プレフィックス一致が得られる。</p>
+<h3 id="none_hash"><a class="header" href="#none_hash">NONE_HASH</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:77</code></p>
+<p>チェーンの起点となるシード値:</p>
+<pre><code class="language-python">def init_none_hash(hash_fn):
+    hash_seed = os.getenv("PYTHONHASHSEED")
+    if hash_seed is None:
+        NONE_HASH = BlockHash(os.urandom(32))    # ランダム 32 バイト
+    else:
+        NONE_HASH = BlockHash(hash_fn(hash_seed)) # 決定論的
+</code></pre>
+<ul>
+<li><strong>PYTHONHASHSEED 未設定</strong>: ランダムシード → プロセス間でハッシュが一致しない</li>
+<li><strong>PYTHONHASHSEED 設定済み</strong>: 決定論的 → プロセス間でハッシュを共有可能（KV Transfer で必要）</li>
+<li>CBOR ベースのハッシュ関数で PYTHONHASHSEED 未設定の場合は警告が出る</li>
+</ul>
+<h2 id="blockhash-型-deep-verified"><a class="header" href="#blockhash-型-deep-verified">BlockHash 型 [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:34</code></p>
+<h3 id="型階層"><a class="header" href="#型階層">型階層</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>型</th><th>定義</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>BlockHash</code></td><td><code>NewType("BlockHash", bytes)</code></td><td>ブロック単体のハッシュ値</td></tr>
+<tr><td><code>BlockHashWithGroupId</code></td><td><code>NewType("BlockHashWithGroupId", bytes)</code></td><td>ハッシュ + KV キャッシュグループ ID（4 バイト BE）</td></tr>
+<tr><td><code>ExternalBlockHash</code></td><td><code>bytes | int</code></td><td>外部向けハッシュ（後方互換性のための Union）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="blockhashwithgroupid-のパッキング"><a class="header" href="#blockhashwithgroupid-のパッキング">BlockHashWithGroupId のパッキング</a></h3>
+<pre><code class="language-python">def make_block_hash_with_group_id(block_hash, group_id):
+    return BlockHashWithGroupId(
+        block_hash + group_id.to_bytes(4, "big", signed=False)
+    )
+
+def get_block_hash(key):     return BlockHash(key[:-4])
+def get_group_id(key):       return int.from_bytes(key[-4:], "big")
+</code></pre>
+<p><strong>設計</strong>: tuple ではなく bytes 結合でパッキングすることで、Python オブジェクト生成を回避し、GC 負荷を低減。</p>
+<h2 id="ハッシュ関数-deep-verified"><a class="header" href="#ハッシュ関数-deep-verified">ハッシュ関数 [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/utils/hashing.py</code></p>
+<p>4 種類のハッシュ関数が利用可能:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>名前</th><th>シリアライゼーション</th><th>ハッシュ</th><th>出力サイズ</th><th>特徴</th></tr>
+</thead>
+<tbody>
+<tr><td><code>sha256</code></td><td>pickle</td><td>SHA-256</td><td>32 bytes</td><td>Python 依存</td></tr>
+<tr><td><code>sha256_cbor</code></td><td>CBOR (canonical)</td><td>SHA-256</td><td>32 bytes</td><td><strong>デフォルト</strong>。言語非依存・再現可能</td></tr>
+<tr><td><code>xxhash</code></td><td>pickle</td><td>xxh3_128</td><td>16 bytes</td><td>高速、Python 依存</td></tr>
+<tr><td><code>xxhash_cbor</code></td><td>CBOR (canonical)</td><td>xxh3_128</td><td>16 bytes</td><td>高速、言語非依存</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>デフォルト</strong>: <code>sha256_cbor</code> — CBOR の canonical モードにより、PYTHONHASHSEED に依存しないシリアライゼーションが可能。プロセス間でハッシュを共有する KV Transfer に適している。</p>
+<p>設定: <code>vllm_config.cache_config.prefix_caching_hash_algo</code></p>
+<h2 id="extra-keys-deep-verified"><a class="header" href="#extra-keys-deep-verified">Extra Keys [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:367</code></p>
+<p>同一トークン列でも異なる KV キャッシュを持つ場合に、追加情報をハッシュに含める。</p>
+<h3 id="必要判定"><a class="header" href="#必要判定">必要判定</a></h3>
+<pre><code class="language-python">def need_extra_keys(request):
+    return (bool(request.mm_features)           # マルチモーダル
+            or (request.lora_request is not None) # LoRA
+            or (request.cache_salt is not None))  # キャッシュソルト
+</code></pre>
+<h3 id="各-extra-key-の生成"><a class="header" href="#各-extra-key-の生成">各 Extra Key の生成</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>生成関数</th><th>行</th><th>内容</th><th>適用範囲</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_gen_mm_extra_hash_keys()</code></td><td>L387</td><td>MM 入力の <code>identifier</code></td><td>ブロックと重なる MM 入力のみ</td></tr>
+<tr><td><code>_gen_lora_extra_hash_keys()</code></td><td>L451</td><td>LoRA アダプタの <code>lora_name</code></td><td>全ブロック共通</td></tr>
+<tr><td><code>cache_salt</code></td><td>L508-509</td><td>ユーザー指定のキャッシュソルト</td><td><strong>先頭ブロックのみ</strong> (<code>start_token_idx == 0</code>)</td></tr>
+<tr><td><code>_gen_prompt_embeds_extra_hash_keys()</code></td><td>L466</td><td>プロンプト埋め込みの生テンソルバイト</td><td>ブロック範囲分のスライス</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="結合順序"><a class="header" href="#結合順序">結合順序</a></h3>
+<pre><code class="language-python">extra_keys = lora_extra_keys + mm_extra_keys + cache_salt_keys + prompt_embeds_keys
+</code></pre>
+<p>空の場合は <code>None</code> を返し、ハッシュ計算の <code>extra_keys</code> 引数として渡される。</p>
+<h3 id="マルチモーダル-extra-keys-の詳細"><a class="header" href="#マルチモーダル-extra-keys-の詳細">マルチモーダル Extra Keys の詳細</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:387</code></p>
+<p><code>_gen_mm_extra_hash_keys()</code> はブロックの [start, end) トークン範囲と MM 入力の [offset, offset+length) 範囲の重なりを検出する:</p>
+<pre><code>MM入力: [offset ─────── offset+length]
+Block:         [start ──── end]
+               ↑ 重なりあり → identifier を extra_keys に追加
+</code></pre>
+<ul>
+<li><code>mm_features</code> は <code>mm_position.offset</code> でソート済みと仮定</li>
+<li><code>start_mm_idx</code> で走査位置を追跡し、毎回先頭から検索しない</li>
+<li><code>start_mm_idx = -1</code> は「最後の MM 入力」を示す（生成トークンが増えるデコードフェーズで使用）</li>
+</ul>
+<h2 id="リクエストブロックハッシャー-deep-verified"><a class="header" href="#リクエストブロックハッシャー-deep-verified">リクエストブロックハッシャー [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:555</code></p>
+<h3 id="ファクトリ関数"><a class="header" href="#ファクトリ関数">ファクトリ関数</a></h3>
+<pre><code class="language-python">def get_request_block_hasher(block_size, caching_hash_fn):
+    def request_block_hasher(request) -&gt; list[BlockHash]:
+        start_token_idx = len(request.block_hashes) * block_size
+        # full ブロックのみハッシュ（不完全ブロックはスキップ）
+        if start_token_idx + block_size &gt; request.num_tokens:
+            return []
+        # ...ハッシュチェーンを走査して新規 full ブロックのハッシュを計算
+    return request_block_hasher
+</code></pre>
+<h3 id="遅延インクリメンタル計算"><a class="header" href="#遅延インクリメンタル計算">遅延・インクリメンタル計算</a></h3>
+<ol>
+<li><strong>初期化時</strong>: <code>Request.__init__()</code> で <code>block_hasher</code> が渡された場合、即座に <code>get_hash_new_full_blocks()</code> を呼び、プロンプトの full ブロック分のハッシュを計算</li>
+<li><strong>トークン追加時</strong>: <code>Request.append_output_token_ids()</code> で新トークンが追加されるたびに <code>get_hash_new_full_blocks()</code> を呼び、新たに full になったブロックのハッシュをインクリメンタルに追加</li>
+</ol>
+<pre><code class="language-python"># Request.__init__()
+self.block_hashes = self.get_hash_new_full_blocks()  # 初期ハッシュ
+
+# Request.append_output_token_ids()
+self.block_hashes.extend(self.get_hash_new_full_blocks())  # 増分追加
+</code></pre>
+<p><strong>制約</strong>: 不完全ブロック（最後のブロックが block_size 未満）はハッシュされない。これによりプレフィックスキャッシュは常にブロック境界単位で一致する。</p>
+<h3 id="チェーンの継続"><a class="header" href="#チェーンの継続">チェーンの継続</a></h3>
+<pre><code class="language-python">prev_block_hash_value = request.block_hashes[-1] if request.block_hashes else None
+</code></pre>
+<p>前回計算済みの最後のハッシュを <code>parent_block_hash</code> として使い、チェーンを継続する。</p>
+<h2 id="blockhashlistwithblocksize-deep-verified"><a class="header" href="#blockhashlistwithblocksize-deep-verified">BlockHashListWithBlockSize [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:1571</code></p>
+<p>Hybrid モデル（異なるブロックサイズの KV キャッシュグループ）でハッシュ粒度を変換するアダプタ。</p>
+<h3 id="動作原理"><a class="header" href="#動作原理">動作原理</a></h3>
+<pre><code>hash_block_size = 16, target_block_size = 32 の場合:
+
+元のハッシュ:  [H0, H1, H2, H3]  (各16トークン)
+変換後:        [H0+H1, H2+H3]     (各32トークン)
+                  ↑ bytes 結合
+</code></pre>
+<pre><code class="language-python">def _get_value_at(self, idx):
+    base = idx * self.scale_factor   # scale_factor = target / hash
+    end = base + self.scale_factor
+    merged_hash = self.block_hashes[base]
+    for i in range(base + 1, end):
+        merged_hash += self.block_hashes[i]  # bytes 結合
+    return BlockHash(merged_hash)
+</code></pre>
+<p><strong>遅延評価</strong>: アクセス時にのみ変換を実行。<code>__getitem__</code>、<code>__iter__</code>、<code>__len__</code> をサポートし、通常の <code>list[BlockHash]</code> と同じインターフェースで使える。</p>
+<h2 id="lookup-アルゴリズム-deep-verified"><a class="header" href="#lookup-アルゴリズム-deep-verified">Lookup アルゴリズム [DEEP] [VERIFIED]</a></h2>
+<p>プレフィックスキャッシュの検索は <code>SingleTypeKVCacheManager</code> のサブクラスごとに異なるアルゴリズムを持つ。</p>
+<h3 id="fullattentionmanager-左右スキャン"><a class="header" href="#fullattentionmanager-左右スキャン">FullAttentionManager: 左→右スキャン</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:401</code></p>
+<pre><code>for block_hash in block_hashes[:max_num_blocks]:
+    if cache hit:
+        computed_blocks.append(cached_block)
+    else:
+        break  ← 最初のミスで停止
+</code></pre>
+<ul>
+<li><strong>Downward-closed 性質</strong>: blocks[0..n] がヒットするなら blocks[0..n-1] も必ずヒットする</li>
+<li>EAGLE 使用時は最後のブロックを削除（hidden states が必要なため）</li>
+<li><code>alignment_tokens</code> でアライメント調整（Hybrid モデルでの LCM ブロックサイズ）</li>
+</ul>
+<h3 id="slidingwindowmanager-右左スキャン"><a class="header" href="#slidingwindowmanager-右左スキャン">SlidingWindowManager: 右→左スキャン</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:466</code></p>
+<pre><code>sliding_window_contiguous_blocks = ceil((sliding_window - 1) / block_size)
+
+for i in range(max_num_blocks - 1, -1, -1):  # 右→左
+    if cache hit:
+        computed_blocks[i] = cached_block
+        num_contiguous_blocks += 1
+        if num_contiguous_blocks &gt;= required:
+            break  ← ウィンドウ分の連続ブロック確保
+    else:
+        num_contiguous_blocks = 0  ← 連続性リセット
+</code></pre>
+<ul>
+<li><strong>連続ブロックが必須</strong>: Sliding Window Attention はウィンドウ内の連続したトークンにのみアテンションするため、不連続なブロックは使えない</li>
+<li><code>computed_blocks</code> は初期値として <code>null_block</code> で埋められ、ヒットした位置のみ実ブロックで置換される</li>
+<li>アライメントチェック: 右端のブロックがアライメント境界に合わない場合はスキップ</li>
+</ul>
+<h3 id="chunkedlocalattentionmanager"><a class="header" href="#chunkedlocalattentionmanager">ChunkedLocalAttentionManager</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:594</code></p>
+<p>チャンク境界でアテンションが分割されるモデル用。ウィンドウ外のブロックは null_block でパディングし、ウィンドウ内のみ左→右スキャンで検索する。</p>
+<h3 id="mambamanager-右左単一一致"><a class="header" href="#mambamanager-右左単一一致">MambaManager: 右→左、単一一致</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:744</code></p>
+<p>Mamba（線形アテンション）は最後の状態のみが必要なため、最初のヒットで即座に停止する。</p>
+<h3 id="hybridkvcachecoordinator-反復固定点"><a class="header" href="#hybridkvcachecoordinator-反復固定点">HybridKVCacheCoordinator: 反復固定点</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:448</code></p>
+<p>複数のアテンションタイプが混在する Hybrid モデルでは、各グループの最長ヒット長が相互に制約し合う:</p>
+<pre><code>hit_length = max_cache_hit_length
+
+while True:
+    curr_hit_length = hit_length
+    for each attention_group:
+        if is_full_attention and cached:
+            # Downward-closed: 既存結果を再利用
+            curr_hit_length = (curr_hit_length // block_size) * block_size
+        else:
+            hit = find_longest_cache_hit(curr_hit_length)
+            curr_hit_length = len(hit) * block_size
+
+    if curr_hit_length &gt;= hit_length:
+        break  ← 収束（もう減らない）
+    hit_length = curr_hit_length
+
+    if is_simple_hybrid:  # FullAttn + 1種のみ
+        break  ← 1回で十分
+</code></pre>
+<p><strong>収束保証</strong>: <code>hit_length</code> は単調減少するため、有限回で収束する。
+<strong>最適化</strong>: Full Attention は downward-closed なので、他グループの結果に合わせてカットするだけでよい。2グループの simple hybrid ケースでは 1 イテレーションで確定。</p>
+<h2 id="キャッシュ登録-deep-verified"><a class="header" href="#キャッシュ登録-deep-verified">キャッシュ登録 [DEEP] [VERIFIED]</a></h2>
+<h3 id="cache_full_blocks"><a class="header" href="#cache_full_blocks">cache_full_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:209</code></p>
+<p>計算済みの full ブロックをプレフィックスキャッシュに登録する。</p>
+<pre><code>cache_full_blocks(request, blocks, num_cached_blocks, num_full_blocks, ...)
+  │
+  ├─ num_cached_blocks &gt;= num_full_blocks → return（既に登録済み）
+  │
+  ├─ new_full_blocks = blocks[num_cached_blocks:num_full_blocks]
+  │
+  ├─ block_size == hash_block_size の場合:
+  │  └─ block_hashes = request.block_hashes（直接使用）
+  │
+  ├─ block_size != hash_block_size の場合:
+  │  └─ block_hashes = BlockHashListWithBlockSize(...)（粒度変換）
+  │
+  └─ 各 new_full_block について:
+     ├─ is_null → skip
+     ├─ assert block_hash is None（二重登録防止）
+     ├─ block_hash_with_group_id を生成
+     ├─ blk.block_hash = block_hash_with_group_id
+     ├─ cached_block_hash_to_block.insert(...)
+     └─ enable_kv_cache_events → BlockStored イベント発行
+</code></pre>
+<h3 id="num_cached_block-トラッキング"><a class="header" href="#num_cached_block-トラッキング">num_cached_block トラッキング</a></h3>
+<p><code>SingleTypeKVCacheManager</code> が <code>num_cached_block[request_id]</code> で各リクエストの登録済みブロック数を追跡する。<code>cache_blocks()</code> 呼び出し時に <code>num_cached_blocks &gt;= num_full_blocks</code> なら何もせず、新たに full になったブロックのみを登録する。</p>
+<h2 id="データフロー全体-verified"><a class="header" href="#データフロー全体-verified">データフロー全体 [VERIFIED]</a></h2>
+<pre><code>EngineCore.__init__()
+  └─ init_none_hash(hash_fn)        ← グローバル NONE_HASH 初期化
+  └─ get_request_block_hasher(...)   ← ハッシャークロージャ生成
+
+Request.__init__(block_hasher=...)
+  └─ block_hashes = get_hash_new_full_blocks()  ← プロンプトの full ブロックを即時ハッシュ
+
+Request.append_output_token_ids()
+  └─ block_hashes.extend(get_hash_new_full_blocks())  ← 増分ハッシュ
+
+Scheduler.schedule()
+  ├─ kv_cache_manager.get_computed_blocks(request)
+  │  └─ coordinator.find_longest_cache_hit(request.block_hashes, max_length)
+  │     └─ block_pool.get_cached_block(hash, group_ids)
+  │        └─ BlockHashToBlockMap.get_one_block(hash_with_group_id)
+  │
+  └─ kv_cache_manager.allocate_slots(request, ...)
+     └─ coordinator.cache_blocks(request, num_tokens_to_cache)
+        └─ block_pool.cache_full_blocks(request, blocks, ...)
+           └─ BlockHashToBlockMap.insert(hash_with_group_id, block)
+</code></pre>
+<h2 id="関連ドキュメント-7"><a class="header" href="#関連ドキュメント-7">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#kvcachemanager-サマリー">KVCacheManager サマリー</a></li>
+<li><a href="#blockpool-詳細">BlockPool 詳細</a></li>
+<li><a href="#アテンションタイプ別-manager-詳細">アテンションタイプ別 Manager</a></li>
+<li><a href="#用語集">用語集</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="outputprocessor"><a class="header" href="#outputprocessor">OutputProcessor</a></h1>
@@ -1878,7 +2995,7 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
+<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
 <p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、バックエンド（EngineCore）からZMQ経由で受信した<code>EngineCoreOutput</code>を、ユーザー向けの<code>RequestOutput</code>に変換する。主な処理はインクリメンタルデトークナイズ、停止文字列判定、logprobs処理である。AsyncLLMの<code>output_handler</code>バックグラウンドタスクから呼び出される。</p>
 <h2 id="process_outputs-フロー"><a class="header" href="#process_outputs-フロー">process_outputs() フロー</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
@@ -2032,7 +3149,7 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
+<h2 id="概要-13"><a class="header" href="#概要-13">概要</a></h2>
 <p><code>Scheduler</code>はContinuous Batchingの中核コンポーネントであり、各ステップでどのリクエストにどれだけのトークンを計算させるかを決定する。<code>schedule()</code>メソッドは3フェーズ（RUNNING処理 → WAITING処理 → Output構築）で構成され、トークン予算の範囲内で最大限のリクエストをスケジュールする。Unified Compute Modelを採用し、Prefill/Decodeを明示的に区別せず <code>num_computed_tokens</code> の進捗で統一的に管理する。</p>
 <h2 id="アーキテクチャ-5"><a class="header" href="#アーキテクチャ-5">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
@@ -2248,7 +3365,7 @@ EngineCore.step()
   ├─ executor.execute_model(scheduler_output)     # GPU実行
   └─ scheduler.update_from_output(output)         # → EngineCoreOutputs
 </code></pre>
-<h2 id="関連ドキュメント-5"><a class="header" href="#関連ドキュメント-5">関連ドキュメント</a></h2>
+<h2 id="関連ドキュメント-8"><a class="header" href="#関連ドキュメント-8">関連ドキュメント</a></h2>
 <ul>
 <li><a href="#kvcachemanager-サマリー">KVCacheManager</a></li>
 <li><a href="#enginecore-サマリー">EngineCore</a></li>
@@ -2329,6 +3446,27 @@ EngineCore.step()
 <h3 id="mm_cache-マルチモーダルキャッシュ"><a class="header" href="#mm_cache-マルチモーダルキャッシュ">mm_cache (マルチモーダルキャッシュ)</a></h3>
 <p>マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py</code></p>
+<h3 id="freekvcacheblockqueue"><a class="header" href="#freekvcacheblockqueue">FreeKVCacheBlockQueue</a></h3>
+<p>空きKVキャッシュブロックをLRU順序で管理する双方向リンクリスト。Pythonの<code>deque</code>ではなく独自実装を採用し、O(1)の中間要素削除をサポートする。センチネルノード（fake_head/fake_tail）を使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></p>
+<h3 id="blockhashwithgroupid"><a class="header" href="#blockhashwithgroupid">BlockHashWithGroupId</a></h3>
+<p><code>BlockHash</code>（ブロックのハッシュ値）にKVキャッシュグループID（4バイトBE）を結合したバイト列。Tuple生成を避けてGC負荷を低減する。プレフィックスキャッシュのキーとして使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:39</code></p>
+<h3 id="null_block"><a class="header" href="#null_block">null_block</a></h3>
+<p>BlockPoolが保持する特殊なKVCacheBlock（block_id=0, is_null=True）。Sliding Window Attentionのウィンドウ外位置やMambaのスキップ位置を埋めるプレースホルダ。物理メモリを消費せず、解放・Eviction対象外。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:174</code></p>
+<h3 id="kvcachecoordinator"><a class="header" href="#kvcachecoordinator">KVCacheCoordinator</a></h3>
+<p>複数のKVキャッシュグループ（異なるアテンションタイプのレイヤー群）を統括する抽象クラス。NoPrefixCache、Unitary（単一グループ）、Hybrid（複数グループ）の3実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:28</code></p>
+<h3 id="singletypekvcachemanager"><a class="header" href="#singletypekvcachemanager">SingleTypeKVCacheManager</a></h3>
+<p>1種類のアテンションタイプのKVキャッシュ管理ロジックを担当する抽象基底クラス。FullAttention、SlidingWindow、ChunkedLocalAttention、Mamba、CrossAttention、SinkFullAttentionの7実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></p>
+<h3 id="cascade-attention"><a class="header" href="#cascade-attention">Cascade Attention</a></h3>
+<p>全リクエストで共有される共通プレフィックスの再計算をスキップする最適化。<code>get_num_common_prefix_blocks()</code>で共通ブロック数を判定し、アテンション計算から除外する。</p>
+<h3 id="sliding-window-attention"><a class="header" href="#sliding-window-attention">Sliding Window Attention</a></h3>
+<p>各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは<code>null_block</code>で置換されメモリを節約する。</p>
+<h3 id="attention-sink-streamingllm"><a class="header" href="#attention-sink-streamingllm">Attention Sink (StreamingLLM)</a></h3>
+<p>先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。<code>SinkFullAttentionManager</code>が実装。</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ファイル索引"><a class="header" href="#ファイル索引">ファイル索引</a></h1>
 
