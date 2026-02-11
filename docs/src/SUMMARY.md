@@ -32,6 +32,13 @@
 - [OutputProcessor](components/output-processor/summary.md)
 - [Scheduler サマリー](components/scheduler/summary.md)
 
+
+---
+
+# 調査報告
+
+- [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](investigations/gemma3-vision-pipeline.md)
+
 ---
 
 # 付録
