@@ -160,7 +160,19 @@ GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一
 | CUDAGraph統合 | `_model_forward()`, CUDAGraphランナー | 中 |
 | サンプリング実装 | `_sample()`, Sampler | 低 |
 | KV Transfer連携 | `KVConnectorModelRunnerMixin` | 高（ユーザー関心2位） |
-| マルチモーダル入力 | エンコーダ処理、mm_cache | 高（ユーザー関心3位） |
+| マルチモーダル入力 | エンコーダ処理、mm_cache | 高（ユーザー関心3位） → **Phase 2bで調査済み** |
+
+## マルチモーダル処理
+
+マルチモーダル推論時、GPUModelRunnerは `execute_model()` 内で以下の追加処理を行う:
+
+1. **`_execute_mm_encoder()`** (L2293): `model.embed_multimodal()` でビジョンエンコーダ実行。結果を `encoder_cache[mm_hash]` に格納
+2. **`_gather_mm_embeddings()`** (L2449): `encoder_cache` からスケジュール範囲に対応する埋め込みをスライス。チャンクPrefill対応
+3. **`embed_input_ids()`**: `masked_scatter_` でテキスト + ビジョン埋め込みをマージ → `inputs_embeds` として model.forward() に渡す
+
+`encoder_cache: dict[str, torch.Tensor]` はGPU上のシンプルなdictキャッシュで、Schedulerの `free_encoder_mm_hashes` 指示で解放される。
+
+詳細は [バックエンド MM処理パス](../multimodal/mm-engine-gpu.md) を参照。
 
 ## 主要ファイル
 

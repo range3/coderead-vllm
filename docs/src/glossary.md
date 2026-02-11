@@ -150,3 +150,38 @@ BlockPoolが保持する特殊なKVCacheBlock（block_id=0, is_null=True）。Sl
 
 ### Attention Sink (StreamingLLM)
 先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。`SinkFullAttentionManager`が実装。
+
+### MultiModalFeatureSpec
+マルチモーダル入力1つ分のメタデータとテンソルデータを保持するデータクラス。`data`（処理済みテンソル、キャッシュヒット時はNone）、`identifier`（エンコーダキャッシュ用ハッシュ）、`mm_position`（PlaceholderRange）、`modality`（"image"等）を含む。
+
+**参照**: `target/vllm/vllm/multimodal/inputs.py:337`
+
+### PlaceholderRange
+プロンプト内のマルチモーダルプレースホルダーの位置情報。`offset`（開始位置）、`length`（トークン数）、`is_embed`（埋め込みマスク）を保持。
+
+**参照**: `target/vllm/vllm/multimodal/inputs.py:170`
+
+### MultiModalHasher
+マルチモーダルデータのコンテンツベースハッシュを計算するクラス。PIL Image、Tensor、ndarray等を決定的にシリアライズし、blake3（デフォルト）でハッシュ化する。
+
+**参照**: `target/vllm/vllm/multimodal/hasher.py:50`
+
+### ProcessorCache (MM)
+フロントエンド（P0）でHF Processor処理結果をキャッシュする仕組み。4種類の実装（processor_only/lru/shm/none）があり、P0-P1間のキャッシュEviction順序を同期させることでIPCなしにキャッシュ状態を推定できる。
+
+**参照**: `target/vllm/vllm/multimodal/cache.py`
+
+### EncoderCacheManager
+バックエンド（P1）でビジョンエンコーダ出力のライフサイクルを管理するクラス。リファレンスカウント方式で複数リクエスト間のキャッシュ共有を実現し、FIFO順の遅延Evictionを行う。
+
+**参照**: `target/vllm/vllm/v1/core/encoder_cache_manager.py:17`
+
+### SiglipVisionModel
+SIGLIP（Sigmoid Loss for Language Image Pre-training）ベースのViTビジョンエンコーダ。Gemma3のビジョンタワーとして使用される。パッチ埋め込み + 位置埋め込み → Transformer Encoder（双方向Attention）の構造。
+
+**参照**: `target/vllm/vllm/model_executor/models/siglip.py:848`
+
+### Pan-and-Scan
+アスペクト比が大きい画像を複数のクロップに分割して詳細認識を向上させるGemma3の仕組み。V1では簡略化されたアテンションパターンのため最適でない結果になりうる。
+
+**参照**: `target/vllm/vllm/model_executor/models/gemma3_mm.py:109`

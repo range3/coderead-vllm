@@ -5,7 +5,7 @@
 ## 優先
 
 - [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？
-- [ ] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？
+- [x] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？ — **回答**: MMキャッシュはKVCacheManagerとは独立。ProcessorCache（P0、HF処理結果）とEncoderCacheManager（P1、エンコーダ出力の論理管理）+ encoder_cache（GPU、テンソル）の3層構造。KVCacheManagerはデコーダ側のKVキャッシュのみ管理。ただしプレフィックスキャッシュのExtra Keysとしてmm_hashが使われ、同じ画像のリクエストはKVキャッシュのプレフィックスも共有可能。詳細は `docs/src/components/multimodal/summary.md`
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
 - [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？（block_idsがSchedulerOutputに含まれ、GPUModelRunnerに渡される。詳細はGPUModelRunner深堀りで調査）
 - [ ] FastIncrementalDetokenizer vs SlowIncrementalDetokenizer の実際のパフォーマンス差は？
@@ -32,3 +32,6 @@
 - [x] プリエンプション発生のメモリ圧力閾値の具体的な決定方法 — **回答**: 明示的な閾値はない。allocate_slots()で `num_blocks_to_allocate > block_pool.get_num_free_blocks()` の場合にNoneを返し、Schedulerがプリエンプション（RUNNING）またはスキップ（WAITING）を実行。空きブロック数は動的に変化し、Evictionも含めた現在の空き状況で判定。詳細は `docs/src/components/kv-cache-manager/summary.md`
 - [ ] HybridKVCacheCoordinatorの反復固定点アルゴリズムは実際のモデルで何回イテレーションするか？
 - [ ] BlockHashToBlockMapのUnion型最適化の実測パフォーマンス差は？
+- [ ] ProcessorCacheのshm（共有メモリ）モードのSingleWriterShmRingBufferの具体的な動作は？
+- [ ] マルチモーダルのプレフィックスキャッシュとProcessorCacheの相互作用の詳細は？（同じ画像のリクエストでKVキャッシュヒットする条件）
+- [ ] 複数画像入力時のエンコーダバッチ処理のパフォーマンス特性は？

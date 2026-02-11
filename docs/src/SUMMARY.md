@@ -25,6 +25,10 @@
   - [アテンションタイプ別 Manager 詳細](components/kv-cache-manager/attention-type-managers.md)
   - [BlockPool 詳細](components/kv-cache-manager/block-pool.md)
   - [プレフィックスキャッシュ詳細](components/kv-cache-manager/prefix-cache.md)
+- [マルチモーダル処理パイプライン サマリー](components/multimodal/summary.md)
+  - [Gemma3 ビジョンエンコーダと画像処理 [MEDIUM] [VERIFIED]](components/multimodal/gemma3-vision.md)
+  - [バックエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]](components/multimodal/mm-engine-gpu.md)
+  - [フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]](components/multimodal/mm-processing.md)
 - [OutputProcessor](components/output-processor/summary.md)
 - [Scheduler サマリー](components/scheduler/summary.md)
 

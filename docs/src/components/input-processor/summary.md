@@ -78,7 +78,20 @@ AsyncLLM.add_request() / LLM._add_request()
     → 内部ID（外部ID + 8文字ランダム）を request_id に設定
 ```
 
+## マルチモーダル処理
+
+テキスト入力に加えて画像等のマルチモーダルデータがある場合、InputProcessorは以下の追加処理を行う:
+
+1. **MM Registry から `BaseMultiModalProcessor` を取得**（`_get_mm_processor()`）
+2. **マルチモーダルデータのパース**: `mm_processor.info.parse_mm_data()` → `MultiModalDataItems`
+3. **HF Processor 実行**: `mm_processor.apply()` → `MultiModalInputs`（トークン列 + テンソル + ハッシュ + PlaceholderRange）
+4. **ProcessorCache**: `mm_processor_cache` によるHF処理結果のキャッシュ（4種類: processor_only/lru/shm/none）
+5. **MultiModalFeatureSpec 構築**: データ + 位置情報 + ハッシュを `EngineCoreRequest.mm_features` にセット
+
+詳細は [マルチモーダル フロントエンド処理](../multimodal/mm-processing.md) を参照。
+
 ## 関連ドキュメント
 
 - [エントリポイント](../entrypoint/summary.md)
 - [データフロー](../../architecture/data-flow.md)
+- [マルチモーダル処理パイプライン](../multimodal/summary.md)

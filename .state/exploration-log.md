@@ -2,7 +2,7 @@
 
 ## 現在のフェーズ
 
-Phase 2: コンポーネント別深堀り（KVCacheManager DEEP 完了）
+Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了）
 
 ## カバレッジマップ
 
@@ -21,7 +21,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP 完了）
 | OutputProcessor | [SHALLOW] | 2026-02-11 | `docs/src/components/output-processor/summary.md` |
 | モデル層 | [SHALLOW] | 2026-02-09 | `docs/src/architecture/overview.md` |
 | KV Transfer/LMCache | [SHALLOW] | 2026-02-09 | `docs/src/glossary.md` |
-| マルチモーダル | [SHALLOW] | 2026-02-09 | `docs/src/glossary.md` |
+| マルチモーダル | [MEDIUM] | 2026-02-11 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
 
 ## セッション履歴
 
@@ -32,3 +32,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP 完了）
 | 2026-02-11 | 1b | コアループ追跡: EngineCore.step()→Scheduler→KVCacheManager | `.state/sessions/20260211-phase1b-core-loop.md` |
 | 2026-02-11 | 1c | 下流パス追跡: Executor→Worker→GPUModelRunner→OutputProcessor | `.state/sessions/20260211-phase1c-downstream-path.md` |
 | 2026-02-11 | 2a | KVCacheManager深堀り: BlockPool、プレフィックスキャッシュ、アテンションタイプ別Manager（7種）。[MEDIUM]→[DEEP] | `.state/sessions/20260211-phase2a-kvcache-deep.md` |
+| 2026-02-11 | 2b | マルチモーダル画像推論パス: ProcessorCache(4種)、MMHasher、EncoderCacheManager、GPUModelRunnerエンコーダ実行、Gemma3(SiglipVisionModel+Projector)、masked_scatter_マージ。[SHALLOW]→[MEDIUM] | `.state/sessions/20260211-phase2b-multimodal.md` |

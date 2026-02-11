@@ -2,7 +2,7 @@
 
 > **深度**: [MEDIUM]
 > **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-11 (セッション3で下流パス追加)
+> **最終更新**: 2026-02-11 (Phase 2bでマルチモーダル差分追加)
 
 ## 概要
 
@@ -697,3 +697,25 @@ Phase 2での深堀り順序。ユーザー関心領域とフロー上の重要�
 | `target/vllm/vllm/v1/engine/detokenizer.py` | `IncrementalDetokenizer` (L30), `FastIncrementalDetokenizer` (L169), `check_stop_strings()` (L316) | デトークナイズ |
 | `target/vllm/vllm/v1/engine/logprobs.py` | `LogprobsProcessor` (L28) | logprobs処理 |
 | `target/vllm/vllm/outputs.py` | `RequestOutput` (L86), `CompletionOutput` (L23) | 最終出力データ構造 |
+
+## マルチモーダル推論パスの差分
+
+テキスト推論フローに対し、画像等のマルチモーダル入力がある場合の主要な差分を以下に示す。詳細は [マルチモーダル処理パイプライン](../components/multimodal/summary.md) を参照。
+
+### フロントエンド（P0）の差分
+
+1. **チャットテンプレート**: プレースホルダー（`<start_of_image>` 等）がプロンプトに挿入される
+2. **HF Processor実行**: 画像を `pixel_values` テンソルに変換（リサイズ、正規化、パッチ分割）
+3. **MMハッシュ計算**: `MultiModalHasher` でコンテンツベースのblake3ハッシュを生成
+4. **ProcessorCache**: HF処理結果をキャッシュ（4種類の実装: processor_only/lru/shm/none）
+5. **EngineCoreRequest**: `mm_features: list[MultiModalFeatureSpec]` にテンソルデータ・位置情報・ハッシュを格納
+
+### バックエンド（P1）の差分
+
+1. **EncoderCacheManager**: エンコーダ出力をリファレンスカウント方式で管理。キャッシュヒットでエンコーダ計算スキップ
+2. **Scheduler**: `encoder_compute_budget` でステップあたりのエンコーダ計算量を制御
+3. **GPUModelRunner**:
+   - `_execute_mm_encoder()`: ビジョンエンコーダ実行（`model.embed_multimodal()`）
+   - `_gather_mm_embeddings()`: キャッシュからプレースホルダー位置に対応する埋め込みを取得
+   - `embed_input_ids()`: `masked_scatter_` でテキスト埋め込みとビジョン埋め込みをマージ
+4. **モデルforward**: `input_ids` ではなく `inputs_embeds`（マージ済み）が渡される
