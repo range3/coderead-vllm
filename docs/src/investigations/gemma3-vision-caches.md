@@ -4,6 +4,8 @@
 
 [gemma3-vision-pipeline.md](gemma3-vision-pipeline.md) で追跡した Gemma3 27B ビジョンパイプライン上には、3つの独立したキャッシュ層が存在する。各キャッシュは異なるステップの重い処理をスキップし、同一画像の再利用や同一プロンプトの再送時に大幅な計算量削減を実現する。
 
+> **関連**: EncoderCache の永続化・階層キャッシュ化については [encoder-cache-persistence.md](encoder-cache-persistence.md) を参照。
+
 ---
 
 ## 1. パイプラインとキャッシュの位置関係

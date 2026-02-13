@@ -2,7 +2,7 @@
 
 ## 現在のフェーズ
 
-Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了）
+Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了、ECConnector調査完了）
 
 ## カバレッジマップ
 
@@ -21,6 +21,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | OutputProcessor | [SHALLOW] | 2026-02-11 | `docs/src/components/output-processor/summary.md` |
 | モデル層 | [SHALLOW] | 2026-02-09 | `docs/src/architecture/overview.md` |
 | KV Transfer/LMCache | [SHALLOW] | 2026-02-09 | `docs/src/glossary.md` |
+| ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/investigations/encoder-cache-persistence.md` |
 | マルチモーダル | [MEDIUM] | 2026-02-11 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
 
 ## セッション履歴
@@ -35,3 +36,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-11 | 2b | マルチモーダル画像推論パス: ProcessorCache(4種)、MMHasher、EncoderCacheManager、GPUModelRunnerエンコーダ実行、Gemma3(SiglipVisionModel+Projector)、masked_scatter_マージ。[SHALLOW]→[MEDIUM] | `.state/sessions/20260211-phase2b-multimodal.md` |
 | 2026-02-11 | 2b+ | Gemma3ビジョンパイプライン形状フロー調査（外部調査）。HFモデル設定・transformersコード配置。config.json導出値、Pan-and-Scan 2ケース比較 | `docs/src/investigations/gemma3-vision-pipeline.md` |
 | 2026-02-11 | 2b++ | Gemma3ビジョンパイプラインのキャッシュ機構調査。ProcessorCache(CPU/blake3)、EncoderCache(GPU/identifier)、KVプレフィックスキャッシュ(GPU/extra_keys)の3層。各キャッシュのハッシュ入力・保存値・スキップ処理を特定 | `docs/src/investigations/gemma3-vision-caches.md` |
+| 2026-02-14 | 2c | EncoderCache永続化・階層キャッシュ化の実現可能性調査。ECConnector既存インフラの発見（KV Transferとは独立した専用枠組み）。FIFO→LRU変更は1ファイル。ECExampleConnector参照実装分析。カスタムECConnector実装ガイド | `docs/src/investigations/encoder-cache-persistence.md` |

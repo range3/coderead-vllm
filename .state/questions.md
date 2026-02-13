@@ -4,7 +4,7 @@
 
 ## 優先
 
-- [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？
+- [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？ — **部分回答**: LMCacheはKV形状`(num_layer, 2, chunk_size, num_kv_heads, head_size)`を前提としたチャンク単位保存。NixlはRDMA。P2P NCCLはNCCL接続。Mooncakeはmooncake統合。OffloadingConnectorはCPU/ディスクオフロード。コネクタ一覧は `encoder-cache-persistence.md` セクション4参照。なお、ECConnector（ec_transfer/）はKV Transferとは完全に独立した系統でエンコーダキャッシュ専用
 - [x] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？ — **回答**: MMキャッシュはKVCacheManagerとは独立。ProcessorCache（P0、HF処理結果）とEncoderCacheManager（P1、エンコーダ出力の論理管理）+ encoder_cache（GPU、テンソル）の3層構造。KVCacheManagerはデコーダ側のKVキャッシュのみ管理。ただしプレフィックスキャッシュのExtra Keysとしてmm_hashが使われ、同じ画像のリクエストはKVキャッシュのプレフィックスも共有可能。詳細は `docs/src/components/multimodal/summary.md`
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
 - [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？（block_idsがSchedulerOutputに含まれ、GPUModelRunnerに渡される。詳細はGPUModelRunner深堀りで調査）
