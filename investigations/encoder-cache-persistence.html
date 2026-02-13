@@ -1,0 +1,696 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>EncoderCache 永続化と階層キャッシュ: 調査報告 - コードリーディング: vLLM</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-2459343d.css">
+        <link rel="stylesheet" href="../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-41320930.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-cdf86f5c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="encodercache-永続化と階層キャッシュ-調査報告"><a class="header" href="#encodercache-永続化と階層キャッシュ-調査報告">EncoderCache 永続化と階層キャッシュ: 調査報告</a></h1>
+<blockquote>
+<p><strong>ステータス</strong>: 調査完了 — ECConnector 既存インフラの発見により設計方針が確定
+<strong>作成日</strong>: 2026-02-14
+<strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>関連ドキュメント</strong>: <a href="./gemma3-vision-caches.html">Gemma3 ビジョンパイプライン: キャッシュ機構</a>、<a href="../components/multimodal/mm-engine-gpu.html">マルチモーダル バックエンド MM 処理</a></p>
+</blockquote>
+<hr>
+<h2 id="1-背景と動機"><a class="header" href="#1-背景と動機">1. 背景と動機</a></h2>
+<h3 id="現状の-encodercache"><a class="header" href="#現状の-encodercache">現状の EncoderCache</a></h3>
+<p>vLLM の EncoderCache は、ビジョンエンコーダ（例: SiglipVisionModel + Projector）の GPU 上の出力テンソルをキャッシュする。Gemma3 27B の場合、出力形状は <code>(N×256, 5376)</code> で、1 画像あたり約 2.6 MB（FP16）。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>現状</th></tr>
+</thead>
+<tbody>
+<tr><td>格納先</td><td>GPU メモリ（<code>gpu_model_runner.encoder_cache</code>）</td></tr>
+<tr><td>キャッシュキー</td><td><code>mm_hash</code> or <code>{lora_name}:{mm_hash}</code></td></tr>
+<tr><td>Eviction 方式</td><td><strong>FIFO</strong>（<code>OrderedDict.popitem(last=False)</code>）</td></tr>
+<tr><td>容量設定</td><td><code>encoder_cache_size</code>（エンベディング数単位）</td></tr>
+<tr><td>永続性</td><td>なし（プロセス終了で消失）</td></tr>
+<tr><td>管理</td><td><code>EncoderCacheManager</code>（CPU 側論理管理）+ <code>encoder_cache</code> dict（GPU 側物理格納）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code> (EncoderCacheManager)、<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:439</code> (encoder_cache dict)</p>
+<h3 id="rag-ユースケースにおける課題"><a class="header" href="#rag-ユースケースにおける課題">RAG ユースケースにおける課題</a></h3>
+<p>RAG では同一ドキュメント画像が異なるクエリから繰り返し参照される。</p>
+<ol>
+<li><strong>FIFO Eviction との相性の悪さ</strong>: 高頻度アクセス画像でも新しいエントリが来れば古い順に追い出される</li>
+<li><strong>GPU メモリの有限性</strong>: <code>encoder_cache_size</code> を大きくしてもデコーダ KV Cache と競合</li>
+<li><strong>再起動耐性がない</strong>: vLLM プロセス再起動で全キャッシュが消失</li>
+</ol>
+<h3 id="エンコーダ処理のコスト"><a class="header" href="#エンコーダ処理のコスト">エンコーダ処理のコスト</a></h3>
+<p>EncoderCache がスキップする GPU 上の処理:</p>
+<ul>
+<li>SiglipVisionModel: Conv2d + position_embedding + <strong>27 層 Transformer Encoder</strong>（双方向 Attention）+ post_layernorm</li>
+<li>Gemma3MultiModalProjector: AvgPool2d + GemmaRMSNorm + Linear(1152→5376)</li>
+<li>split + flatten</li>
+</ul>
+<p>RAG コーパスが数千〜数万画像規模の場合、毎回の再計算コストは無視できない。</p>
+<hr>
+<h2 id="2-重要な発見-ecconnector-既存インフラ"><a class="header" href="#2-重要な発見-ecconnector-既存インフラ">2. 重要な発見: ECConnector 既存インフラ</a></h2>
+<h3 id="kv-transfer-ではなく-ecconnector-が正解"><a class="header" href="#kv-transfer-ではなく-ecconnector-が正解">KV Transfer ではなく ECConnector が正解</a></h3>
+<p>当初の仮説では「KV Transfer の枠組み（LMCache 等）を活用」する方針だったが、調査の結果、<strong>エンコーダキャッシュの外部ストレージ永続化のために設計された専用インフラ「ECConnector」が既に存在</strong>することが判明した。</p>
+<h3 id="ecconnector-の全体像"><a class="header" href="#ecconnector-の全体像">ECConnector の全体像</a></h3>
+<pre><code>target/vllm/vllm/distributed/ec_transfer/
+  __init__.py                      -- get_ec_transfer(), has_ec_transfer()
+  ec_transfer_state.py             -- グローバルシングルトン管理
+  ec_connector/
+    __init__.py
+    base.py                        -- ECConnectorBase (抽象基底クラス)
+    factory.py                     -- ECConnectorFactory (プラグイン登録)
+    example_connector.py           -- ECExampleConnector (参照実装, 199行)
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/base.py:59</code> (ECConnectorBase)</p>
+<h3 id="ecconnectorbase-の抽象メソッド-verified"><a class="header" href="#ecconnectorbase-の抽象メソッド-verified">ECConnectorBase の抽象メソッド [VERIFIED]</a></h3>
+<p><code>ECConnectorBase</code> は <code>KVConnectorBase_V1</code> とは<strong>完全に独立</strong>した抽象基底クラス。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>分類</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start_load_caches(encoder_cache, **kwargs)</code></td><td>Worker</td><td>外部ストレージから <code>encoder_cache</code> dict にテンソルをロード</td></tr>
+<tr><td><code>save_caches(encoder_cache, mm_hash, **kwargs)</code></td><td>Worker</td><td><code>encoder_cache</code> から外部ストレージにテンソルを保存</td></tr>
+<tr><td><code>has_cache_item(identifier)</code></td><td>Scheduler</td><td>外部ストレージにキャッシュが存在するか確認</td></tr>
+<tr><td><code>update_state_after_alloc(request, index)</code></td><td>Scheduler</td><td>アロケーション後の内部状態更新</td></tr>
+<tr><td><code>build_connector_meta(scheduler_output)</code></td><td>Scheduler</td><td>Scheduler → Worker 間のメタデータ構築</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/base.py:126-224</code></p>
+<h3 id="ecconnector-の統合ポイント-verified"><a class="header" href="#ecconnector-の統合ポイント-verified">ECConnector の統合ポイント [VERIFIED]</a></h3>
+<p>既にGPUModelRunnerとSchedulerに統合済み:</p>
+<p><strong>Scheduler 側</strong> (<code>target/vllm/vllm/v1/core/sched/scheduler.py:1197-1203</code>):</p>
+<pre><code class="language-python">if self.ec_connector is not None and self.ec_connector.has_cache_item(
+    item_identifier
+):
+    mm_hashes_to_schedule.add(item_identifier)
+    external_load_encoder_input.append(i)
+    num_embeds_to_schedule += num_encoder_embeds
+    continue
+</code></pre>
+<p>→ ECConnector にキャッシュが存在する場合、エンコーダ計算バジェットを消費せず、ロード予約のみ行う。</p>
+<p><strong>Worker 側</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2444-2445</code>):</p>
+<pre><code class="language-python">self.encoder_cache[mm_hash] = output
+self.maybe_save_ec_to_connector(self.encoder_cache, mm_hash)
+</code></pre>
+<p>→ エンコーダ実行後、結果を GPU dict に格納すると同時に ECConnector にも保存。</p>
+<p><strong>Worker 側コンテキストマネージャ</strong> (<code>target/vllm/vllm/v1/worker/ec_connector_model_runner_mixin.py:62-85</code>):</p>
+<pre><code class="language-python">ec_connector.bind_connector_metadata(scheduler_output.ec_connector_metadata)
+if not ec_connector.is_producer:
+    ec_connector.start_load_caches(encoder_cache, **kwargs)
+try:
+    yield output   # _execute_mm_encoder() + _gather_mm_embeddings() が実行される
+finally:
+    output.finished_sending, output.finished_recving = (
+        ec_connector.get_finished(scheduler_output.finished_req_ids)
+    )
+    ec_connector.clear_connector_metadata()
+</code></pre>
+<p>→ <code>start_load_caches()</code> でストレージからロード → エンコーダ実行（ロード済みはスキップ）→ 完了通知。</p>
+<h3 id="ectransferconfig-verified"><a class="header" href="#ectransferconfig-verified">ECTransferConfig [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/ec_transfer.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ec_connector</code></td><td><code>str | None</code></td><td>None</td><td>コネクタ名（例: <code>"ECExampleConnector"</code>）</td></tr>
+<tr><td><code>ec_role</code></td><td><code>ECRole | None</code></td><td>None</td><td><code>"ec_producer"</code> or <code>"ec_consumer"</code></td></tr>
+<tr><td><code>ec_connector_extra_config</code></td><td><code>dict</code></td><td><code>{}</code></td><td>コネクタ固有の追加設定</td></tr>
+<tr><td><code>ec_connector_module_path</code></td><td><code>str | None</code></td><td>None</td><td>動的ロード用モジュールパス</td></tr>
+<tr><td><code>engine_id</code></td><td><code>str | None</code></td><td>uuid4 自動生成</td><td>エンジンID</td></tr>
+</tbody>
+</table>
+</div>
+<p>起動時パラメータ例: <code>--ec-connector ECExampleConnector --ec-role ec_producer --ec-connector-extra-config '{"shared_storage_path": "/mnt/cache"}'</code></p>
+<h3 id="ecconnectorfactory-verified"><a class="header" href="#ecconnectorfactory-verified">ECConnectorFactory [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/factory.py</code></p>
+<ul>
+<li><code>register_connector(name, module_path, class_name)</code> で遅延ロード登録</li>
+<li><code>ec_connector_module_path</code> による動的ロード（外部モジュール対応）</li>
+<li>現在の登録済みコネクタ: <code>ECExampleConnector</code> のみ</li>
+</ul>
+<hr>
+<h2 id="3-ecexampleconnector-参照実装の分析-verified"><a class="header" href="#3-ecexampleconnector-参照実装の分析-verified">3. ECExampleConnector 参照実装の分析 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py</code></p>
+<h3 id="概要"><a class="header" href="#概要">概要</a></h3>
+<p>safetensors を使ってディスクにエンコーダ出力テンソルを保存/読込するデバッグ用実装。全 199 行。</p>
+<h3 id="ストレージ構造"><a class="header" href="#ストレージ構造">ストレージ構造</a></h3>
+<pre><code>{shared_storage_path}/
+  {mm_hash}/
+    encoder_cache.safetensors
+</code></pre>
+<h3 id="保存-save_caches-l98-118"><a class="header" href="#保存-save_caches-l98-118">保存 (save_caches, L98-118)</a></h3>
+<pre><code class="language-python">def save_caches(self, encoder_cache, mm_hash, **kwargs) -&gt; None:
+    if not self.is_producer:
+        return
+    filename = self._generate_filename_debug(mm_hash)
+    ec_cache = encoder_cache[mm_hash]
+    tensors = {"ec_cache": ec_cache.detach().cpu()}  # GPU→CPU コピー
+    safetensors.torch.save_file(tensors, filename)
+</code></pre>
+<ul>
+<li>Producer ロールの場合のみ保存</li>
+<li><code>detach().cpu()</code> で GPU テンソルを CPU に移動してからシリアライズ</li>
+<li><strong>テンソル形状に一切依存しない</strong></li>
+</ul>
+<h3 id="ロード-start_load_caches-l63-96"><a class="header" href="#ロード-start_load_caches-l63-96">ロード (start_load_caches, L63-96)</a></h3>
+<pre><code class="language-python">def start_load_caches(self, encoder_cache, **kwargs) -&gt; None:
+    metadata = self._get_connector_metadata()
+    for mm_data in metadata.mm_datas:
+        if mm_data.mm_hash in encoder_cache:
+            continue  # 既に GPU dict にあればスキップ
+        filename = self._generate_filename_debug(mm_data.mm_hash)
+        ec_cache = safetensors.torch.load_file(filename, device=...)["ec_cache"]
+        encoder_cache[mm_data.mm_hash] = ec_cache  # dict に直接格納
+</code></pre>
+<ul>
+<li>メタデータ（Scheduler が構築）に基づいてロード対象を決定</li>
+<li><code>encoder_cache</code> dict に直接格納 → <code>_gather_mm_embeddings()</code> でそのまま読める</li>
+</ul>
+<h3 id="存在チェック-has_cache_item-l120-133"><a class="header" href="#存在チェック-has_cache_item-l120-133">存在チェック (has_cache_item, L120-133)</a></h3>
+<pre><code class="language-python">def has_cache_item(self, identifier: str) -&gt; bool:
+    return self._found_match_for_mm_data(identifier)
+    # → os.path.exists(filename)
+</code></pre>
+<ul>
+<li>ファイルの存在確認のみ（同期的）</li>
+</ul>
+<h3 id="メタデータ管理"><a class="header" href="#メタデータ管理">メタデータ管理</a></h3>
+<p><code>ECExampleConnectorMetadata</code> (L35-42): ロードすべき <code>mm_hash</code> と <code>num_token</code> のリスト。</p>
+<p><code>update_state_after_alloc()</code> (L135-146): Scheduler が allocate() 後に呼び出し、<code>_mm_datas_need_loads</code> にロード対象を追加。</p>
+<p><code>build_connector_meta()</code> (L148-164): <code>_mm_datas_need_loads</code> からメタデータを構築し、Worker に伝達。呼び出し後にクリア。</p>
+<hr>
+<h2 id="4-kv-transfer-との比較-verified"><a class="header" href="#4-kv-transfer-との比較-verified">4. KV Transfer との比較 [VERIFIED]</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>評価項目</th><th>KV Transfer</th><th>ECConnector</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>設計目的</strong></td><td>デコーダ KV Cache の転送・永続化</td><td>エンコーダ出力テンソルの転送・永続化</td></tr>
+<tr><td><strong>テンソル粒度</strong></td><td>レイヤー別、ブロック単位、トークン粒度</td><td><code>mm_hash</code> 単位、任意形状テンソル</td></tr>
+<tr><td><strong>テンソル形状依存</strong></td><td>あり (<code>num_layer, 2, chunk_size, num_kv_heads, head_size</code>)</td><td><strong>なし</strong></td></tr>
+<tr><td><strong>エンコーダ出力への適合性</strong></td><td>不適合</td><td><strong>最適</strong></td></tr>
+<tr><td><strong>既存統合ポイント</strong></td><td>Attention 層デコレータ経由</td><td>GPUModelRunner の <code>_execute_mm_encoder</code> 直後</td></tr>
+<tr><td><strong>新規実装量</strong></td><td>大（7 abstract メソッド + KV 概念適合）</td><td><strong>小</strong>（5 abstract メソッド、参照実装 199 行）</td></tr>
+<tr><td><strong>ストレージ実装</strong></td><td>LMCache/NIXL/Mooncake（全て KV 前提）</td><td>Example（safetensors/ディスク）、拡張容易</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>結論</strong>: エンコーダ出力テンソルの永続化には ECConnector を使うべき。KV Transfer はデコーダ KV Cache に特化しており、エンコーダ出力の形状・粒度に合わない。</p>
+<p>LMCache の KV 形状ハードコード箇所:</p>
+<ul>
+<li><code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:477</code>
+<pre><code class="language-python">kv_shape = (num_layer, 1 if use_mla else 2, chunk_size, num_kv_heads, head_size)
+</code></pre>
+</li>
+</ul>
+<hr>
+<h2 id="5-fifo--lru-変更の具体的設計"><a class="header" href="#5-fifo--lru-変更の具体的設計">5. FIFO → LRU 変更の具体的設計</a></h2>
+<h3 id="現状の-fifo-実装-verified"><a class="header" href="#現状の-fifo-実装-verified">現状の FIFO 実装 [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></p>
+<p><strong>データ構造</strong>:</p>
+<pre><code class="language-python"># L72-77
+self.cached: dict[str, set[str]] = {}           # mm_hash → {request_ids}
+self.freeable: OrderedDict[str, int] = OrderedDict()  # mm_hash → num_embeds (挿入順)
+self.freed: list[str] = []                       # evict 済みリスト
+</code></pre>
+<p><strong>FIFO の核心</strong> (L173-177):</p>
+<pre><code class="language-python">while num_embeds &gt; self.num_free_slots:
+    mm_hash, num_free_embeds = self.freeable.popitem(last=False)  # 最も古いエントリから
+    del self.cached[mm_hash]
+    self.freed.append(mm_hash)
+    self.num_free_slots += num_free_embeds
+</code></pre>
+<p><code>OrderedDict.popitem(last=False)</code> で<strong>最初に挿入された（＝最も早く参照解放された）エントリ</strong>から Evict。</p>
+<h3 id="現状の-fifo-が-lru-と異なる点"><a class="header" href="#現状の-fifo-が-lru-と異なる点">現状の FIFO が LRU と異なる点</a></h3>
+<p>FIFO は「最も早く <code>freeable</code> に追加されたものから Evict」する。LRU は「最も長期間アクセスされていないものから Evict」する。</p>
+<p>差が出るケース:</p>
+<ol>
+<li>画像 A が freeable に入る（参照解放）</li>
+<li>画像 B が freeable に入る</li>
+<li>画像 A が再度参照される → freeable から取り出されて active に戻る</li>
+<li>画像 A が再度 freeable に入る → <strong>FIFO: 末尾に追加（最新扱い）、LRU: 末尾に追加（最新扱い）</strong></li>
+</ol>
+<p>実は、<strong>現状の FIFO は「参照解放順」であり、再参照された画像は freeable の末尾に再挿入される</strong>ため、RAG での繰り返しアクセスパターンでは擬似 LRU として機能する部分もある。</p>
+<p>しかし、<strong>active 状態（参照中）のエントリ間でのアクセス頻度は考慮されない</strong>。複数リクエストが同時に異なる画像を参照し、それらが一斉に freeable になった場合、「最後にアクセスされた時刻」ではなく「最後に参照解放された時刻」で順序が決まる。</p>
+<h3 id="lru-への変更方法"><a class="header" href="#lru-への変更方法">LRU への変更方法</a></h3>
+<p><strong>変更箇所</strong>: <code>encoder_cache_manager.py</code> の 1 ファイルのみ。Scheduler 側・GPUModelRunner 側の変更は不要。</p>
+<p><strong>方法 A: アクセス時刻の追跡</strong>（推奨）</p>
+<pre><code class="language-python">class EncoderCacheManager:
+    def __init__(self, cache_size: int):
+        # ... 既存フィールド ...
+        self._access_order: dict[str, int] = {}  # mm_hash → monotonic counter
+        self._access_counter: int = 0
+
+    def check_and_update_cache(self, request, input_id) -&gt; bool:
+        mm_hash = request.mm_features[input_id].identifier
+        if mm_hash not in self.cached:
+            return False
+        if not self.cached[mm_hash]:
+            num_encoder_embeds = self.freeable.pop(mm_hash)
+            self.num_freeable_slots -= num_encoder_embeds
+        self.cached[mm_hash].add(request.request_id)
+        # ★ アクセス時刻を更新
+        self._access_counter += 1
+        self._access_order[mm_hash] = self._access_counter
+        return True
+
+    def free_encoder_input(self, request, input_id) -&gt; None:
+        req_id = request.request_id
+        mm_hash = request.mm_features[input_id].identifier
+        if not self.cached.get(mm_hash, None):
+            return
+        self.cached[mm_hash].discard(req_id)
+        if not self.cached[mm_hash]:
+            num_encoder_embeds = request.get_num_encoder_embeds(input_id)
+            self.freeable[mm_hash] = num_encoder_embeds
+            self.num_freeable_slots += num_encoder_embeds
+            # ★ アクセス時刻でソートされた位置に挿入
+            # OrderedDictを再ソート: 古いアクセスが先頭に来るようにする
+            self.freeable.move_to_end(mm_hash)  # 末尾に追加（最新アクセス）
+
+    def allocate(self, request, input_id) -&gt; None:
+        mm_hash = request.mm_features[input_id].identifier
+        # ... 既存ロジック ...
+        # ★ アクセス時刻を記録
+        self._access_counter += 1
+        self._access_order[mm_hash] = self._access_counter
+</code></pre>
+<p><strong>方法 B: 簡易 LRU（move_to_end のみ）</strong></p>
+<p>現状の実装でも、<code>freeable</code> への再挿入は末尾に行われるため、ほぼ LRU として機能する。唯一の改善点は、<code>check_and_update_cache()</code> で freeable から復活する際のタイムスタンプ更新のみ。実質的に方法 A と同等の効果が得られる。</p>
+<h3 id="変更の影響範囲"><a class="header" href="#変更の影響範囲">変更の影響範囲</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>変更</th></tr>
+</thead>
+<tbody>
+<tr><td><code>encoder_cache_manager.py</code></td><td><code>check_and_update_cache()</code> と <code>free_encoder_input()</code> の 2 メソッド修正</td></tr>
+<tr><td><code>can_allocate()</code></td><td>変更不要（<code>popitem(last=False)</code> は同じ）</td></tr>
+<tr><td>Scheduler</td><td>変更不要（API は同じ）</td></tr>
+<tr><td>GPUModelRunner</td><td>変更不要</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="6-階層キャッシュの実装設計"><a class="header" href="#6-階層キャッシュの実装設計">6. 階層キャッシュの実装設計</a></h2>
+<h3 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h3>
+<pre><code>リクエスト到着
+    │
+    ▼
+Scheduler: _try_schedule_encoder_inputs()
+    │
+    ├── check_and_update_cache() → L1 HIT (GPU dict) → スキップ
+    │
+    ├── L1 MISS → ec_connector.has_cache_item() → L2 HIT (Storage)
+    │       │
+    │       └── external_load_encoder_input に追加 → Worker でロード予約
+    │
+    └── L1/L2 MISS → encoder_inputs_to_schedule に追加 → エンコーダ計算
+    │
+    ▼
+Worker: execute_model()
+    │
+    ├── start_load_caches() → L2 からテンソルを GPU dict にロード
+    │
+    ├── _execute_mm_encoder() → L1/L2 MISS 分のみエンコーダ実行
+    │       └── save_caches() → 新規計算結果を L2 に保存
+    │
+    └── _gather_mm_embeddings() → GPU dict からテンソル取得
+</code></pre>
+<h3 id="2-層キャッシュの役割分担"><a class="header" href="#2-層キャッシュの役割分担">2 層キャッシュの役割分担</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>L1: GPU dict（ホット）</th><th>L2: ECConnector（コールド）</th></tr>
+</thead>
+<tbody>
+<tr><td>格納先</td><td>GPU メモリ</td><td>Redis / ディスク / NFS 等</td></tr>
+<tr><td>容量</td><td>小（<code>encoder_cache_size</code>）</td><td>大（コーパス全体）</td></tr>
+<tr><td>レイテンシ</td><td>ナノ秒</td><td>マイクロ〜ミリ秒</td></tr>
+<tr><td>Eviction</td><td><strong>LRU</strong>（提案変更後）</td><td>TTL or LRU or なし</td></tr>
+<tr><td>永続性</td><td>なし</td><td>あり</td></tr>
+<tr><td>管理</td><td><code>EncoderCacheManager</code></td><td>カスタム <code>ECConnectorBase</code> 実装</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="カスタム-ecconnector-の実装ガイド"><a class="header" href="#カスタム-ecconnector-の実装ガイド">カスタム ECConnector の実装ガイド</a></h3>
+<p>新しい ECConnector を作成するには、<code>ECConnectorBase</code> を継承して 5 つの abstract メソッドを実装する。</p>
+<pre><code class="language-python"># my_ec_connector.py
+from vllm.distributed.ec_transfer.ec_connector.base import (
+    ECConnectorBase, ECConnectorMetadata, ECConnectorRole
+)
+
+class RedisECConnector(ECConnectorBase):
+    def __init__(self, vllm_config, role):
+        super().__init__(vllm_config=vllm_config, role=role)
+        self._redis_url = vllm_config.ec_transfer_config.get_from_extra_config(
+            "redis_url", "redis://localhost:6379"
+        )
+        # Redis クライアント初期化...
+
+    # Worker側: ストレージからGPU dictにロード
+    def start_load_caches(self, encoder_cache, **kwargs):
+        metadata = self._get_connector_metadata()
+        for mm_data in metadata.mm_datas:
+            if mm_data.mm_hash in encoder_cache:
+                continue
+            tensor_bytes = self._redis.get(mm_data.mm_hash)
+            if tensor_bytes:
+                encoder_cache[mm_data.mm_hash] = deserialize(tensor_bytes)
+
+    # Worker側: GPU dictからストレージに保存
+    def save_caches(self, encoder_cache, mm_hash, **kwargs):
+        if not self.is_producer:
+            return
+        tensor = encoder_cache[mm_hash].detach().cpu()
+        self._redis.set(mm_hash, serialize(tensor))
+
+    # Scheduler側: ストレージにキャッシュが存在するか
+    def has_cache_item(self, identifier):
+        return self._redis.exists(identifier)
+
+    # Scheduler側: アロケーション後の状態更新
+    def update_state_after_alloc(self, request, index):
+        mm_hash = request.mm_features[index].identifier
+        num_token = request.get_num_encoder_embeds(index)
+        self._need_loads[mm_hash] = num_token
+
+    # Scheduler側: メタデータ構築
+    def build_connector_meta(self, scheduler_output):
+        meta = MyECConnectorMetadata()
+        for mm_hash, num_token in self._need_loads.items():
+            meta.add(mm_hash, num_token)
+        self._need_loads.clear()
+        return meta
+</code></pre>
+<p><strong>登録方法</strong>:</p>
+<ol>
+<li>ファクトリ登録: <code>ECConnectorFactory.register_connector("RedisECConnector", "my.module", "RedisECConnector")</code></li>
+<li>または動的ロード: <code>--ec-connector RedisECConnector --ec-connector-module-path my.module</code></li>
+</ol>
+<h3 id="テンソルサイズの見積もり"><a class="header" href="#テンソルサイズの見積もり">テンソルサイズの見積もり</a></h3>
+<p>Gemma3 27B、1 画像あたり:</p>
+<pre><code>256 tokens × 5376 dim × 2 bytes (FP16) = 2,752,512 bytes ≈ 2.6 MB/画像
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コーパス規模</th><th>L2 ストレージ必要量（FP16）</th></tr>
+</thead>
+<tbody>
+<tr><td>1,000 画像</td><td>≈ 2.6 GB</td></tr>
+<tr><td>10,000 画像</td><td>≈ 26 GB</td></tr>
+<tr><td>100,000 画像</td><td>≈ 260 GB</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="プリコンピュート運用"><a class="header" href="#プリコンピュート運用">プリコンピュート運用</a></h3>
+<p>ECConnector を活用したオフラインプリコンピュートの流れ:</p>
+<ol>
+<li><strong>Producer モード</strong>で vLLM を起動し、コーパス全画像を含むダミーリクエストを送信</li>
+<li><code>save_caches()</code> でエンコーダ出力がストレージに蓄積される</li>
+<li><strong>Consumer モード</strong>で本番 vLLM を起動</li>
+<li>リクエスト到着時に <code>has_cache_item()</code> → <code>start_load_caches()</code> でストレージからロード</li>
+<li>エンコーダ計算をスキップし、ストレージからの読み出し + GPU 転送のみで処理</li>
+</ol>
+<hr>
+<h2 id="7-残る設計上の考慮事項"><a class="header" href="#7-残る設計上の考慮事項">7. 残る設計上の考慮事項</a></h2>
+<h3 id="71-ecexampleconnector-の同期-io"><a class="header" href="#71-ecexampleconnector-の同期-io">7.1 ECExampleConnector の同期 I/O</a></h3>
+<p>現在の <code>ECExampleConnector</code> の <code>start_load_caches()</code> は同期的な <code>safetensors.torch.load_file()</code> を呼ぶ。ディスク I/O がブロッキングとなり、エンコーダ実行前のレイテンシに直接影響する。</p>
+<p><strong>対策案</strong>:</p>
+<ul>
+<li><code>start_load_caches()</code> を非同期化（別スレッドでロード開始、<code>_gather_mm_embeddings()</code> 前に完了待ち）</li>
+<li>Redis 等のインメモリストレージを使い、I/O レイテンシを最小化</li>
+<li>EngineCore.step() のスケジューリングとモデル実行の間の時間的ギャップを活用</li>
+</ul>
+<h3 id="72-lru-とストレージ-eviction-の相互作用"><a class="header" href="#72-lru-とストレージ-eviction-の相互作用">7.2 LRU とストレージ Eviction の相互作用</a></h3>
+<p>L1（GPU dict）から LRU で Evict されたテンソルは、L2（ストレージ）には残る。次にアクセスされた時:</p>
+<ol>
+<li>Scheduler: <code>check_and_update_cache()</code> → L1 MISS</li>
+<li>Scheduler: <code>ec_connector.has_cache_item()</code> → L2 HIT</li>
+<li>Worker: <code>start_load_caches()</code> → L2 から L1 にロード</li>
+</ol>
+<p>→ エンコーダ再計算は不要だが、ストレージ→GPU 転送のレイテンシが発生する。</p>
+<h3 id="73-producerconsumer-ロールの運用"><a class="header" href="#73-producerconsumer-ロールの運用">7.3 Producer/Consumer ロールの運用</a></h3>
+<p>ECConnector は P/D 分離を想定した設計。RAG ユースケースでは:</p>
+<ul>
+<li><strong>ec_producer</strong>: プリコンピュート用インスタンス（エンコーダ出力をストレージに書き込み）</li>
+<li><strong>ec_consumer</strong>: 本番サービング用インスタンス（ストレージからロード）</li>
+<li>Producer と Consumer で同じストレージパスを共有する必要がある</li>
+</ul>
+<h3 id="74-キャッシュ無効化"><a class="header" href="#74-キャッシュ無効化">7.4 キャッシュ無効化</a></h3>
+<p>モデル重み更新（LoRA ホットスワップ等）時:</p>
+<ul>
+<li>L1: <code>EncoderCacheManager.reset()</code> + <code>encoder_cache.clear()</code> で対応済み</li>
+<li>L2: ストレージ側のキャッシュクリアが必要（<code>identifier</code> に LoRA プレフィックスが含まれるため、LoRA 別に無効化可能）</li>
+</ul>
+<hr>
+<h2 id="8-次のステップ"><a class="header" href="#8-次のステップ">8. 次のステップ</a></h2>
+<ol>
+<li><strong>FIFO→LRU の実装</strong>: <code>encoder_cache_manager.py</code> の 2 メソッドを修正（変更量: 数行）</li>
+<li><strong>カスタム ECConnector の実装</strong>: Redis バックエンドの ECConnector を作成（参照: ECExampleConnector の 199 行）</li>
+<li><strong>ベンチマーク</strong>: RAG ワークロードでの比較
+<ul>
+<li>ベースライン: FIFO + インメモリのみ</li>
+<li>改善 1: LRU + インメモリのみ</li>
+<li>改善 2: LRU + Redis ECConnector</li>
+</ul>
+</li>
+<li><strong>コミュニティ調査</strong>: vLLM の Issue/PR で ECConnector 関連の議論を確認</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../components/scheduler/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../investigations/gemma3-vision-caches.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../components/scheduler/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../investigations/gemma3-vision-caches.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-c2a407aa.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-eefea253.min.js"></script>
+        <script src="../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
