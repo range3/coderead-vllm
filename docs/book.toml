@@ -7,6 +7,7 @@ language = "ja"
 git-repository-url = ""
 edit-url-template = ""
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-css = ["theme/custom.css"]
 
 [output.html.search]
 enable = true
