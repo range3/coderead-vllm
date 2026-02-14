@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-43af35ac.js";
+            window.path_to_searchindex_js = "searchindex-a2697c32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-9e89a2b8.js"></script>
+        <script src="toc-5c85ce16.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2073,9 +2073,9 @@ EngineCore.step()（続き）
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="gpumodelrunner"><a class="header" href="#gpumodelrunner">GPUModelRunner</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-15</p>
 </blockquote>
 <h2 id="概要-8"><a class="header" href="#概要-8">概要</a></h2>
 <p>GPUModelRunnerは、推論パイプラインの実行中核を担う巨大クラス（約6,300行）である。SchedulerOutputを受け取り、入力テンソルの準備、モデルのforward実行、サンプリングを経て、ModelRunnerOutputを返す。<strong>2フェーズ実行パターン</strong>（<code>execute_model()</code> → <code>sample_tokens()</code>）を採用し、モデルフォワードとgrammar bitmask計算の並行実行を可能にしている。</p>
@@ -2087,6 +2087,28 @@ EngineCore.step()（続き）
     ECConnectorModelRunnerMixin,    # エンコーダキャッシュ対応
 ):
 </code></pre>
+<h2 id="状態管理"><a class="header" href="#状態管理">状態管理</a></h2>
+<p>GPUModelRunnerは2つのデータ構造でリクエスト状態を管理する:</p>
+<ul>
+<li><strong><code>self.requests: dict[str, CachedRequestState]</code></strong> — リクエストの論理状態（プリエンプション後も保持）</li>
+<li><strong><code>self.input_batch: InputBatch</code></strong> — 永続バッチテンソル群（事前割り当て、差分更新）</li>
+</ul>
+<p>永続バッチ最適化により、連続stepで変更があったリクエストのデータのみCPU側で更新し、GPUへはDMA一括転送する。</p>
+<p>詳細は <a href="#inputbatch-永続バッチと状態管理">InputBatch: 永続バッチと状態管理</a> を参照。</p>
+<h2 id="kvcache-gpu-interface"><a class="header" href="#kvcache-gpu-interface">KVCache-GPU Interface</a></h2>
+<p>KVCacheManager（Scheduler側）が割り当てた論理ブロックIDは、4段階の変換を経てAttentionカーネルが消費する形式になる:</p>
+<pre><code>_update_states()        ← ブロックID取込（3ケース: 新規/追加/プリエンプション復帰）
+  ↓
+BlockTable              ← CPU側テーブル（CpuGpuBuffer）
+  ↓
+_prepare_inputs()       ← commit_block_table() DMA + compute_slot_mapping()
+  ↓
+_get_slot_mappings()    ← by_gid（AttentionMetadata用）/ by_layer（ForwardContext用）
+  ↓
+_build_attention_metadata() ← CommonAttentionMetadata → per-layer AttentionMetadata
+</code></pre>
+<p><strong>核心的な変換式</strong>: <code>slot = block_number * block_size + (position % block_size)</code></p>
+<p>詳細は <a href="#kvcache-gpu-interface-ブロックテーブルとスロットマッピング">KVCache-GPU Interface</a> を参照。</p>
 <h2 id="2フェーズ実行パターン"><a class="header" href="#2フェーズ実行パターン">2フェーズ実行パターン</a></h2>
 <p>GPUModelRunnerの中核設計。<code>execute_model()</code>でモデルフォワードとlogits計算を行い、結果を<code>ExecuteModelState</code>に保存して<code>None</code>を返す。その後<code>sample_tokens()</code>が状態を復元してサンプリングを実行する。</p>
 <pre class="mermaid">sequenceDiagram
@@ -2108,32 +2130,30 @@ EngineCore.step()（続き）
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code> (execute_model)</p>
 <pre><code>execute_model(scheduler_output, intermediate_tensors=None)
   │
-  ├─ 早期リターン判定                                      # L3335-3367
-  │   スケジュールトークン0件 → EMPTY_MODEL_RUNNER_OUTPUT
+  ├─ 1. バッチ状態更新 _update_states()                     # L3376
+  │     新規リクエスト登録、ブロックID更新、不要リクエスト除去
   │
-  ├─ 1. バッチ状態更新                                     # L3376
-  │   _update_states(scheduler_output)
-  │   → 新規リクエスト登録、キャッシュ済みリクエスト更新
+  ├─ 2. 入力準備 _prepare_inputs()                          # L3383
+  │     block_table DMA → slot_mapping計算 → positions/input_ids GPU転送
+  │     ※ DMAオーバーラップ最適化（L1472-1474）
   │
-  ├─ 2. 入力準備                                           # L3389
-  │   _prepare_inputs(scheduler_output)
-  │   → input_ids, positions, logits_indices 計算
+  ├─ 3. CUDAGraph判定                                       # L3398
+  │     _determine_batch_execution_and_padding()
+  │     → CUDAGraphMode(FULL/PIECEWISE/NONE) + パディング量決定
   │
-  ├─ 3. Attentionメタデータ構築                             # L3400
-  │   _build_attention_metadata(scheduler_output, ...)
+  ├─ 4. スロットマッピング2形式出力                            # L3468
+  │     _get_slot_mappings() → by_gid + by_layer
   │
-  ├─ 4. 前処理                                             # L3440-3504
-  │   slot_mapping取得、入力トークン/位置/埋め込み準備
+  ├─ 5. Attentionメタデータ構築                               # L3479
+  │     _build_attention_metadata()
+  │     → CommonAttentionMetadata → per-layer AttentionMetadata
   │
-  ├─ 5. モデルフォワード                                    # L3521-3603
-  │   _model_forward(...)
-  │   → hidden_states = model.forward(input_ids, positions, ...)
-  │   → logits = compute_logits(hidden_states)
+  ├─ 6. モデルフォワード                                      # L3538
+  │     set_forward_context(slot_mapping=by_layer)
+  │     → _model_forward() → model.forward() → logits
   │
-  └─ 6. 状態保存                                            # L3605-3615
-      ExecuteModelState(scheduler_output, logits, ...)
-      → self.execute_model_state に保存
-      → None を返す
+  └─ 7. 状態保存                                              # L3605-3615
+      ExecuteModelState に保存 → None を返す
 </code></pre>
 <p><strong>戻り値のパターン</strong>:</p>
 <ul>
@@ -2146,30 +2166,44 @@ EngineCore.step()（続き）
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3621</code> (sample_tokens)</p>
 <pre><code>sample_tokens(grammar_output)
   │
-  ├─ 1. 状態復元                                            # L3643-3657
-  │   ExecuteModelState から logits, scheduler_output 等を復元
-  │   self.execute_model_state = None（クリア）
-  │
-  ├─ 2. Grammar制約適用                                     # L3659-3663
-  │   grammar bitmask を logits に適用（構造化出力時）
-  │
-  ├─ 3. サンプリング                                        # L3665-3666
-  │   _sample(logits, spec_decode_metadata) → SamplerOutput
-  │
-  ├─ 4. 後処理                                             # L3668-3699
-  │   バッチ状態に生成トークンを反映
-  │   PP時のトークンブロードキャスト
-  │   Speculative Decodingのドラフトトークン提案
-  │
-  └─ 5. ModelRunnerOutput構築                               # L3775-3787
-      ModelRunnerOutput(
-        req_ids, req_id_to_index,
-        sampled_token_ids,    # list[list[int]]
-        logprobs,             # numpy配列
-        prompt_logprobs_dict, # torch.Tensor
-        kv_connector_output, ...
-      )
+  ├─ 1. 状態復元 — ExecuteModelState から logits 等を復元     # L3643-3657
+  ├─ 2. Grammar制約適用 — bitmask → logits                  # L3659-3663
+  ├─ 3. サンプリング — _sample() → SamplerOutput             # L3665-3666
+  ├─ 4. 後処理 — バッチ状態反映、PP broadcast、ドラフト提案    # L3668-3699
+  └─ 5. ModelRunnerOutput構築                                # L3775-3787
 </code></pre>
+<h2 id="cudagraph統合-verified"><a class="header" href="#cudagraph統合-verified">CUDAGraph統合 [VERIFIED]</a></h2>
+<h3 id="cudagraphmode"><a class="header" href="#cudagraphmode">CUDAGraphMode</a></h3>
+<p>3つの実行モードが存在する:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モード</th><th>説明</th><th>使用条件</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FULL</code></td><td>forward全体をキャプチャ</td><td>Attentionバックエンドが対応、cascade attention無効</td></tr>
+<tr><td><code>PIECEWISE</code></td><td>Attention以外をキャプチャ（torch.compile統合）</td><td>Attention部分はコンパイル済みコードで実行</td></tr>
+<tr><td><code>NONE</code></td><td>Eagerモード</td><td>CUDAGraph無効、バッチサイズ超過、calc_kv_scales時</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cudagraphdispatcher"><a class="header" href="#cudagraphdispatcher">CudagraphDispatcher</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/cudagraph_dispatcher.py:14</code></p>
+<p>事前キャプチャ済みCUDAGraphの中からランタイムで適切なグラフを選択する:</p>
+<ol>
+<li><code>cudagraph_keys: dict[CUDAGraphMode, set[BatchDescriptor]]</code> にキャプチャ済みのバッチ記述子を保持</li>
+<li><code>dispatch()</code> は入力 <code>num_tokens</code> を最小のパディングサイズに丸め上げ</li>
+<li>FULL → PIECEWISE → NONE の優先順序でキーを探索</li>
+</ol>
+<p><strong>バッチパディング</strong>: CUDAGraphは固定形状のテンソルを要求するため、実際のトークン数をキャプチャ済みサイズに丸め上げる。未使用スロットはslot_mapping <code>-1</code>（PAD_SLOT_ID）で埋められ、<code>reshape_and_cache()</code> がスキップする。</p>
+<h3 id="_determine_batch_execution_and_padding"><a class="header" href="#_determine_batch_execution_and_padding">_determine_batch_execution_and_padding()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3076</code></p>
+<p>毎stepの実行モード判定:</p>
+<ol>
+<li><code>_is_uniform_decode()</code> — 全リクエストがデコードフェーズ（query_len=1）か判定</li>
+<li><code>cudagraph_dispatcher.dispatch()</code> — モードとパディングサイズを決定</li>
+<li>Data Parallel時は <code>coordinate_batch_across_dp()</code> で全ランク間で合意</li>
+</ol>
 <h2 id="executemodelstate"><a class="header" href="#executemodelstate">ExecuteModelState</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code> (ExecuteModelState)</p>
 <p>2フェーズ間の一時状態を保持するNamedTuple。GPUテンソルを含むため、シリアライズはされない。</p>
@@ -2191,38 +2225,30 @@ EngineCore.step()（続き）
 </tbody>
 </table>
 </div>
-<h2 id="6300行の内訳-inferred"><a class="header" href="#6300行の内訳-inferred">6,300行の内訳 [INFERRED]</a></h2>
-<p>GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一クラスに集約しているため:</p>
-<ul>
-<li><strong>バッチ状態管理</strong>: リクエストの追加・削除、永続バッチテンソルの管理</li>
-<li><strong>入力準備</strong>: トークンID、位置、埋め込みの計算</li>
-<li><strong>Attentionメタデータ</strong>: FlashAttention/FlashInfer用メタデータ構築</li>
-<li><strong>モデルフォワード</strong>: CUDAGraph対応、torch.compile統合</li>
-<li><strong>サンプリング</strong>: トップk/p/温度、logprobs計算</li>
-<li><strong>KV Transfer</strong>: KVコネクタとの連携</li>
-<li><strong>Speculative Decoding</strong>: ドラフトトークン提案・検証</li>
-<li><strong>Pipeline Parallelism</strong>: 中間テンソル管理</li>
-<li><strong>LoRA</strong>: アダプタの動的切り替え</li>
-<li><strong>マルチモーダル</strong>: エンコーダ入力の処理</li>
-</ul>
-<h2 id="上流下流の関係-1"><a class="header" href="#上流下流の関係-1">上流・下流の関係</a></h2>
-<ul>
-<li><strong>上流</strong>: Worker（<code>execute_model()</code> / <code>sample_tokens()</code>経由で呼び出し）</li>
-<li><strong>下流</strong>: モデル層（<code>model.forward()</code>）、Sampler</li>
-</ul>
-<h2 id="phase-2-深堀り候補-1"><a class="header" href="#phase-2-深堀り候補-1">Phase 2 深堀り候補</a></h2>
+<h2 id="6300行の内訳-verified"><a class="header" href="#6300行の内訳-verified">6,300行の内訳 [VERIFIED]</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>テーマ</th><th>関連メソッド</th><th>ユーザー関心</th></tr>
+<tr><th>行範囲</th><th>セクション</th></tr>
 </thead>
 <tbody>
-<tr><td>入力準備の詳細</td><td><code>_prepare_inputs()</code>, <code>_update_states()</code></td><td>中</td></tr>
-<tr><td>Attentionメタデータ</td><td><code>_build_attention_metadata()</code></td><td>KVキャッシュ関連で高</td></tr>
-<tr><td>CUDAGraph統合</td><td><code>_model_forward()</code>, CUDAGraphランナー</td><td>中</td></tr>
-<tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
-<tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位）</td></tr>
-<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位） → <strong>Phase 2bで調査済み</strong></td></tr>
+<tr><td>1-312</td><td>インポート、型エイリアス、Async出力クラス、ExecuteModelState</td></tr>
+<tr><td>329-712</td><td><code>__init__</code>（設定、バッファ割当、状態初期化）</td></tr>
+<tr><td>713-873</td><td>ライフサイクルヘルパー（<code>reset_mm_cache</code>, <code>init_fp8_kv_scales</code> 等）</td></tr>
+<tr><td>874-1453</td><td>状態管理: <code>_update_states()</code>, <code>_update_states_after_model_execute()</code></td></tr>
+<tr><td>1454-1672</td><td>入力準備: <code>_prepare_inputs()</code>, <code>_prepare_input_ids()</code></td></tr>
+<tr><td>1673-2049</td><td><code>_build_attention_metadata()</code>（Attentionメタデータ構築）</td></tr>
+<tr><td>2050-2557</td><td>位置計算、MMエンコーダ実行</td></tr>
+<tr><td>2558-3311</td><td>モデルユーティリティ、<code>_get_slot_mappings()</code></td></tr>
+<tr><td>3312-3620</td><td><code>execute_model()</code>（メインforward）</td></tr>
+<tr><td>3621-3934</td><td><code>sample_tokens()</code>、PP broadcast、ドラフト提案</td></tr>
+<tr><td>3935-4118</td><td>Speculative Decoding提案</td></tr>
+<tr><td>4119-4609</td><td>モデルロード: <code>load_model()</code>, <code>reload_weights()</code></td></tr>
+<tr><td>4610-5108</td><td>ダミー実行、プロファイリング</td></tr>
+<tr><td>5109-5332</td><td>CUDAGraphキャプチャ: <code>capture_model()</code>, <code>_capture_cudagraphs()</code></td></tr>
+<tr><td>5333-5596</td><td>Attentionバックエンド初期化、メタデータビルダー</td></tr>
+<tr><td>5597-6152</td><td>KVキャッシュ初期化: <code>initialize_kv_cache()</code></td></tr>
+<tr><td>6152-6273</td><td><code>get_kv_cache_spec()</code>, タイミング統計</td></tr>
 </tbody>
 </table>
 </div>
@@ -2235,6 +2261,25 @@ EngineCore.step()（続き）
 </ol>
 <p><code>encoder_cache: dict[str, torch.Tensor]</code> はGPU上のシンプルなdictキャッシュで、Schedulerの <code>free_encoder_mm_hashes</code> 指示で解放される。</p>
 <p>詳細は <a href="#バックエンド-マルチモーダル処理パス-medium-verified">バックエンド MM処理パス</a> を参照。</p>
+<h2 id="上流下流の関係-1"><a class="header" href="#上流下流の関係-1">上流・下流の関係</a></h2>
+<ul>
+<li><strong>上流</strong>: Worker（<code>execute_model()</code> / <code>sample_tokens()</code>経由で呼び出し）</li>
+<li><strong>下流</strong>: モデル層（<code>model.forward()</code>）、Sampler</li>
+</ul>
+<h2 id="深堀り候補今後"><a class="header" href="#深堀り候補今後">深堀り候補（今後）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>テーマ</th><th>関連メソッド</th><th>ユーザー関心</th></tr>
+</thead>
+<tbody>
+<tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
+<tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位。次セッション候補）</td></tr>
+<tr><td>Speculative Decoding</td><td><code>propose_draft_token_ids()</code></td><td>中</td></tr>
+<tr><td>async_scheduling</td><td><code>_update_states_after_model_execute()</code></td><td>中</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="主要ファイル-1"><a class="header" href="#主要ファイル-1">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
@@ -2243,7 +2288,315 @@ EngineCore.step()（続き）
 </thead>
 <tbody>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner</code> (L329), <code>execute_model()</code> (L3312), <code>sample_tokens()</code> (L3621), <code>ExecuteModelState</code> (L313)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_input_batch.py</code></td><td><code>CachedRequestState</code> (L30), <code>InputBatch</code> (L81)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>BlockTable</code> (L16), <code>MultiGroupBlockTable</code> (L253)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/cudagraph_dispatcher.py</code></td><td><code>CudagraphDispatcher</code> (L14)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/utils.py</code></td><td><code>CpuGpuBuffer</code> (L105)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160), <code>AsyncModelRunnerOutput</code> (L200)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="inputbatch-永続バッチと状態管理"><a class="header" href="#inputbatch-永続バッチと状態管理">InputBatch: 永続バッチと状態管理</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
+<p>GPUModelRunnerは2つのデータ構造でリクエスト状態を管理する:</p>
+<ul>
+<li><strong><code>CachedRequestState</code></strong> — リクエストごとの論理状態（step間で永続、プリエンプション後も保持）</li>
+<li><strong><code>InputBatch</code></strong> — 全リクエストの物理バッチテンソル群（事前割り当て、step間でCPU側を差分更新）</li>
+</ul>
+<p>永続バッチ最適化により、連続するstep間でリクエストの大部分が同じであることを前提に、差分のみを更新する。</p>
+<h2 id="cachedrequeststate-verified"><a class="header" href="#cachedrequeststate-verified">CachedRequestState [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:30</code></p>
+<p><code>@dataclass</code> で定義されるリクエスト単位の状態。<code>GPUModelRunner.requests: dict[str, CachedRequestState]</code> に格納される。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>req_id</code></td><td><code>str</code></td><td>リクエストID</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>プロンプトトークンID列</td></tr>
+<tr><td><code>prompt_embeds</code></td><td><code>Tensor | None</code></td><td>プロンプト埋め込み（embedsモード時）</td></tr>
+<tr><td><code>mm_features</code></td><td><code>list[MultiModalFeatureSpec]</code></td><td>マルチモーダル特徴量</td></tr>
+<tr><td><code>sampling_params</code></td><td><code>SamplingParams | None</code></td><td>サンプリングパラメータ</td></tr>
+<tr><td><code>generator</code></td><td><code>torch.Generator | None</code></td><td>シード付き乱数生成器</td></tr>
+<tr><td><code>block_ids</code></td><td><code>tuple[list[int], ...]</code></td><td>KVキャッシュグループごとのブロックID列</td></tr>
+<tr><td><code>num_computed_tokens</code></td><td><code>int</code></td><td>計算済みトークン数（プレフィックスキャッシュ含む）</td></tr>
+<tr><td><code>output_token_ids</code></td><td><code>list[int]</code></td><td>生成済みトークンID列</td></tr>
+<tr><td><code>lora_request</code></td><td><code>LoRARequest | None</code></td><td>LoRAアダプタ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ライフサイクル</strong>: <code>_update_states()</code> で作成され、<code>finished_req_ids</code> で削除される。プリエンプション時もInputBatchからは除去されるが <code>self.requests</code> には保持され、復帰時に再利用される。</p>
+<p><strong><code>num_tokens</code> プロパティ</strong>: <code>num_prompt_tokens + len(output_token_ids)</code> — 現在のリクエスト全体のトークン数。</p>
+<h2 id="inputbatch-verified"><a class="header" href="#inputbatch-verified">InputBatch [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:81</code></p>
+<p>全リクエストの状態を事前割り当てテンソル群で管理するバッチマネージャー。</p>
+<h3 id="主要テンソル群"><a class="header" href="#主要テンソル群">主要テンソル群</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>テンソル</th><th>shape</th><th>種別</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>token_ids_cpu_tensor</code></td><td><code>(max_num_reqs, max_model_len)</code></td><td>CPU (非pin)</td><td>全リクエストのトークンID。<strong>大きくなりうる</strong>（TODOコメントあり）</td></tr>
+<tr><td><code>num_computed_tokens_cpu_tensor</code></td><td><code>(max_num_reqs,)</code></td><td>CPU (pin)</td><td>計算済みトークン数</td></tr>
+<tr><td><code>num_tokens_no_spec</code></td><td><code>(max_num_reqs,)</code></td><td>numpy</td><td>Spec Decode以外のトークン数</td></tr>
+<tr><td><code>num_prompt_tokens</code></td><td><code>(max_num_reqs,)</code></td><td>numpy</td><td>プロンプトトークン数</td></tr>
+<tr><td><code>temperature_cpu</code> / <code>top_p_cpu</code> / <code>top_k_cpu</code></td><td><code>(max_num_reqs,)</code></td><td>CPU (pin)</td><td>サンプリングパラメータ</td></tr>
+<tr><td><code>block_table</code></td><td><code>MultiGroupBlockTable</code></td><td>CpuGpuBuffer</td><td>KVキャッシュブロックテーブル</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="リクエスト管理"><a class="header" href="#リクエスト管理">リクエスト管理</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>データ構造</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_req_ids: list[str | None]</code></td><td>インデックス→リクエストID。<code>None</code> は空スロット</td></tr>
+<tr><td><code>req_id_to_index: dict[str, int]</code></td><td>リクエストID→インデックス。逆引き</td></tr>
+<tr><td><code>num_reqs</code> プロパティ</td><td><code>len(req_id_to_index)</code> — 現在のリクエスト数</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="add_request--remove_request-verified"><a class="header" href="#add_request--remove_request-verified">add_request() / remove_request() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:304</code>, <code>469</code></p>
+<p><strong><code>add_request()</code></strong>:</p>
+<ol>
+<li>空きインデックスを探す（末尾追加 or 空スロット再利用）</li>
+<li><code>token_ids_cpu</code> にプロンプト+出力トークンIDをコピー</li>
+<li><code>block_table.add_row()</code> でブロックIDを設定</li>
+<li>サンプリングパラメータを各テンソルにコピー</li>
+</ol>
+<p><strong><code>remove_request()</code></strong>:</p>
+<ol>
+<li><code>req_id_to_index</code> から削除、<code>_req_ids[index] = None</code> で空スロット化</li>
+<li><code>batch_update_builder.removed_append()</code> で空きインデックスを記録</li>
+<li>サンプリング関連のset/dictからも除去</li>
+<li>テンソル自体はクリアしない（次のadd_requestで上書きされる）</li>
+</ol>
+<h3 id="condense--バッチ圧縮-verified"><a class="header" href="#condense--バッチ圧縮-verified">condense() — バッチ圧縮 [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:626</code></p>
+<p><code>remove_request()</code> で生じた空スロットを埋める処理。末尾のリクエストを空スロットに移動し、連続した配列を保つ:</p>
+<pre><code>[A, _, B, _, C]  →  [A, C, B]  （Cを空スロット1に移動）
+</code></pre>
+<p>移動対象: <code>token_ids_cpu</code>, <code>num_tokens_no_spec</code>, <code>num_prompt_tokens</code>, <code>num_computed_tokens_cpu</code>, <code>block_table.move_row()</code>, サンプリングパラメータ等。</p>
+<h2 id="multigroupblocktable-verified"><a class="header" href="#multigroupblocktable-verified">MultiGroupBlockTable [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:253</code></p>
+<p>KVキャッシュグループごとに <code>BlockTable</code> を保持するラッパー。Hybridモデル（異なるアテンションタイプが混在）では複数のBlockTableが存在する。</p>
+<pre><code class="language-python"># アクセスパターン
+input_batch.block_table[kv_cache_gid]  # → BlockTable
+input_batch.block_table.append_row(block_ids, req_index)  # 全グループに委譲
+input_batch.block_table.commit_block_table(num_reqs)       # 全グループDMA
+</code></pre>
+<p><code>block_ids</code> は <code>tuple[list[int], ...]</code> 型で、外側タプルのインデックスがKVキャッシュグループIDに対応。</p>
+<h2 id="永続バッチ最適化の全体像-verified"><a class="header" href="#永続バッチ最適化の全体像-verified">永続バッチ最適化の全体像 [VERIFIED]</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant US as _update_states()
+    participant IB as InputBatch
+    participant PI as _prepare_inputs()
+    participant GPU as GPU Tensors
+
+    S-&gt;&gt;US: SchedulerOutput
+    Note over US: finished_req_ids → remove_request()
+    Note over US: unscheduled → remove_request()
+    Note over US: new_reqs → CachedRequestState作成
+    Note over US: cached_reqs → block_ids更新
+    US-&gt;&gt;IB: add_request() / append_row() / condense()
+    Note over IB: CPU側テンソルを差分更新
+    IB-&gt;&gt;PI: commit_block_table() (DMA)
+    PI-&gt;&gt;GPU: slot_mapping, positions, input_ids etc.
+</pre>
+
+<p><strong>最適化の本質</strong>: 前stepと大部分が同じリクエスト群に対して、変更があったフィールド（新ブロックID、num_computed_tokens等）のみをCPU側で更新し、GPUへはDMA一括転送する。毎step全データを再構築する必要がない。</p>
+<h2 id="主要ファイル-2"><a class="header" href="#主要ファイル-2">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_input_batch.py</code></td><td><code>CachedRequestState</code> (L30), <code>InputBatch</code> (L81), <code>add_request()</code> (L304), <code>remove_request()</code> (L469), <code>condense()</code> (L626)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>MultiGroupBlockTable</code> (L253)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="kvcache-gpu-interface-ブロックテーブルとスロットマッピング"><a class="header" href="#kvcache-gpu-interface-ブロックテーブルとスロットマッピング">KVCache-GPU Interface: ブロックテーブルとスロットマッピング</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
+<p>KVCacheManager（Scheduler側）が割り当てた論理ブロックIDは、GPUModelRunner内で4段階の変換を経てAttentionカーネルが消費できる形式になる。この文書では、ブロックIDの取り込みからAttentionMetadata構築までの完全なデータパスを追跡する。</p>
+<pre class="mermaid">graph LR
+    A["KVCacheManager&lt;br&gt;(論理ブロック割当)"] --&gt;|SchedulerOutput&lt;br&gt;new_block_ids| B["_update_states()&lt;br&gt;(ブロックID取込)"]
+    B --&gt;|CachedRequestState&lt;br&gt;block_ids| C["BlockTable&lt;br&gt;(CPU側テーブル)"]
+    C --&gt;|"commit_block_table()&lt;br&gt;DMA (non-blocking)"| D["GPU block_table"]
+    C --&gt;|"compute_slot_mapping()"| E["CPU slot_mapping"]
+    E --&gt;|"commit_slot_mapping()&lt;br&gt;DMA"| F["GPU slot_mapping"]
+    D --&gt; G["_build_attention_metadata()"]
+    F --&gt; G
+    G --&gt;|"per-layer&lt;br&gt;AttentionMetadata"| H["Attention Kernel"]
+    F --&gt;|"set_forward_context()&lt;br&gt;slot_mappings_by_layer"| I["reshape_and_cache()"]
+</pre>
+
+<h2 id="stage-a-ブロックid取込--_update_states-verified"><a class="header" href="#stage-a-ブロックid取込--_update_states-verified">Stage A: ブロックID取込 — <code>_update_states()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:874</code></p>
+<p>SchedulerOutputには3種類のリクエストデータが含まれ、それぞれブロックIDの扱いが異なる:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ケース</th><th>block_ids の処理</th><th>InputBatch操作</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>新規リクエスト</strong></td><td><code>new_req_data.block_ids</code> → <code>CachedRequestState</code> 作成</td><td><code>add_request()</code> で追加</td></tr>
+<tr><td><strong>継続（非プリエンプション）</strong></td><td><code>new_block_ids</code> を既存 <code>block_ids</code> に <code>extend()</code></td><td><code>block_table.append_row()</code> で差分追加</td></tr>
+<tr><td><strong>プリエンプション復帰</strong></td><td><code>block_ids</code> を丸ごと <code>new_block_ids</code> で置換</td><td><code>add_request()</code> で再追加（前stepで <code>remove_request()</code> 済み）</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>block_ids</code> の型は <code>list[list[int]]</code> — 外側のリストはKVキャッシュグループ（Hybridモデルで複数）、内側はそのグループのブロックID列。</p>
+<p><strong>重要な最適化 — 永続バッチ</strong>: 前stepで存在し今回もスケジュールされたリクエストは、InputBatchに残り続ける。スケジュールされなかったリクエストだけが <code>remove_request()</code> で除去されるが、<code>CachedRequestState</code> は <code>self.requests</code> に保持される（L901-921）。</p>
+<h2 id="stage-b-スロットマッピング計算--blocktablecompute_slot_mapping-verified"><a class="header" href="#stage-b-スロットマッピング計算--blocktablecompute_slot_mapping-verified">Stage B: スロットマッピング計算 — <code>BlockTable.compute_slot_mapping()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:133</code></p>
+<p>トークンの論理位置を、KVキャッシュの物理GPUメモリスロットに変換する式:</p>
+<pre><code>block_table_index = req_index * max_num_blocks_per_req + position // block_size
+block_number = block_table[block_table_index]  # ravel()で1D化してルックアップ
+block_offset = position % block_size
+slot = block_number * block_size + block_offset
+</code></pre>
+<h3 id="hybrid-block対応"><a class="header" href="#hybrid-block対応">Hybrid Block対応</a></h3>
+<p>KVCacheManagerの割当ブロックサイズとAttentionカーネルのブロックサイズが異なる場合（例: 割当=32トークン、カーネル=16トークン）:</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:203</code> (<code>map_to_kernel_blocks</code>)</p>
+<pre><code class="language-python"># 割当ブロックID [0, 1, 2] → カーネルブロックID [0, 1, 2, 3, 4, 5]
+# ブロック0 → [0, 1], ブロック1 → [2, 3], ブロック2 → [4, 5]
+kernel_ids = block_id * blocks_per_kv_block + arange(blocks_per_kv_block)
+</code></pre>
+<p><code>append_row()</code> と <code>add_row()</code> は、ブロックIDを追加する前にこの変換を適用する。<code>compute_slot_mapping()</code> では変換後の <code>kernel_block_size</code> が <code>block_size</code> として使用される。</p>
+<h3 id="context-parallel対応"><a class="header" href="#context-parallel対応">Context Parallel対応</a></h3>
+<p>CP（DCP/PCP）有効時は「仮想ブロック」サイズ（= <code>block_size * cp_world_size</code>）を使ってブロックテーブルインデックスを算出し、ローカルランクに属さないトークンのスロットを <code>-1</code> にマスクする（L142-179）。</p>
+<h2 id="stage-c-gpu転送--_prepare_inputs-verified"><a class="header" href="#stage-c-gpu転送--_prepare_inputs-verified">Stage C: GPU転送 — <code>_prepare_inputs()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:1454</code></p>
+<p><code>_prepare_inputs()</code> は以下の順序でCPU→GPU転送を実行する:</p>
+<pre><code>1. commit_block_table(num_reqs)      ← 最初に発行（DMAオーバーラップ最適化）
+2. positions計算 (CPU)               ← DMA中にCPU演算
+3. token_indices計算 (CPU)           ← DMA中にCPU演算
+4. compute_slot_mapping()            ← CPU演算
+5. commit_slot_mapping()             ← DMA発行
+6. query_start_loc → GPU
+7. seq_lens → GPU
+8. input_ids → GPU
+9. positions → GPU
+</code></pre>
+<p><strong>最適化ポイント</strong>: <code>commit_block_table()</code> をCPU演算の前に呼ぶことで、ブロックテーブルのDMA転送とCPU上のslot_mapping/positions計算を並行実行する（L1472-1474のコメント）。</p>
+<h3 id="cpugpubuffer"><a class="header" href="#cpugpubuffer">CpuGpuBuffer</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/utils.py:105</code></p>
+<p>ピン留めメモリCPUテンソル + GPUテンソルのペア。<code>np</code> 属性でnumpyビューを公開し、CPU側の演算をnumpy高速演算で行える。<code>copy_to_gpu(n)</code> は <code>non_blocking=True</code> でDMA転送を発行。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>属性</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cpu</code></td><td><code>torch.Tensor</code> (pinned)</td><td>ピン留めCPUメモリ</td></tr>
+<tr><td><code>gpu</code></td><td><code>torch.Tensor</code></td><td>GPU VRAM</td></tr>
+<tr><td><code>np</code></td><td><code>np.ndarray</code></td><td><code>cpu</code> のnumpyビュー</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="stage-d-2形式のスロットマッピング出力--_get_slot_mappings-verified"><a class="header" href="#stage-d-2形式のスロットマッピング出力--_get_slot_mappings-verified">Stage D: 2形式のスロットマッピング出力 — <code>_get_slot_mappings()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3237</code></p>
+<p><code>_get_slot_mappings()</code> はスロットマッピングを2つの形式で返す:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>形式</th><th>キー</th><th>消費者</th></tr>
+</thead>
+<tbody>
+<tr><td><code>slot_mappings_by_gid</code></td><td><code>dict[int, Tensor]</code> — KVキャッシュグループID</td><td><code>_build_attention_metadata()</code> → <code>CommonAttentionMetadata.slot_mapping</code></td></tr>
+<tr><td><code>slot_mappings_by_layer</code></td><td><code>dict[str, Tensor]</code> — レイヤー名</td><td><code>set_forward_context()</code> → <code>reshape_and_cache()</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>同一KVキャッシュグループ内のレイヤーは同じスロットマッピングテンソルを共有する。</p>
+<p><strong>CUDAGraph FULLモード時のパディング</strong>: 未使用トークンスロットは <code>-1</code> で埋められる（L3283-3285）。これはMambaの <code>PAD_SLOT_ID</code> と一致し、<code>reshape_and_cache()</code> が <code>-1</code> スロットをスキップする。</p>
+<h2 id="stage-e-attentionメタデータ構築--_build_attention_metadata-verified"><a class="header" href="#stage-e-attentionメタデータ構築--_build_attention_metadata-verified">Stage E: Attentionメタデータ構築 — <code>_build_attention_metadata()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:1673</code></p>
+<h3 id="commonattentionmetadata"><a class="header" href="#commonattentionmetadata">CommonAttentionMetadata</a></h3>
+<p>全KVキャッシュグループの共通基盤。グループ0のblock_table/slot_mappingで初期化し、他グループでは <code>copy()</code> (shallow copy) してblock_tableとslot_mappingのみ差し替える。</p>
+<pre><code class="language-python">cm_base = CommonAttentionMetadata(
+    query_start_loc=...,     # GPU tensor [num_reqs+1]
+    seq_lens=...,            # GPU tensor [num_reqs]
+    block_table_tensor=...,  # GPU tensor [num_reqs, max_blocks] ← グループ0
+    slot_mapping=...,        # GPU tensor [num_tokens] ← グループ0
+    max_query_len=...,
+    max_seq_len=...,
+    ...
+)
+</code></pre>
+<h3 id="per-layer-attentionmetadata構築"><a class="header" href="#per-layer-attentionmetadata構築">Per-layer AttentionMetadata構築</a></h3>
+<pre class="mermaid">graph TD
+    A[CommonAttentionMetadata] --&gt;|"copy() + グループ別&lt;br&gt;block_table/slot_mapping"| B["cm (per kv_cache_group)"]
+    B --&gt; C["AttentionMetadataBuilder.build()"]
+    C --&gt; D["AttentionMetadata"]
+    D --&gt;|"同一attn_group内の&lt;br&gt;全レイヤーが共有"| E["attn_metadata[layer_name]"]
+</pre>
+
+<p><code>_build_attn_group_metadata()</code> 内部関数が各<code>(kv_cache_gid, attn_gid)</code>ペアに対して:</p>
+<ol>
+<li><code>attn_group.get_metadata_builder()</code> でビルダーを取得</li>
+<li><code>builder.build(common_attn_metadata=cm)</code> で <code>AttentionMetadata</code> を生成</li>
+<li><code>attn_group.layer_names</code> の全レイヤーに同じメタデータを割り当て</li>
+</ol>
+<h3 id="キャッシュ最適化"><a class="header" href="#キャッシュ最適化">キャッシュ最適化</a></h3>
+<p>Hybridモデルで同じ <code>KVCacheSpec</code> + 同じビルダー型の組み合わせが複数グループに現れる場合、2番目以降は <code>builder.update_block_table()</code> で block_table のみ差し替え、ビルド全体をスキップする（L1824-1832）。</p>
+<h3 id="戻り値の型"><a class="header" href="#戻り値の型">戻り値の型</a></h3>
+<pre><code class="language-python">PerLayerAttnMetadata = dict[str, AttentionMetadata]      # 通常
+                     | list[dict[str, AttentionMetadata]] # UBatching(DBO)時
+</code></pre>
+<h2 id="execute_model-内の呼び出し順序-verified"><a class="header" href="#execute_model-内の呼び出し順序-verified">execute_model() 内の呼び出し順序 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code></p>
+<pre><code>execute_model(scheduler_output)
+  │
+  ├─ 1. _prepare_inputs()                    # L3383
+  │     block_table DMA + slot_mapping計算 + GPU転送
+  │
+  ├─ 2. _determine_batch_execution_and_padding()  # L3398
+  │     CUDAGraphモード判定 → num_tokens_padded, num_reqs_padded
+  │
+  ├─ 3. _get_slot_mappings()                  # L3468
+  │     2形式出力: by_gid (→ attn_metadata), by_layer (→ ForwardContext)
+  │
+  ├─ 4. _build_attention_metadata()           # L3479
+  │     CommonAttentionMetadata → per-layer AttentionMetadata
+  │
+  ├─ 5. set_forward_context(slot_mapping=slot_mappings_by_layer)  # L3524
+  │     ForwardContext にスロットマッピングを設定
+  │
+  └─ 6. _model_forward()                      # L3538
+        model.forward() → Attention layer が ForwardContext から
+        slot_mapping を取得し reshape_and_cache() を実行
+</code></pre>
+<h2 id="主要ファイル-3"><a class="header" href="#主要ファイル-3">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>_update_states()</code> (L874), <code>_prepare_inputs()</code> (L1454), <code>_build_attention_metadata()</code> (L1673), <code>_get_slot_mappings()</code> (L3237), <code>execute_model()</code> (L3312)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>BlockTable</code> (L16), <code>compute_slot_mapping()</code> (L133), <code>map_to_kernel_blocks()</code> (L203), <code>MultiGroupBlockTable</code> (L253)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/utils.py</code></td><td><code>CpuGpuBuffer</code> (L105)</td></tr>
 </tbody>
 </table>
 </div>
@@ -2254,7 +2607,7 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-09</p>
 </blockquote>
-<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
+<h2 id="概要-11"><a class="header" href="#概要-11">概要</a></h2>
 <p><code>InputProcessor</code>はユーザー入力（テキストプロンプト、SamplingParams等）を内部表現<code>EngineCoreRequest</code>に変換するコンポーネントである。トークナイズ、パラメータのバリデーションと正規化、マルチモーダル入力の前処理を担当する。AsyncLLMの初期化時に生成され、フロントエンドプロセスで動作する。</p>
 <h2 id="アーキテクチャ-5"><a class="header" href="#アーキテクチャ-5">アーキテクチャ</a></h2>
 <pre class="mermaid">graph LR
@@ -2356,7 +2709,7 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
+<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
 <p><code>KVCacheManager</code> は PagedAttention に基づく KV キャッシュブロックの割り当て・解放・プレフィックスキャッシュ検索を管理するクラスである。4層の階層設計（<code>KVCacheManager</code> → <code>KVCacheCoordinator</code> → <code>SingleTypeKVCacheManager</code> → <code>BlockPool</code>）でマルチグループ KV キャッシュを統括する。Scheduler から呼び出され、各リクエストに必要な GPU メモリブロックを確保する。</p>
 <h2 id="アーキテクチャ-6"><a class="header" href="#アーキテクチャ-6">アーキテクチャ</a></h2>
 <h3 id="クラス階層-1"><a class="header" href="#クラス階層-1">クラス階層</a></h3>
@@ -2639,7 +2992,7 @@ class KVCacheBlocks:
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-11"><a class="header" href="#概要-11">概要</a></h2>
+<h2 id="概要-13"><a class="header" href="#概要-13">概要</a></h2>
 <p><code>SingleTypeKVCacheManager</code> は1種類のアテンションタイプの KV キャッシュ管理ロジックを担当する抽象基底クラスである。アテンションタイプごとにサブクラスが存在し、ブロックの割り当て・解放・プレフィックスキャッシュ検索をそれぞれのセマンティクスに合わせて実装する。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py</code></p>
 <h2 id="spec_manager_map-deep-verified"><a class="header" href="#spec_manager_map-deep-verified">spec_manager_map [DEEP] [VERIFIED]</a></h2>
@@ -2657,7 +3010,7 @@ class KVCacheBlocks:
 <p><code>get_manager_for_kv_cache_spec(spec, **kwargs)</code> ファクトリ関数がこのマップから Manager クラスをディスパッチする。</p>
 <h2 id="基底クラス-singletypekvcachemanager-deep-verified"><a class="header" href="#基底クラス-singletypekvcachemanager-deep-verified">基底クラス: SingleTypeKVCacheManager [DEEP] [VERIFIED]</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></p>
-<h3 id="状態管理"><a class="header" href="#状態管理">状態管理</a></h3>
+<h3 id="状態管理-1"><a class="header" href="#状態管理-1">状態管理</a></h3>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3001,7 +3354,7 @@ sliding_window_contiguous_blocks = ceil((window - 1) / block_size)
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
+<h2 id="概要-14"><a class="header" href="#概要-14">概要</a></h2>
 <p><code>BlockPool</code> はKVキャッシュの物理ブロックを管理するクラスである。ブロックの割り当て・解放・プレフィックスキャッシュ索引を一元管理し、LRU Eviction によるメモリ再利用を実現する。3つの内部データ構造（<code>FreeKVCacheBlockQueue</code>、<code>BlockHashToBlockMap</code>、<code>KVCacheBlock</code>）で構成される。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:128</code></p>
 <h2 id="kvcacheblock-deep-verified"><a class="header" href="#kvcacheblock-deep-verified">KVCacheBlock [DEEP] [VERIFIED]</a></h2>
@@ -3332,7 +3685,7 @@ def should_sample_block(self) -&gt; bool:
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-13"><a class="header" href="#概要-13">概要</a></h2>
+<h2 id="概要-15"><a class="header" href="#概要-15">概要</a></h2>
 <p>プレフィックスキャッシュは、異なるリクエスト間で共通するプロンプトプレフィックスの KV キャッシュブロックを再利用する機構である。トークン列をブロック単位でハッシュ化し、ハッシュチェーン（各ブロックのハッシュが前のブロックのハッシュに依存）を構築することで、プレフィックスの最長一致を効率的に検索する。</p>
 <h2 id="ハッシュチェーン計算-deep-verified"><a class="header" href="#ハッシュチェーン計算-deep-verified">ハッシュチェーン計算 [DEEP] [VERIFIED]</a></h2>
 <h3 id="hash_block_tokens"><a class="header" href="#hash_block_tokens">hash_block_tokens()</a></h3>
@@ -3636,7 +3989,7 @@ Scheduler.schedule()
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-14"><a class="header" href="#概要-14">概要</a></h2>
+<h2 id="概要-16"><a class="header" href="#概要-16">概要</a></h2>
 <p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
 <h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
 <pre class="mermaid">graph TD
@@ -3738,7 +4091,7 @@ Scheduler.schedule()
 <li><strong>上流</strong>: <a href="#エントリポイント-asyncllm--llm-サマリー">エントリポイント</a> → <a href="#inputprocessor-サマリー">InputProcessor</a></li>
 <li><strong>下流</strong>: <a href="#scheduler-サマリー">Scheduler</a> → <a href="#gpumodelrunner">GPUModelRunner</a> → モデル層</li>
 </ul>
-<h2 id="主要ファイル-2"><a class="header" href="#主要ファイル-2">主要ファイル</a></h2>
+<h2 id="主要ファイル-4"><a class="header" href="#主要ファイル-4">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4038,7 +4391,7 @@ embed_input_ids():
       ▼
 language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
 </code></pre>
-<h2 id="主要ファイル-3"><a class="header" href="#主要ファイル-3">主要ファイル</a></h2>
+<h2 id="主要ファイル-5"><a class="header" href="#主要ファイル-5">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4109,7 +4462,7 @@ language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
 </pre>
 
 <h2 id="1-encodercachemanager"><a class="header" href="#1-encodercachemanager">1. EncoderCacheManager</a></h2>
-<h3 id="概要-15"><a class="header" href="#概要-15">概要</a></h3>
+<h3 id="概要-17"><a class="header" href="#概要-17">概要</a></h3>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17-267</code></p>
 <p>ビジョンエンコーダの出力（埋め込みテンソル）のライフサイクルを管理する。リファレンスカウント方式でリクエスト間のキャッシュ共有を実現し、遅延Evictionでメモリ効率を高める。</p>
 <h3 id="データ構造-1"><a class="header" href="#データ構造-1">データ構造</a></h3>
@@ -4310,7 +4663,7 @@ inputs_embeds_scheduled = self.model.embed_input_ids(
         ↓                           ↓                            ↓
   HF処理スキップ            エンコーダ計算スキップ          テンソル再利用
 </code></pre>
-<h2 id="主要ファイル-4"><a class="header" href="#主要ファイル-4">主要ファイル</a></h2>
+<h2 id="主要ファイル-6"><a class="header" href="#主要ファイル-6">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4597,7 +4950,7 @@ P1: hash → cache miss → 共有メモリから読み取り
 P0: hash → cache hit  → data=None で送信
 P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ）
 </code></pre>
-<h2 id="主要ファイル-5"><a class="header" href="#主要ファイル-5">主要ファイル</a></h2>
+<h2 id="主要ファイル-7"><a class="header" href="#主要ファイル-7">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4630,7 +4983,7 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-16"><a class="header" href="#概要-16">概要</a></h2>
+<h2 id="概要-18"><a class="header" href="#概要-18">概要</a></h2>
 <p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、バックエンド（EngineCore）からZMQ経由で受信した<code>EngineCoreOutput</code>を、ユーザー向けの<code>RequestOutput</code>に変換する。主な処理はインクリメンタルデトークナイズ、停止文字列判定、logprobs処理である。AsyncLLMの<code>output_handler</code>バックグラウンドタスクから呼び出される。</p>
 <h2 id="process_outputs-フロー"><a class="header" href="#process_outputs-フロー">process_outputs() フロー</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
@@ -4756,13 +5109,13 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <li><strong>上流</strong>: AsyncLLM（output_handlerタスクから呼び出し）、EngineCoreOutputs（ZMQ経由受信）</li>
 <li><strong>下流</strong>: APIサーバー（RequestOutputをyield）</li>
 </ul>
-<h2 id="phase-2-深堀り候補-2"><a class="header" href="#phase-2-深堀り候補-2">Phase 2 深堀り候補</a></h2>
+<h2 id="phase-2-深堀り候補-1"><a class="header" href="#phase-2-深堀り候補-1">Phase 2 深堀り候補</a></h2>
 <ul>
 <li><code>RequestOutputCollector</code>のキューイング実装</li>
 <li>ストリーミングモード（DELTA）時のテキスト差分計算詳細</li>
 <li>n&gt;1サンプリング時のParentRequest管理</li>
 </ul>
-<h2 id="主要ファイル-6"><a class="header" href="#主要ファイル-6">主要ファイル</a></h2>
+<h2 id="主要ファイル-8"><a class="header" href="#主要ファイル-8">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4784,7 +5137,7 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-17"><a class="header" href="#概要-17">概要</a></h2>
+<h2 id="概要-19"><a class="header" href="#概要-19">概要</a></h2>
 <p><code>Scheduler</code>はContinuous Batchingの中核コンポーネントであり、各ステップでどのリクエストにどれだけのトークンを計算させるかを決定する。<code>schedule()</code>メソッドは3フェーズ（RUNNING処理 → WAITING処理 → Output構築）で構成され、トークン予算の範囲内で最大限のリクエストをスケジュールする。Unified Compute Modelを採用し、Prefill/Decodeを明示的に区別せず <code>num_computed_tokens</code> の進捗で統一的に管理する。</p>
 <h2 id="アーキテクチャ-7"><a class="header" href="#アーキテクチャ-7">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
@@ -5373,7 +5726,7 @@ finally:
 <hr>
 <h2 id="3-ecexampleconnector-参照実装の分析-verified"><a class="header" href="#3-ecexampleconnector-参照実装の分析-verified">3. ECExampleConnector 参照実装の分析 [VERIFIED]</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py</code></p>
-<h3 id="概要-18"><a class="header" href="#概要-18">概要</a></h3>
+<h3 id="概要-20"><a class="header" href="#概要-20">概要</a></h3>
 <p>safetensors を使ってディスクにエンコーダ出力テンソルを保存/読込するデバッグ用実装。全 199 行。</p>
 <h3 id="ストレージ構造-1"><a class="header" href="#ストレージ構造-1">ストレージ構造</a></h3>
 <pre><code>{shared_storage_path}/
@@ -6506,7 +6859,7 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
-<h2 id="概要-19"><a class="header" href="#概要-19">概要</a></h2>
+<h2 id="概要-21"><a class="header" href="#概要-21">概要</a></h2>
 <p>vLLMをGPU2枚・TP=2で起動した場合のプロセス構成、コンポーネント配置、プロセス間通信メカニズムを調査した。</p>
 <h2 id="1-プロセス構成合計4プロセス"><a class="header" href="#1-プロセス構成合計4プロセス">1. プロセス構成（合計4プロセス）</a></h2>
 <div class="table-wrapper">
@@ -6857,7 +7210,7 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
 </table>
 </div>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/uniproc_executor.py:26</code> (UniProcExecutor)</p>
-<h2 id="主要ファイル-7"><a class="header" href="#主要ファイル-7">主要ファイル</a></h2>
+<h2 id="主要ファイル-9"><a class="header" href="#主要ファイル-9">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>

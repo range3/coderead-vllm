@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>EngineCore サマリー - コードリーディング: vLLM</title>
+        <title>InputBatch: 永続バッチと状態管理 - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -175,181 +175,148 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="enginecore-サマリー"><a class="header" href="#enginecore-サマリー">EngineCore サマリー</a></h1>
+                        <h1 id="inputbatch-永続バッチと状態管理"><a class="header" href="#inputbatch-永続バッチと状態管理">InputBatch: 永続バッチと状態管理</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p><code>EngineCore</code>はバックエンドプロセス（<code>EngineCoreProc</code>）内で動作する推論ループの中央制御コンポーネントである。<code>Scheduler</code>、<code>ModelExecutor</code>、<code>KVCacheManager</code>を統括し、<code>step()</code>メソッドで <strong>schedule → execute → update</strong> のサイクルを繰り返す。フロントエンドプロセスとはZMQ IPC経由で通信し、<code>EngineCoreRequest</code>を受信して<code>EngineCoreOutputs</code>を返す。</p>
-<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
-<pre class="mermaid">graph TD
-    subgraph EngineCoreプロセス
-        EC["EngineCore"]
-        Sched["Scheduler"]
-        KVM["KVCacheManager"]
-        Exec["ModelExecutor"]
+<p>GPUModelRunnerは2つのデータ構造でリクエスト状態を管理する:</p>
+<ul>
+<li><strong><code>CachedRequestState</code></strong> — リクエストごとの論理状態（step間で永続、プリエンプション後も保持）</li>
+<li><strong><code>InputBatch</code></strong> — 全リクエストの物理バッチテンソル群（事前割り当て、step間でCPU側を差分更新）</li>
+</ul>
+<p>永続バッチ最適化により、連続するstep間でリクエストの大部分が同じであることを前提に、差分のみを更新する。</p>
+<h2 id="cachedrequeststate-verified"><a class="header" href="#cachedrequeststate-verified">CachedRequestState [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:30</code></p>
+<p><code>@dataclass</code> で定義されるリクエスト単位の状態。<code>GPUModelRunner.requests: dict[str, CachedRequestState]</code> に格納される。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>req_id</code></td><td><code>str</code></td><td>リクエストID</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>プロンプトトークンID列</td></tr>
+<tr><td><code>prompt_embeds</code></td><td><code>Tensor | None</code></td><td>プロンプト埋め込み（embedsモード時）</td></tr>
+<tr><td><code>mm_features</code></td><td><code>list[MultiModalFeatureSpec]</code></td><td>マルチモーダル特徴量</td></tr>
+<tr><td><code>sampling_params</code></td><td><code>SamplingParams | None</code></td><td>サンプリングパラメータ</td></tr>
+<tr><td><code>generator</code></td><td><code>torch.Generator | None</code></td><td>シード付き乱数生成器</td></tr>
+<tr><td><code>block_ids</code></td><td><code>tuple[list[int], ...]</code></td><td>KVキャッシュグループごとのブロックID列</td></tr>
+<tr><td><code>num_computed_tokens</code></td><td><code>int</code></td><td>計算済みトークン数（プレフィックスキャッシュ含む）</td></tr>
+<tr><td><code>output_token_ids</code></td><td><code>list[int]</code></td><td>生成済みトークンID列</td></tr>
+<tr><td><code>lora_request</code></td><td><code>LoRARequest | None</code></td><td>LoRAアダプタ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ライフサイクル</strong>: <code>_update_states()</code> で作成され、<code>finished_req_ids</code> で削除される。プリエンプション時もInputBatchからは除去されるが <code>self.requests</code> には保持され、復帰時に再利用される。</p>
+<p><strong><code>num_tokens</code> プロパティ</strong>: <code>num_prompt_tokens + len(output_token_ids)</code> — 現在のリクエスト全体のトークン数。</p>
+<h2 id="inputbatch-verified"><a class="header" href="#inputbatch-verified">InputBatch [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:81</code></p>
+<p>全リクエストの状態を事前割り当てテンソル群で管理するバッチマネージャー。</p>
+<h3 id="主要テンソル群"><a class="header" href="#主要テンソル群">主要テンソル群</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>テンソル</th><th>shape</th><th>種別</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>token_ids_cpu_tensor</code></td><td><code>(max_num_reqs, max_model_len)</code></td><td>CPU (非pin)</td><td>全リクエストのトークンID。<strong>大きくなりうる</strong>（TODOコメントあり）</td></tr>
+<tr><td><code>num_computed_tokens_cpu_tensor</code></td><td><code>(max_num_reqs,)</code></td><td>CPU (pin)</td><td>計算済みトークン数</td></tr>
+<tr><td><code>num_tokens_no_spec</code></td><td><code>(max_num_reqs,)</code></td><td>numpy</td><td>Spec Decode以外のトークン数</td></tr>
+<tr><td><code>num_prompt_tokens</code></td><td><code>(max_num_reqs,)</code></td><td>numpy</td><td>プロンプトトークン数</td></tr>
+<tr><td><code>temperature_cpu</code> / <code>top_p_cpu</code> / <code>top_k_cpu</code></td><td><code>(max_num_reqs,)</code></td><td>CPU (pin)</td><td>サンプリングパラメータ</td></tr>
+<tr><td><code>block_table</code></td><td><code>MultiGroupBlockTable</code></td><td>CpuGpuBuffer</td><td>KVキャッシュブロックテーブル</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="リクエスト管理"><a class="header" href="#リクエスト管理">リクエスト管理</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>データ構造</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_req_ids: list[str | None]</code></td><td>インデックス→リクエストID。<code>None</code> は空スロット</td></tr>
+<tr><td><code>req_id_to_index: dict[str, int]</code></td><td>リクエストID→インデックス。逆引き</td></tr>
+<tr><td><code>num_reqs</code> プロパティ</td><td><code>len(req_id_to_index)</code> — 現在のリクエスト数</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="add_request--remove_request-verified"><a class="header" href="#add_request--remove_request-verified">add_request() / remove_request() [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:304</code>, <code>469</code></p>
+<p><strong><code>add_request()</code></strong>:</p>
+<ol>
+<li>空きインデックスを探す（末尾追加 or 空スロット再利用）</li>
+<li><code>token_ids_cpu</code> にプロンプト+出力トークンIDをコピー</li>
+<li><code>block_table.add_row()</code> でブロックIDを設定</li>
+<li>サンプリングパラメータを各テンソルにコピー</li>
+</ol>
+<p><strong><code>remove_request()</code></strong>:</p>
+<ol>
+<li><code>req_id_to_index</code> から削除、<code>_req_ids[index] = None</code> で空スロット化</li>
+<li><code>batch_update_builder.removed_append()</code> で空きインデックスを記録</li>
+<li>サンプリング関連のset/dictからも除去</li>
+<li>テンソル自体はクリアしない（次のadd_requestで上書きされる）</li>
+</ol>
+<h3 id="condense--バッチ圧縮-verified"><a class="header" href="#condense--バッチ圧縮-verified">condense() — バッチ圧縮 [VERIFIED]</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_input_batch.py:626</code></p>
+<p><code>remove_request()</code> で生じた空スロットを埋める処理。末尾のリクエストを空スロットに移動し、連続した配列を保つ:</p>
+<pre><code>[A, _, B, _, C]  →  [A, C, B]  （Cを空スロット1に移動）
+</code></pre>
+<p>移動対象: <code>token_ids_cpu</code>, <code>num_tokens_no_spec</code>, <code>num_prompt_tokens</code>, <code>num_computed_tokens_cpu</code>, <code>block_table.move_row()</code>, サンプリングパラメータ等。</p>
+<h2 id="multigroupblocktable-verified"><a class="header" href="#multigroupblocktable-verified">MultiGroupBlockTable [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:253</code></p>
+<p>KVキャッシュグループごとに <code>BlockTable</code> を保持するラッパー。Hybridモデル（異なるアテンションタイプが混在）では複数のBlockTableが存在する。</p>
+<pre><code class="language-python"># アクセスパターン
+input_batch.block_table[kv_cache_gid]  # → BlockTable
+input_batch.block_table.append_row(block_ids, req_index)  # 全グループに委譲
+input_batch.block_table.commit_block_table(num_reqs)       # 全グループDMA
+</code></pre>
+<p><code>block_ids</code> は <code>tuple[list[int], ...]</code> 型で、外側タプルのインデックスがKVキャッシュグループIDに対応。</p>
+<h2 id="永続バッチ最適化の全体像-verified"><a class="header" href="#永続バッチ最適化の全体像-verified">永続バッチ最適化の全体像 [VERIFIED]</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant US as _update_states()
+    participant IB as InputBatch
+    participant PI as _prepare_inputs()
+    participant GPU as GPU Tensors
 
-        EC --&gt;|"1. schedule()"| Sched
-        Sched --&gt;|"allocate_slots()"| KVM
-        Sched --&gt;|"SchedulerOutput"| EC
-        EC --&gt;|"2. execute_model()"| Exec
-        Exec --&gt;|"Future&lt;ModelRunnerOutput&gt;"| EC
-        EC --&gt;|"3. update_from_output()"| Sched
-        Sched --&gt;|"EngineCoreOutputs"| EC
-    end
-
-    ZMQ_IN["ZMQ ROUTER&lt;br&gt;(受信)"] --&gt;|"EngineCoreRequest"| EC
-    EC --&gt;|"EngineCoreOutputs"| ZMQ_OUT["ZMQ PUSH&lt;br&gt;(送信)"]
+    S-&gt;&gt;US: SchedulerOutput
+    Note over US: finished_req_ids → remove_request()
+    Note over US: unscheduled → remove_request()
+    Note over US: new_reqs → CachedRequestState作成
+    Note over US: cached_reqs → block_ids更新
+    US-&gt;&gt;IB: add_request() / append_row() / condense()
+    Note over IB: CPU側テンソルを差分更新
+    IB-&gt;&gt;PI: commit_block_table() (DMA)
+    PI-&gt;&gt;GPU: slot_mapping, positions, input_ids etc.
 </pre>
 
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
+<p><strong>最適化の本質</strong>: 前stepと大部分が同じリクエスト群に対して、変更があったフィールド（新ブロックID、num_computed_tokens等）のみをCPU側で更新し、GPUへはDMA一括転送する。毎step全データを再構築する必要がない。</p>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
 </thead>
 <tbody>
-<tr><td><code>EngineCore</code></td><td>推論ループ本体</td><td><code>target/vllm/vllm/v1/engine/core.py:82</code></td></tr>
-<tr><td><code>EngineCoreProc</code></td><td>プロセスラッパー。ZMQソケット管理とイベントループ</td><td><code>target/vllm/vllm/v1/engine/core.py</code></td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_input_batch.py</code></td><td><code>CachedRequestState</code> (L30), <code>InputBatch</code> (L81), <code>add_request()</code> (L304), <code>remove_request()</code> (L469), <code>condense()</code> (L626)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>MultiGroupBlockTable</code> (L253)</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>__init__()</code></td><td>L82</td><td>Scheduler, ModelExecutor, KVキャッシュの初期化</td></tr>
-<tr><td><code>step()</code></td><td>L389</td><td>メインループ: schedule → execute → update</td></tr>
-<tr><td><code>step_with_batch_queue()</code></td><td>L434</td><td>パイプライン並列化版step（batch_queue使用）</td></tr>
-<tr><td><code>add_request()</code></td><td>L288</td><td>リクエストをバリデーション後Schedulerに登録</td></tr>
-<tr><td><code>post_step()</code></td><td>L424</td><td>step後処理（Speculative Decodingのドラフトトークン更新）</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="step-サイクル"><a class="header" href="#step-サイクル">step() サイクル</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code></p>
-<pre><code>EngineCore.step() -&gt; tuple[dict[int, EngineCoreOutputs], bool]
-  │
-  ├─ スケジューラ停止チェック                           # L397
-  │   if _scheduler_paused: return {}, False
-  │
-  ├─ リクエスト有無チェック                             # L402
-  │   if not scheduler.has_requests(): return {}, False
-  │
-  ├─ 1. scheduler.schedule()                            # L404
-  │   → SchedulerOutput
-  │
-  ├─ 2. executor.execute_model(scheduler_output,        # L405
-  │       non_block=True)
-  │   → Future[ModelRunnerOutput | None]
-  │
-  ├─ 3. scheduler.get_grammar_bitmask(scheduler_output) # L406
-  │   → grammar_output（構造化出力用）
-  │
-  ├─ 4. future.result()                                 # L411
-  │   → ModelRunnerOutput（ブロッキング待機）
-  │
-  ├─ 5. if model_output is None:                        # L413
-  │       model_output = executor.sample_tokens(grammar_output)
-  │   （非同期スケジューリング時: execute_modelとsamplingが分離）
-  │
-  ├─ 6. _process_aborts_queue()                         # L417
-  │
-  └─ 7. scheduler.update_from_output(                   # L418
-  │       scheduler_output, model_output)
-  │   → dict[int, EngineCoreOutputs]
-  │
-  └─ return (engine_core_outputs,                       # L422
-             total_num_scheduled_tokens &gt; 0)
-</code></pre>
-<p><strong>戻り値</strong>:</p>
-<ul>
-<li>第1要素: クライアントインデックス → EngineCoreOutputs のマッピング</li>
-<li>第2要素: モデル実行が行われたか（<code>total_num_scheduled_tokens &gt; 0</code>）</li>
-</ul>
-<h2 id="add_request-フロー"><a class="header" href="#add_request-フロー">add_request() フロー</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:288</code></p>
-<pre><code>add_request(request, request_wave=0)                    # L288
-  ├─ request_id の型チェック（str必須）                   # L295
-  ├─ pooling_params のタスクバリデーション                # L300
-  ├─ kv_transfer_params の互換性チェック                  # L311
-  └─ scheduler.add_request(request)                      # L319
-</code></pre>
-<h2 id="batch_queue-パイプライン並列化-shallow"><a class="header" href="#batch_queue-パイプライン並列化-shallow">batch_queue パイプライン並列化 [SHALLOW]</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:434</code> (step_with_batch_queue)</p>
-<p><code>max_concurrent_batches &gt; 1</code> の場合、<code>step_with_batch_queue()</code> が <code>step_fn</code> として使用される。スケジューリングとモデル実行をパイプライン的にオーバーラップさせ、GPUのアイドル時間を削減する。</p>
-<ul>
-<li><code>batch_queue</code>: <code>deque[tuple[Future, SchedulerOutput, Future]]</code></li>
-<li>新しいスケジュール結果を <code>appendleft()</code> で追加、完了待ちを <code>pop()</code> で取得</li>
-<li>前のバッチの実行完了を待たずに次のバッチをスケジュール可能</li>
-</ul>
-<h2 id="kvキャッシュ初期化フロー-shallow"><a class="header" href="#kvキャッシュ初期化フロー-shallow">KVキャッシュ初期化フロー [SHALLOW]</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:82</code> (<strong>init</strong>)</p>
-<pre><code>EngineCore.__init__()
-  → _initialize_kv_caches()
-    → model_executor.get_kv_cache_specs()       # モデルのKVキャッシュ要件取得
-    → determine_available_memory()               # GPUメモリプロファイリング
-    → get_kv_cache_configs()                     # ブロック数等の設定算出
-    → generate_scheduler_kv_cache_config()       # Scheduler用設定生成
-    → model_executor.initialize_from_config()    # GPUメモリ確保
-</code></pre>
-<p>KV Connector（KV Transfer/LMCache連携）が有効な場合:</p>
-<ul>
-<li><code>scheduler.get_kv_connector()</code> でコネクタ有無を確認 (L159)</li>
-<li>各ワーカーのハンドシェイクメタデータを収集・統合 (L164-175)</li>
-</ul>
-<h2 id="async_scheduling-shallow"><a class="header" href="#async_scheduling-shallow">async_scheduling [SHALLOW]</a></h2>
-<p><code>vllm_config.scheduler_config.async_scheduling</code> で有効化。</p>
-<ul>
-<li>通常: <code>execute_model()</code> がモデル実行 + トークンサンプリングをまとめて実行</li>
-<li>async有効時: <code>execute_model()</code> はモデル実行のみ（<code>None</code> を返す）→ <code>sample_tokens()</code> で別途サンプリング</li>
-<li><code>post_step()</code> でのSpeculative Decodingドラフトトークン更新タイミングに影響</li>
-</ul>
-<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>max_concurrent_batches</code></td><td>1</td><td>batch_queueサイズ（&gt;1でパイプライン並列化）</td></tr>
-<tr><td><code>async_scheduling</code></td><td>False</td><td>非同期スケジューリングモード</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
-<pre><code>[EngineCoreProc イベントループ]
-  ├─ ZMQ受信 → EngineCore.add_request()
-  ├─ EngineCore.step_fn()  (= step() or step_with_batch_queue())
-  │   ├─ Scheduler.schedule()
-  │   ├─ ModelExecutor.execute_model()
-  │   └─ Scheduler.update_from_output()
-  ├─ EngineCore.post_step()
-  └─ ZMQ送信 ← EngineCoreOutputs
-</code></pre>
-<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
-<ul>
-<li><a href="../scheduler/summary.html">Scheduler</a></li>
-<li><a href="../kv-cache-manager/summary.html">KVCacheManager</a></li>
-<li><a href="../engine-core-client/summary.html">EngineCoreClient</a></li>
-<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
-<li><a href="../../architecture/data-flow.html">データフロー</a></li>
-</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../components/encoder-cache/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../components/gpu-model-runner/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/gpu-model-runner/kv-cache-interface.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -359,11 +326,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../components/encoder-cache/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../components/gpu-model-runner/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/gpu-model-runner/kv-cache-interface.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

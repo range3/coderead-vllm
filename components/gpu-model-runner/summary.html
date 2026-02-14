@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-43af35ac.js";
+            window.path_to_searchindex_js = "../../searchindex-a2697c32.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-9e89a2b8.js"></script>
+        <script src="../../toc-5c85ce16.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,9 +177,9 @@
                     <main>
                         <h1 id="gpumodelrunner"><a class="header" href="#gpumodelrunner">GPUModelRunner</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-15</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>GPUModelRunnerは、推論パイプラインの実行中核を担う巨大クラス（約6,300行）である。SchedulerOutputを受け取り、入力テンソルの準備、モデルのforward実行、サンプリングを経て、ModelRunnerOutputを返す。<strong>2フェーズ実行パターン</strong>（<code>execute_model()</code> → <code>sample_tokens()</code>）を採用し、モデルフォワードとgrammar bitmask計算の並行実行を可能にしている。</p>
@@ -191,6 +191,28 @@
     ECConnectorModelRunnerMixin,    # エンコーダキャッシュ対応
 ):
 </code></pre>
+<h2 id="状態管理"><a class="header" href="#状態管理">状態管理</a></h2>
+<p>GPUModelRunnerは2つのデータ構造でリクエスト状態を管理する:</p>
+<ul>
+<li><strong><code>self.requests: dict[str, CachedRequestState]</code></strong> — リクエストの論理状態（プリエンプション後も保持）</li>
+<li><strong><code>self.input_batch: InputBatch</code></strong> — 永続バッチテンソル群（事前割り当て、差分更新）</li>
+</ul>
+<p>永続バッチ最適化により、連続stepで変更があったリクエストのデータのみCPU側で更新し、GPUへはDMA一括転送する。</p>
+<p>詳細は <a href="input-batch.html">InputBatch: 永続バッチと状態管理</a> を参照。</p>
+<h2 id="kvcache-gpu-interface"><a class="header" href="#kvcache-gpu-interface">KVCache-GPU Interface</a></h2>
+<p>KVCacheManager（Scheduler側）が割り当てた論理ブロックIDは、4段階の変換を経てAttentionカーネルが消費する形式になる:</p>
+<pre><code>_update_states()        ← ブロックID取込（3ケース: 新規/追加/プリエンプション復帰）
+  ↓
+BlockTable              ← CPU側テーブル（CpuGpuBuffer）
+  ↓
+_prepare_inputs()       ← commit_block_table() DMA + compute_slot_mapping()
+  ↓
+_get_slot_mappings()    ← by_gid（AttentionMetadata用）/ by_layer（ForwardContext用）
+  ↓
+_build_attention_metadata() ← CommonAttentionMetadata → per-layer AttentionMetadata
+</code></pre>
+<p><strong>核心的な変換式</strong>: <code>slot = block_number * block_size + (position % block_size)</code></p>
+<p>詳細は <a href="kv-cache-interface.html">KVCache-GPU Interface</a> を参照。</p>
 <h2 id="2フェーズ実行パターン"><a class="header" href="#2フェーズ実行パターン">2フェーズ実行パターン</a></h2>
 <p>GPUModelRunnerの中核設計。<code>execute_model()</code>でモデルフォワードとlogits計算を行い、結果を<code>ExecuteModelState</code>に保存して<code>None</code>を返す。その後<code>sample_tokens()</code>が状態を復元してサンプリングを実行する。</p>
 <pre class="mermaid">sequenceDiagram
@@ -212,32 +234,30 @@
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code> (execute_model)</p>
 <pre><code>execute_model(scheduler_output, intermediate_tensors=None)
   │
-  ├─ 早期リターン判定                                      # L3335-3367
-  │   スケジュールトークン0件 → EMPTY_MODEL_RUNNER_OUTPUT
+  ├─ 1. バッチ状態更新 _update_states()                     # L3376
+  │     新規リクエスト登録、ブロックID更新、不要リクエスト除去
   │
-  ├─ 1. バッチ状態更新                                     # L3376
-  │   _update_states(scheduler_output)
-  │   → 新規リクエスト登録、キャッシュ済みリクエスト更新
+  ├─ 2. 入力準備 _prepare_inputs()                          # L3383
+  │     block_table DMA → slot_mapping計算 → positions/input_ids GPU転送
+  │     ※ DMAオーバーラップ最適化（L1472-1474）
   │
-  ├─ 2. 入力準備                                           # L3389
-  │   _prepare_inputs(scheduler_output)
-  │   → input_ids, positions, logits_indices 計算
+  ├─ 3. CUDAGraph判定                                       # L3398
+  │     _determine_batch_execution_and_padding()
+  │     → CUDAGraphMode(FULL/PIECEWISE/NONE) + パディング量決定
   │
-  ├─ 3. Attentionメタデータ構築                             # L3400
-  │   _build_attention_metadata(scheduler_output, ...)
+  ├─ 4. スロットマッピング2形式出力                            # L3468
+  │     _get_slot_mappings() → by_gid + by_layer
   │
-  ├─ 4. 前処理                                             # L3440-3504
-  │   slot_mapping取得、入力トークン/位置/埋め込み準備
+  ├─ 5. Attentionメタデータ構築                               # L3479
+  │     _build_attention_metadata()
+  │     → CommonAttentionMetadata → per-layer AttentionMetadata
   │
-  ├─ 5. モデルフォワード                                    # L3521-3603
-  │   _model_forward(...)
-  │   → hidden_states = model.forward(input_ids, positions, ...)
-  │   → logits = compute_logits(hidden_states)
+  ├─ 6. モデルフォワード                                      # L3538
+  │     set_forward_context(slot_mapping=by_layer)
+  │     → _model_forward() → model.forward() → logits
   │
-  └─ 6. 状態保存                                            # L3605-3615
-      ExecuteModelState(scheduler_output, logits, ...)
-      → self.execute_model_state に保存
-      → None を返す
+  └─ 7. 状態保存                                              # L3605-3615
+      ExecuteModelState に保存 → None を返す
 </code></pre>
 <p><strong>戻り値のパターン</strong>:</p>
 <ul>
@@ -250,30 +270,44 @@
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3621</code> (sample_tokens)</p>
 <pre><code>sample_tokens(grammar_output)
   │
-  ├─ 1. 状態復元                                            # L3643-3657
-  │   ExecuteModelState から logits, scheduler_output 等を復元
-  │   self.execute_model_state = None（クリア）
-  │
-  ├─ 2. Grammar制約適用                                     # L3659-3663
-  │   grammar bitmask を logits に適用（構造化出力時）
-  │
-  ├─ 3. サンプリング                                        # L3665-3666
-  │   _sample(logits, spec_decode_metadata) → SamplerOutput
-  │
-  ├─ 4. 後処理                                             # L3668-3699
-  │   バッチ状態に生成トークンを反映
-  │   PP時のトークンブロードキャスト
-  │   Speculative Decodingのドラフトトークン提案
-  │
-  └─ 5. ModelRunnerOutput構築                               # L3775-3787
-      ModelRunnerOutput(
-        req_ids, req_id_to_index,
-        sampled_token_ids,    # list[list[int]]
-        logprobs,             # numpy配列
-        prompt_logprobs_dict, # torch.Tensor
-        kv_connector_output, ...
-      )
+  ├─ 1. 状態復元 — ExecuteModelState から logits 等を復元     # L3643-3657
+  ├─ 2. Grammar制約適用 — bitmask → logits                  # L3659-3663
+  ├─ 3. サンプリング — _sample() → SamplerOutput             # L3665-3666
+  ├─ 4. 後処理 — バッチ状態反映、PP broadcast、ドラフト提案    # L3668-3699
+  └─ 5. ModelRunnerOutput構築                                # L3775-3787
 </code></pre>
+<h2 id="cudagraph統合-verified"><a class="header" href="#cudagraph統合-verified">CUDAGraph統合 [VERIFIED]</a></h2>
+<h3 id="cudagraphmode"><a class="header" href="#cudagraphmode">CUDAGraphMode</a></h3>
+<p>3つの実行モードが存在する:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モード</th><th>説明</th><th>使用条件</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FULL</code></td><td>forward全体をキャプチャ</td><td>Attentionバックエンドが対応、cascade attention無効</td></tr>
+<tr><td><code>PIECEWISE</code></td><td>Attention以外をキャプチャ（torch.compile統合）</td><td>Attention部分はコンパイル済みコードで実行</td></tr>
+<tr><td><code>NONE</code></td><td>Eagerモード</td><td>CUDAGraph無効、バッチサイズ超過、calc_kv_scales時</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="cudagraphdispatcher"><a class="header" href="#cudagraphdispatcher">CudagraphDispatcher</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/cudagraph_dispatcher.py:14</code></p>
+<p>事前キャプチャ済みCUDAGraphの中からランタイムで適切なグラフを選択する:</p>
+<ol>
+<li><code>cudagraph_keys: dict[CUDAGraphMode, set[BatchDescriptor]]</code> にキャプチャ済みのバッチ記述子を保持</li>
+<li><code>dispatch()</code> は入力 <code>num_tokens</code> を最小のパディングサイズに丸め上げ</li>
+<li>FULL → PIECEWISE → NONE の優先順序でキーを探索</li>
+</ol>
+<p><strong>バッチパディング</strong>: CUDAGraphは固定形状のテンソルを要求するため、実際のトークン数をキャプチャ済みサイズに丸め上げる。未使用スロットはslot_mapping <code>-1</code>（PAD_SLOT_ID）で埋められ、<code>reshape_and_cache()</code> がスキップする。</p>
+<h3 id="_determine_batch_execution_and_padding"><a class="header" href="#_determine_batch_execution_and_padding">_determine_batch_execution_and_padding()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3076</code></p>
+<p>毎stepの実行モード判定:</p>
+<ol>
+<li><code>_is_uniform_decode()</code> — 全リクエストがデコードフェーズ（query_len=1）か判定</li>
+<li><code>cudagraph_dispatcher.dispatch()</code> — モードとパディングサイズを決定</li>
+<li>Data Parallel時は <code>coordinate_batch_across_dp()</code> で全ランク間で合意</li>
+</ol>
 <h2 id="executemodelstate"><a class="header" href="#executemodelstate">ExecuteModelState</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code> (ExecuteModelState)</p>
 <p>2フェーズ間の一時状態を保持するNamedTuple。GPUテンソルを含むため、シリアライズはされない。</p>
@@ -295,38 +329,30 @@
 </tbody>
 </table>
 </div>
-<h2 id="6300行の内訳-inferred"><a class="header" href="#6300行の内訳-inferred">6,300行の内訳 [INFERRED]</a></h2>
-<p>GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一クラスに集約しているため:</p>
-<ul>
-<li><strong>バッチ状態管理</strong>: リクエストの追加・削除、永続バッチテンソルの管理</li>
-<li><strong>入力準備</strong>: トークンID、位置、埋め込みの計算</li>
-<li><strong>Attentionメタデータ</strong>: FlashAttention/FlashInfer用メタデータ構築</li>
-<li><strong>モデルフォワード</strong>: CUDAGraph対応、torch.compile統合</li>
-<li><strong>サンプリング</strong>: トップk/p/温度、logprobs計算</li>
-<li><strong>KV Transfer</strong>: KVコネクタとの連携</li>
-<li><strong>Speculative Decoding</strong>: ドラフトトークン提案・検証</li>
-<li><strong>Pipeline Parallelism</strong>: 中間テンソル管理</li>
-<li><strong>LoRA</strong>: アダプタの動的切り替え</li>
-<li><strong>マルチモーダル</strong>: エンコーダ入力の処理</li>
-</ul>
-<h2 id="上流下流の関係"><a class="header" href="#上流下流の関係">上流・下流の関係</a></h2>
-<ul>
-<li><strong>上流</strong>: Worker（<code>execute_model()</code> / <code>sample_tokens()</code>経由で呼び出し）</li>
-<li><strong>下流</strong>: モデル層（<code>model.forward()</code>）、Sampler</li>
-</ul>
-<h2 id="phase-2-深堀り候補"><a class="header" href="#phase-2-深堀り候補">Phase 2 深堀り候補</a></h2>
+<h2 id="6300行の内訳-verified"><a class="header" href="#6300行の内訳-verified">6,300行の内訳 [VERIFIED]</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>テーマ</th><th>関連メソッド</th><th>ユーザー関心</th></tr>
+<tr><th>行範囲</th><th>セクション</th></tr>
 </thead>
 <tbody>
-<tr><td>入力準備の詳細</td><td><code>_prepare_inputs()</code>, <code>_update_states()</code></td><td>中</td></tr>
-<tr><td>Attentionメタデータ</td><td><code>_build_attention_metadata()</code></td><td>KVキャッシュ関連で高</td></tr>
-<tr><td>CUDAGraph統合</td><td><code>_model_forward()</code>, CUDAGraphランナー</td><td>中</td></tr>
-<tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
-<tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位）</td></tr>
-<tr><td>マルチモーダル入力</td><td>エンコーダ処理、mm_cache</td><td>高（ユーザー関心3位） → <strong>Phase 2bで調査済み</strong></td></tr>
+<tr><td>1-312</td><td>インポート、型エイリアス、Async出力クラス、ExecuteModelState</td></tr>
+<tr><td>329-712</td><td><code>__init__</code>（設定、バッファ割当、状態初期化）</td></tr>
+<tr><td>713-873</td><td>ライフサイクルヘルパー（<code>reset_mm_cache</code>, <code>init_fp8_kv_scales</code> 等）</td></tr>
+<tr><td>874-1453</td><td>状態管理: <code>_update_states()</code>, <code>_update_states_after_model_execute()</code></td></tr>
+<tr><td>1454-1672</td><td>入力準備: <code>_prepare_inputs()</code>, <code>_prepare_input_ids()</code></td></tr>
+<tr><td>1673-2049</td><td><code>_build_attention_metadata()</code>（Attentionメタデータ構築）</td></tr>
+<tr><td>2050-2557</td><td>位置計算、MMエンコーダ実行</td></tr>
+<tr><td>2558-3311</td><td>モデルユーティリティ、<code>_get_slot_mappings()</code></td></tr>
+<tr><td>3312-3620</td><td><code>execute_model()</code>（メインforward）</td></tr>
+<tr><td>3621-3934</td><td><code>sample_tokens()</code>、PP broadcast、ドラフト提案</td></tr>
+<tr><td>3935-4118</td><td>Speculative Decoding提案</td></tr>
+<tr><td>4119-4609</td><td>モデルロード: <code>load_model()</code>, <code>reload_weights()</code></td></tr>
+<tr><td>4610-5108</td><td>ダミー実行、プロファイリング</td></tr>
+<tr><td>5109-5332</td><td>CUDAGraphキャプチャ: <code>capture_model()</code>, <code>_capture_cudagraphs()</code></td></tr>
+<tr><td>5333-5596</td><td>Attentionバックエンド初期化、メタデータビルダー</td></tr>
+<tr><td>5597-6152</td><td>KVキャッシュ初期化: <code>initialize_kv_cache()</code></td></tr>
+<tr><td>6152-6273</td><td><code>get_kv_cache_spec()</code>, タイミング統計</td></tr>
 </tbody>
 </table>
 </div>
@@ -339,6 +365,25 @@
 </ol>
 <p><code>encoder_cache: dict[str, torch.Tensor]</code> はGPU上のシンプルなdictキャッシュで、Schedulerの <code>free_encoder_mm_hashes</code> 指示で解放される。</p>
 <p>詳細は <a href="../multimodal/mm-engine-gpu.html">バックエンド MM処理パス</a> を参照。</p>
+<h2 id="上流下流の関係"><a class="header" href="#上流下流の関係">上流・下流の関係</a></h2>
+<ul>
+<li><strong>上流</strong>: Worker（<code>execute_model()</code> / <code>sample_tokens()</code>経由で呼び出し）</li>
+<li><strong>下流</strong>: モデル層（<code>model.forward()</code>）、Sampler</li>
+</ul>
+<h2 id="深堀り候補今後"><a class="header" href="#深堀り候補今後">深堀り候補（今後）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>テーマ</th><th>関連メソッド</th><th>ユーザー関心</th></tr>
+</thead>
+<tbody>
+<tr><td>サンプリング実装</td><td><code>_sample()</code>, Sampler</td><td>低</td></tr>
+<tr><td>KV Transfer連携</td><td><code>KVConnectorModelRunnerMixin</code></td><td>高（ユーザー関心2位。次セッション候補）</td></tr>
+<tr><td>Speculative Decoding</td><td><code>propose_draft_token_ids()</code></td><td>中</td></tr>
+<tr><td>async_scheduling</td><td><code>_update_states_after_model_execute()</code></td><td>中</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
@@ -347,6 +392,10 @@
 </thead>
 <tbody>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner</code> (L329), <code>execute_model()</code> (L3312), <code>sample_tokens()</code> (L3621), <code>ExecuteModelState</code> (L313)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_input_batch.py</code></td><td><code>CachedRequestState</code> (L30), <code>InputBatch</code> (L81)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>BlockTable</code> (L16), <code>MultiGroupBlockTable</code> (L253)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/cudagraph_dispatcher.py</code></td><td><code>CudagraphDispatcher</code> (L14)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/utils.py</code></td><td><code>CpuGpuBuffer</code> (L105)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160), <code>AsyncModelRunnerOutput</code> (L200)</td></tr>
 </tbody>
 </table>
@@ -360,7 +409,7 @@
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../components/input-processor/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/gpu-model-runner/input-batch.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -374,7 +423,7 @@
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../components/input-processor/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/gpu-model-runner/input-batch.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

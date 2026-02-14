@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>EngineCore サマリー - コードリーディング: vLLM</title>
+        <title>KVCache-GPU Interface: ブロックテーブルとスロットマッピング - コードリーディング: vLLM</title>
 
 
         <!-- Custom HTML head -->
@@ -175,181 +175,186 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="enginecore-サマリー"><a class="header" href="#enginecore-サマリー">EngineCore サマリー</a></h1>
+                        <h1 id="kvcache-gpu-interface-ブロックテーブルとスロットマッピング"><a class="header" href="#kvcache-gpu-interface-ブロックテーブルとスロットマッピング">KVCache-GPU Interface: ブロックテーブルとスロットマッピング</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p><code>EngineCore</code>はバックエンドプロセス（<code>EngineCoreProc</code>）内で動作する推論ループの中央制御コンポーネントである。<code>Scheduler</code>、<code>ModelExecutor</code>、<code>KVCacheManager</code>を統括し、<code>step()</code>メソッドで <strong>schedule → execute → update</strong> のサイクルを繰り返す。フロントエンドプロセスとはZMQ IPC経由で通信し、<code>EngineCoreRequest</code>を受信して<code>EngineCoreOutputs</code>を返す。</p>
-<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
-<pre class="mermaid">graph TD
-    subgraph EngineCoreプロセス
-        EC["EngineCore"]
-        Sched["Scheduler"]
-        KVM["KVCacheManager"]
-        Exec["ModelExecutor"]
-
-        EC --&gt;|"1. schedule()"| Sched
-        Sched --&gt;|"allocate_slots()"| KVM
-        Sched --&gt;|"SchedulerOutput"| EC
-        EC --&gt;|"2. execute_model()"| Exec
-        Exec --&gt;|"Future&lt;ModelRunnerOutput&gt;"| EC
-        EC --&gt;|"3. update_from_output()"| Sched
-        Sched --&gt;|"EngineCoreOutputs"| EC
-    end
-
-    ZMQ_IN["ZMQ ROUTER&lt;br&gt;(受信)"] --&gt;|"EngineCoreRequest"| EC
-    EC --&gt;|"EngineCoreOutputs"| ZMQ_OUT["ZMQ PUSH&lt;br&gt;(送信)"]
+<p>KVCacheManager（Scheduler側）が割り当てた論理ブロックIDは、GPUModelRunner内で4段階の変換を経てAttentionカーネルが消費できる形式になる。この文書では、ブロックIDの取り込みからAttentionMetadata構築までの完全なデータパスを追跡する。</p>
+<pre class="mermaid">graph LR
+    A["KVCacheManager&lt;br&gt;(論理ブロック割当)"] --&gt;|SchedulerOutput&lt;br&gt;new_block_ids| B["_update_states()&lt;br&gt;(ブロックID取込)"]
+    B --&gt;|CachedRequestState&lt;br&gt;block_ids| C["BlockTable&lt;br&gt;(CPU側テーブル)"]
+    C --&gt;|"commit_block_table()&lt;br&gt;DMA (non-blocking)"| D["GPU block_table"]
+    C --&gt;|"compute_slot_mapping()"| E["CPU slot_mapping"]
+    E --&gt;|"commit_slot_mapping()&lt;br&gt;DMA"| F["GPU slot_mapping"]
+    D --&gt; G["_build_attention_metadata()"]
+    F --&gt; G
+    G --&gt;|"per-layer&lt;br&gt;AttentionMetadata"| H["Attention Kernel"]
+    F --&gt;|"set_forward_context()&lt;br&gt;slot_mappings_by_layer"| I["reshape_and_cache()"]
 </pre>
 
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
+<h2 id="stage-a-ブロックid取込--_update_states-verified"><a class="header" href="#stage-a-ブロックid取込--_update_states-verified">Stage A: ブロックID取込 — <code>_update_states()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:874</code></p>
+<p>SchedulerOutputには3種類のリクエストデータが含まれ、それぞれブロックIDの扱いが異なる:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+<tr><th>ケース</th><th>block_ids の処理</th><th>InputBatch操作</th></tr>
 </thead>
 <tbody>
-<tr><td><code>EngineCore</code></td><td>推論ループ本体</td><td><code>target/vllm/vllm/v1/engine/core.py:82</code></td></tr>
-<tr><td><code>EngineCoreProc</code></td><td>プロセスラッパー。ZMQソケット管理とイベントループ</td><td><code>target/vllm/vllm/v1/engine/core.py</code></td></tr>
+<tr><td><strong>新規リクエスト</strong></td><td><code>new_req_data.block_ids</code> → <code>CachedRequestState</code> 作成</td><td><code>add_request()</code> で追加</td></tr>
+<tr><td><strong>継続（非プリエンプション）</strong></td><td><code>new_block_ids</code> を既存 <code>block_ids</code> に <code>extend()</code></td><td><code>block_table.append_row()</code> で差分追加</td></tr>
+<tr><td><strong>プリエンプション復帰</strong></td><td><code>block_ids</code> を丸ごと <code>new_block_ids</code> で置換</td><td><code>add_request()</code> で再追加（前stepで <code>remove_request()</code> 済み）</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<p><code>block_ids</code> の型は <code>list[list[int]]</code> — 外側のリストはKVキャッシュグループ（Hybridモデルで複数）、内側はそのグループのブロックID列。</p>
+<p><strong>重要な最適化 — 永続バッチ</strong>: 前stepで存在し今回もスケジュールされたリクエストは、InputBatchに残り続ける。スケジュールされなかったリクエストだけが <code>remove_request()</code> で除去されるが、<code>CachedRequestState</code> は <code>self.requests</code> に保持される（L901-921）。</p>
+<h2 id="stage-b-スロットマッピング計算--blocktablecompute_slot_mapping-verified"><a class="header" href="#stage-b-スロットマッピング計算--blocktablecompute_slot_mapping-verified">Stage B: スロットマッピング計算 — <code>BlockTable.compute_slot_mapping()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:133</code></p>
+<p>トークンの論理位置を、KVキャッシュの物理GPUメモリスロットに変換する式:</p>
+<pre><code>block_table_index = req_index * max_num_blocks_per_req + position // block_size
+block_number = block_table[block_table_index]  # ravel()で1D化してルックアップ
+block_offset = position % block_size
+slot = block_number * block_size + block_offset
+</code></pre>
+<h3 id="hybrid-block対応"><a class="header" href="#hybrid-block対応">Hybrid Block対応</a></h3>
+<p>KVCacheManagerの割当ブロックサイズとAttentionカーネルのブロックサイズが異なる場合（例: 割当=32トークン、カーネル=16トークン）:</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/block_table.py:203</code> (<code>map_to_kernel_blocks</code>)</p>
+<pre><code class="language-python"># 割当ブロックID [0, 1, 2] → カーネルブロックID [0, 1, 2, 3, 4, 5]
+# ブロック0 → [0, 1], ブロック1 → [2, 3], ブロック2 → [4, 5]
+kernel_ids = block_id * blocks_per_kv_block + arange(blocks_per_kv_block)
+</code></pre>
+<p><code>append_row()</code> と <code>add_row()</code> は、ブロックIDを追加する前にこの変換を適用する。<code>compute_slot_mapping()</code> では変換後の <code>kernel_block_size</code> が <code>block_size</code> として使用される。</p>
+<h3 id="context-parallel対応"><a class="header" href="#context-parallel対応">Context Parallel対応</a></h3>
+<p>CP（DCP/PCP）有効時は「仮想ブロック」サイズ（= <code>block_size * cp_world_size</code>）を使ってブロックテーブルインデックスを算出し、ローカルランクに属さないトークンのスロットを <code>-1</code> にマスクする（L142-179）。</p>
+<h2 id="stage-c-gpu転送--_prepare_inputs-verified"><a class="header" href="#stage-c-gpu転送--_prepare_inputs-verified">Stage C: GPU転送 — <code>_prepare_inputs()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:1454</code></p>
+<p><code>_prepare_inputs()</code> は以下の順序でCPU→GPU転送を実行する:</p>
+<pre><code>1. commit_block_table(num_reqs)      ← 最初に発行（DMAオーバーラップ最適化）
+2. positions計算 (CPU)               ← DMA中にCPU演算
+3. token_indices計算 (CPU)           ← DMA中にCPU演算
+4. compute_slot_mapping()            ← CPU演算
+5. commit_slot_mapping()             ← DMA発行
+6. query_start_loc → GPU
+7. seq_lens → GPU
+8. input_ids → GPU
+9. positions → GPU
+</code></pre>
+<p><strong>最適化ポイント</strong>: <code>commit_block_table()</code> をCPU演算の前に呼ぶことで、ブロックテーブルのDMA転送とCPU上のslot_mapping/positions計算を並行実行する（L1472-1474のコメント）。</p>
+<h3 id="cpugpubuffer"><a class="header" href="#cpugpubuffer">CpuGpuBuffer</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/utils.py:105</code></p>
+<p>ピン留めメモリCPUテンソル + GPUテンソルのペア。<code>np</code> 属性でnumpyビューを公開し、CPU側の演算をnumpy高速演算で行える。<code>copy_to_gpu(n)</code> は <code>non_blocking=True</code> でDMA転送を発行。</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+<tr><th>属性</th><th>型</th><th>説明</th></tr>
 </thead>
 <tbody>
-<tr><td><code>__init__()</code></td><td>L82</td><td>Scheduler, ModelExecutor, KVキャッシュの初期化</td></tr>
-<tr><td><code>step()</code></td><td>L389</td><td>メインループ: schedule → execute → update</td></tr>
-<tr><td><code>step_with_batch_queue()</code></td><td>L434</td><td>パイプライン並列化版step（batch_queue使用）</td></tr>
-<tr><td><code>add_request()</code></td><td>L288</td><td>リクエストをバリデーション後Schedulerに登録</td></tr>
-<tr><td><code>post_step()</code></td><td>L424</td><td>step後処理（Speculative Decodingのドラフトトークン更新）</td></tr>
+<tr><td><code>cpu</code></td><td><code>torch.Tensor</code> (pinned)</td><td>ピン留めCPUメモリ</td></tr>
+<tr><td><code>gpu</code></td><td><code>torch.Tensor</code></td><td>GPU VRAM</td></tr>
+<tr><td><code>np</code></td><td><code>np.ndarray</code></td><td><code>cpu</code> のnumpyビュー</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="step-サイクル"><a class="header" href="#step-サイクル">step() サイクル</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code></p>
-<pre><code>EngineCore.step() -&gt; tuple[dict[int, EngineCoreOutputs], bool]
-  │
-  ├─ スケジューラ停止チェック                           # L397
-  │   if _scheduler_paused: return {}, False
-  │
-  ├─ リクエスト有無チェック                             # L402
-  │   if not scheduler.has_requests(): return {}, False
-  │
-  ├─ 1. scheduler.schedule()                            # L404
-  │   → SchedulerOutput
-  │
-  ├─ 2. executor.execute_model(scheduler_output,        # L405
-  │       non_block=True)
-  │   → Future[ModelRunnerOutput | None]
-  │
-  ├─ 3. scheduler.get_grammar_bitmask(scheduler_output) # L406
-  │   → grammar_output（構造化出力用）
-  │
-  ├─ 4. future.result()                                 # L411
-  │   → ModelRunnerOutput（ブロッキング待機）
-  │
-  ├─ 5. if model_output is None:                        # L413
-  │       model_output = executor.sample_tokens(grammar_output)
-  │   （非同期スケジューリング時: execute_modelとsamplingが分離）
-  │
-  ├─ 6. _process_aborts_queue()                         # L417
-  │
-  └─ 7. scheduler.update_from_output(                   # L418
-  │       scheduler_output, model_output)
-  │   → dict[int, EngineCoreOutputs]
-  │
-  └─ return (engine_core_outputs,                       # L422
-             total_num_scheduled_tokens &gt; 0)
-</code></pre>
-<p><strong>戻り値</strong>:</p>
-<ul>
-<li>第1要素: クライアントインデックス → EngineCoreOutputs のマッピング</li>
-<li>第2要素: モデル実行が行われたか（<code>total_num_scheduled_tokens &gt; 0</code>）</li>
-</ul>
-<h2 id="add_request-フロー"><a class="header" href="#add_request-フロー">add_request() フロー</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:288</code></p>
-<pre><code>add_request(request, request_wave=0)                    # L288
-  ├─ request_id の型チェック（str必須）                   # L295
-  ├─ pooling_params のタスクバリデーション                # L300
-  ├─ kv_transfer_params の互換性チェック                  # L311
-  └─ scheduler.add_request(request)                      # L319
-</code></pre>
-<h2 id="batch_queue-パイプライン並列化-shallow"><a class="header" href="#batch_queue-パイプライン並列化-shallow">batch_queue パイプライン並列化 [SHALLOW]</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:434</code> (step_with_batch_queue)</p>
-<p><code>max_concurrent_batches &gt; 1</code> の場合、<code>step_with_batch_queue()</code> が <code>step_fn</code> として使用される。スケジューリングとモデル実行をパイプライン的にオーバーラップさせ、GPUのアイドル時間を削減する。</p>
-<ul>
-<li><code>batch_queue</code>: <code>deque[tuple[Future, SchedulerOutput, Future]]</code></li>
-<li>新しいスケジュール結果を <code>appendleft()</code> で追加、完了待ちを <code>pop()</code> で取得</li>
-<li>前のバッチの実行完了を待たずに次のバッチをスケジュール可能</li>
-</ul>
-<h2 id="kvキャッシュ初期化フロー-shallow"><a class="header" href="#kvキャッシュ初期化フロー-shallow">KVキャッシュ初期化フロー [SHALLOW]</a></h2>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:82</code> (<strong>init</strong>)</p>
-<pre><code>EngineCore.__init__()
-  → _initialize_kv_caches()
-    → model_executor.get_kv_cache_specs()       # モデルのKVキャッシュ要件取得
-    → determine_available_memory()               # GPUメモリプロファイリング
-    → get_kv_cache_configs()                     # ブロック数等の設定算出
-    → generate_scheduler_kv_cache_config()       # Scheduler用設定生成
-    → model_executor.initialize_from_config()    # GPUメモリ確保
-</code></pre>
-<p>KV Connector（KV Transfer/LMCache連携）が有効な場合:</p>
-<ul>
-<li><code>scheduler.get_kv_connector()</code> でコネクタ有無を確認 (L159)</li>
-<li>各ワーカーのハンドシェイクメタデータを収集・統合 (L164-175)</li>
-</ul>
-<h2 id="async_scheduling-shallow"><a class="header" href="#async_scheduling-shallow">async_scheduling [SHALLOW]</a></h2>
-<p><code>vllm_config.scheduler_config.async_scheduling</code> で有効化。</p>
-<ul>
-<li>通常: <code>execute_model()</code> がモデル実行 + トークンサンプリングをまとめて実行</li>
-<li>async有効時: <code>execute_model()</code> はモデル実行のみ（<code>None</code> を返す）→ <code>sample_tokens()</code> で別途サンプリング</li>
-<li><code>post_step()</code> でのSpeculative Decodingドラフトトークン更新タイミングに影響</li>
-</ul>
-<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<h2 id="stage-d-2形式のスロットマッピング出力--_get_slot_mappings-verified"><a class="header" href="#stage-d-2形式のスロットマッピング出力--_get_slot_mappings-verified">Stage D: 2形式のスロットマッピング出力 — <code>_get_slot_mappings()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3237</code></p>
+<p><code>_get_slot_mappings()</code> はスロットマッピングを2つの形式で返す:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+<tr><th>形式</th><th>キー</th><th>消費者</th></tr>
 </thead>
 <tbody>
-<tr><td><code>max_concurrent_batches</code></td><td>1</td><td>batch_queueサイズ（&gt;1でパイプライン並列化）</td></tr>
-<tr><td><code>async_scheduling</code></td><td>False</td><td>非同期スケジューリングモード</td></tr>
+<tr><td><code>slot_mappings_by_gid</code></td><td><code>dict[int, Tensor]</code> — KVキャッシュグループID</td><td><code>_build_attention_metadata()</code> → <code>CommonAttentionMetadata.slot_mapping</code></td></tr>
+<tr><td><code>slot_mappings_by_layer</code></td><td><code>dict[str, Tensor]</code> — レイヤー名</td><td><code>set_forward_context()</code> → <code>reshape_and_cache()</code></td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
-<pre><code>[EngineCoreProc イベントループ]
-  ├─ ZMQ受信 → EngineCore.add_request()
-  ├─ EngineCore.step_fn()  (= step() or step_with_batch_queue())
-  │   ├─ Scheduler.schedule()
-  │   ├─ ModelExecutor.execute_model()
-  │   └─ Scheduler.update_from_output()
-  ├─ EngineCore.post_step()
-  └─ ZMQ送信 ← EngineCoreOutputs
+<p>同一KVキャッシュグループ内のレイヤーは同じスロットマッピングテンソルを共有する。</p>
+<p><strong>CUDAGraph FULLモード時のパディング</strong>: 未使用トークンスロットは <code>-1</code> で埋められる（L3283-3285）。これはMambaの <code>PAD_SLOT_ID</code> と一致し、<code>reshape_and_cache()</code> が <code>-1</code> スロットをスキップする。</p>
+<h2 id="stage-e-attentionメタデータ構築--_build_attention_metadata-verified"><a class="header" href="#stage-e-attentionメタデータ構築--_build_attention_metadata-verified">Stage E: Attentionメタデータ構築 — <code>_build_attention_metadata()</code> [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:1673</code></p>
+<h3 id="commonattentionmetadata"><a class="header" href="#commonattentionmetadata">CommonAttentionMetadata</a></h3>
+<p>全KVキャッシュグループの共通基盤。グループ0のblock_table/slot_mappingで初期化し、他グループでは <code>copy()</code> (shallow copy) してblock_tableとslot_mappingのみ差し替える。</p>
+<pre><code class="language-python">cm_base = CommonAttentionMetadata(
+    query_start_loc=...,     # GPU tensor [num_reqs+1]
+    seq_lens=...,            # GPU tensor [num_reqs]
+    block_table_tensor=...,  # GPU tensor [num_reqs, max_blocks] ← グループ0
+    slot_mapping=...,        # GPU tensor [num_tokens] ← グループ0
+    max_query_len=...,
+    max_seq_len=...,
+    ...
+)
 </code></pre>
-<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
-<ul>
-<li><a href="../scheduler/summary.html">Scheduler</a></li>
-<li><a href="../kv-cache-manager/summary.html">KVCacheManager</a></li>
-<li><a href="../engine-core-client/summary.html">EngineCoreClient</a></li>
-<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
-<li><a href="../../architecture/data-flow.html">データフロー</a></li>
-</ul>
+<h3 id="per-layer-attentionmetadata構築"><a class="header" href="#per-layer-attentionmetadata構築">Per-layer AttentionMetadata構築</a></h3>
+<pre class="mermaid">graph TD
+    A[CommonAttentionMetadata] --&gt;|"copy() + グループ別&lt;br&gt;block_table/slot_mapping"| B["cm (per kv_cache_group)"]
+    B --&gt; C["AttentionMetadataBuilder.build()"]
+    C --&gt; D["AttentionMetadata"]
+    D --&gt;|"同一attn_group内の&lt;br&gt;全レイヤーが共有"| E["attn_metadata[layer_name]"]
+</pre>
+
+<p><code>_build_attn_group_metadata()</code> 内部関数が各<code>(kv_cache_gid, attn_gid)</code>ペアに対して:</p>
+<ol>
+<li><code>attn_group.get_metadata_builder()</code> でビルダーを取得</li>
+<li><code>builder.build(common_attn_metadata=cm)</code> で <code>AttentionMetadata</code> を生成</li>
+<li><code>attn_group.layer_names</code> の全レイヤーに同じメタデータを割り当て</li>
+</ol>
+<h3 id="キャッシュ最適化"><a class="header" href="#キャッシュ最適化">キャッシュ最適化</a></h3>
+<p>Hybridモデルで同じ <code>KVCacheSpec</code> + 同じビルダー型の組み合わせが複数グループに現れる場合、2番目以降は <code>builder.update_block_table()</code> で block_table のみ差し替え、ビルド全体をスキップする（L1824-1832）。</p>
+<h3 id="戻り値の型"><a class="header" href="#戻り値の型">戻り値の型</a></h3>
+<pre><code class="language-python">PerLayerAttnMetadata = dict[str, AttentionMetadata]      # 通常
+                     | list[dict[str, AttentionMetadata]] # UBatching(DBO)時
+</code></pre>
+<h2 id="execute_model-内の呼び出し順序-verified"><a class="header" href="#execute_model-内の呼び出し順序-verified">execute_model() 内の呼び出し順序 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code></p>
+<pre><code>execute_model(scheduler_output)
+  │
+  ├─ 1. _prepare_inputs()                    # L3383
+  │     block_table DMA + slot_mapping計算 + GPU転送
+  │
+  ├─ 2. _determine_batch_execution_and_padding()  # L3398
+  │     CUDAGraphモード判定 → num_tokens_padded, num_reqs_padded
+  │
+  ├─ 3. _get_slot_mappings()                  # L3468
+  │     2形式出力: by_gid (→ attn_metadata), by_layer (→ ForwardContext)
+  │
+  ├─ 4. _build_attention_metadata()           # L3479
+  │     CommonAttentionMetadata → per-layer AttentionMetadata
+  │
+  ├─ 5. set_forward_context(slot_mapping=slot_mappings_by_layer)  # L3524
+  │     ForwardContext にスロットマッピングを設定
+  │
+  └─ 6. _model_forward()                      # L3538
+        model.forward() → Attention layer が ForwardContext から
+        slot_mapping を取得し reshape_and_cache() を実行
+</code></pre>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>_update_states()</code> (L874), <code>_prepare_inputs()</code> (L1454), <code>_build_attention_metadata()</code> (L1673), <code>_get_slot_mappings()</code> (L3237), <code>execute_model()</code> (L3312)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/block_table.py</code></td><td><code>BlockTable</code> (L16), <code>compute_slot_mapping()</code> (L133), <code>map_to_kernel_blocks()</code> (L203), <code>MultiGroupBlockTable</code> (L253)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/utils.py</code></td><td><code>CpuGpuBuffer</code> (L105)</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../components/encoder-cache/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../components/gpu-model-runner/input-batch.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../components/input-processor/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -359,11 +364,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../components/encoder-cache/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../components/gpu-model-runner/input-batch.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../components/engine-core-client/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../components/input-processor/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
