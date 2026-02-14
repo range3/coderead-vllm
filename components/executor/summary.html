@@ -36,10 +36,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-e702de5d.js";
+            window.path_to_searchindex_js = "../../searchindex-bb2bb663.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-bf1dd1a9.js"></script>
+        <script src="../../toc-9e89a2b8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,9 +177,9 @@
                     <main>
                         <h1 id="executor"><a class="header" href="#executor">Executor</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
 <p>Executorは、EngineCoreとWorker（GPUModelRunner）の間に位置する実行委譲レイヤーである。<code>collective_rpc()</code>パターンで全Workerに対して同一メソッドを呼び出し、出力ランクのWorkerの結果を返す。単一プロセス、マルチプロセス、Ray分散の3つの実装を持つ。</p>
@@ -241,6 +241,61 @@
 </tbody>
 </table>
 </div>
+<h2 id="multiprocexecutor-のプロセス間通信-medium-verified"><a class="header" href="#multiprocexecutor-のプロセス間通信-medium-verified">MultiprocExecutor のプロセス間通信 [MEDIUM] [VERIFIED]</a></h2>
+<p>MultiprocExecutorはSharedMemory MessageQueue（<code>ShmRingBuffer</code>）を使って同一ノード内のWorkerプロセスと通信する。</p>
+<h3 id="messagequeue-の仕組み"><a class="header" href="#messagequeue-の仕組み">MessageQueue の仕組み</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272</code> (MessageQueue)</p>
+<p>2つのチャネルを併用:</p>
+<ol>
+<li><strong>ShmRingBuffer</strong>（共有メモリ）: 24MiB以下の通常データ。ロックフリー、~20nsメモリフェンスのみ</li>
+<li><strong>ZMQ PUB/SUB</strong>（フォールバック）: 24MiBを超えるデータ。ローカルはIPC、リモートはTCP</li>
+</ol>
+<p>ShmRingBufferのメモリレイアウト:</p>
+<pre><code>┌──────────────────────────────────┬──────────────────────────────────────┐
+│ data: chunk0 | chunk1 | ... | N  │ metadata: [written|r0|r1|...] × N   │
+│ max_chunks × 24MiB               │ max_chunks × (1 + n_reader) bytes    │
+└──────────────────────────────────┴──────────────────────────────────────┘
+</code></pre>
+<p>メタデータフラグで書き込み/読み取り状態を管理。全readerが読み取り完了するとチャンクが再利用される。</p>
+<h3 id="キュー構成"><a class="header" href="#キュー構成">キュー構成</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>キュー</th><th>方向</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>rpc_broadcast_mq</code></td><td>Executor → 全Worker</td><td>RPCコマンドのブロードキャスト</td></tr>
+<tr><td><code>worker_response_mq</code> × N</td><td>各Worker → Executor</td><td>実行結果の返送</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:131-136</code> (rpc_broadcast_mq生成)</p>
+<h3 id="collective_rpc-の動作フロー"><a class="header" href="#collective_rpc-の動作フロー">collective_rpc の動作フロー</a></h3>
+<pre><code>MultiprocExecutor.collective_rpc("execute_model", args=(...))
+  │
+  ├─ rpc_broadcast_mq.enqueue((method, args, kwargs, output_rank))
+  │   → pickle → ShmRingBuffer書き込み → メモリフェンス
+  │
+  ├─ Worker-0: dequeue() → execute → response_mq.enqueue()
+  ├─ Worker-1: dequeue() → execute → response_mq.enqueue()
+  │
+  └─ Executor: response_mqs[output_rank].dequeue() → 結果返却
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:303-375</code> (collective_rpc)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)</p>
+<h3 id="worker-プロセスの起動とビジーループ"><a class="header" href="#worker-プロセスの起動とビジーループ">Worker プロセスの起動とビジーループ</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:696</code> (WorkerProc.worker_main)</p>
+<pre><code>WorkerProc.worker_main()
+  ├─ Worker.init_device()
+  │   └─ torch.distributed.init_process_group(backend="nccl")
+  ├─ Worker.load_model()
+  ├─ READY送信（Pipe経由）
+  └─ worker_busy_loop():
+      while True:
+        method, args, kwargs, output_rank = rpc_broadcast_mq.dequeue()
+        output = getattr(worker, method)(*args, **kwargs)
+        worker_response_mq.enqueue((SUCCESS, output))
+</code></pre>
 <h2 id="worker委譲先"><a class="header" href="#worker委譲先">Worker（委譲先）</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:70</code> (Worker)</p>
 <p><code>Worker(WorkerBase)</code> はGPUModelRunnerのラッパーで、以下の追加処理を行う:</p>
@@ -277,9 +332,10 @@ EngineCore.step()（続き）
 </ul>
 <h2 id="phase-2-深堀り候補"><a class="header" href="#phase-2-深堀り候補">Phase 2 深堀り候補</a></h2>
 <ul>
-<li>MultiprocExecutorのMessageQueue実装詳細</li>
+<li><del>MultiprocExecutorのMessageQueue実装詳細</del> → 調査済み（本ドキュメント）</li>
 <li>Pipeline Parallelism時のバッチスケジューリング</li>
 <li>Ray分散実行のオーバーヘッドと障害回復</li>
+<li>AsyncScheduling時のasync_output_busy_loop動作</li>
 </ul>
 <h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
 <div class="table-wrapper">
@@ -290,10 +346,11 @@ EngineCore.step()（続き）
 <tbody>
 <tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code>, <code>collective_rpc()</code> (L180), <code>execute_model()</code> (L202)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> (L26)</td></tr>
-<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93), <code>WorkerProc</code> (L493), <code>worker_busy_loop</code> (L845)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/executor/ray_executor.py</code></td><td><code>RayDistributedExecutor</code> (L62)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker</code> (L70), <code>execute_model()</code> (L604)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/worker_base.py</code></td><td><code>WorkerBase</code> (L34), <code>WorkerWrapperBase</code> (L175)</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td><code>ShmRingBuffer</code> (L127), <code>MessageQueue</code> (L272)</td></tr>
 </tbody>
 </table>
 </div>

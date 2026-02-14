@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e702de5d.js";
+            window.path_to_searchindex_js = "searchindex-bb2bb663.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf1dd1a9.js"></script>
+        <script src="toc-9e89a2b8.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1893,9 +1893,9 @@ AsyncLLM._run_output_handler()
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="executor"><a class="header" href="#executor">Executor</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [SHALLOW]
+<p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
 <h2 id="概要-7"><a class="header" href="#概要-7">概要</a></h2>
 <p>Executorは、EngineCoreとWorker（GPUModelRunner）の間に位置する実行委譲レイヤーである。<code>collective_rpc()</code>パターンで全Workerに対して同一メソッドを呼び出し、出力ランクのWorkerの結果を返す。単一プロセス、マルチプロセス、Ray分散の3つの実装を持つ。</p>
@@ -1957,6 +1957,61 @@ AsyncLLM._run_output_handler()
 </tbody>
 </table>
 </div>
+<h2 id="multiprocexecutor-のプロセス間通信-medium-verified"><a class="header" href="#multiprocexecutor-のプロセス間通信-medium-verified">MultiprocExecutor のプロセス間通信 [MEDIUM] [VERIFIED]</a></h2>
+<p>MultiprocExecutorはSharedMemory MessageQueue（<code>ShmRingBuffer</code>）を使って同一ノード内のWorkerプロセスと通信する。</p>
+<h3 id="messagequeue-の仕組み"><a class="header" href="#messagequeue-の仕組み">MessageQueue の仕組み</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272</code> (MessageQueue)</p>
+<p>2つのチャネルを併用:</p>
+<ol>
+<li><strong>ShmRingBuffer</strong>（共有メモリ）: 24MiB以下の通常データ。ロックフリー、~20nsメモリフェンスのみ</li>
+<li><strong>ZMQ PUB/SUB</strong>（フォールバック）: 24MiBを超えるデータ。ローカルはIPC、リモートはTCP</li>
+</ol>
+<p>ShmRingBufferのメモリレイアウト:</p>
+<pre><code>┌──────────────────────────────────┬──────────────────────────────────────┐
+│ data: chunk0 | chunk1 | ... | N  │ metadata: [written|r0|r1|...] × N   │
+│ max_chunks × 24MiB               │ max_chunks × (1 + n_reader) bytes    │
+└──────────────────────────────────┴──────────────────────────────────────┘
+</code></pre>
+<p>メタデータフラグで書き込み/読み取り状態を管理。全readerが読み取り完了するとチャンクが再利用される。</p>
+<h3 id="キュー構成"><a class="header" href="#キュー構成">キュー構成</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>キュー</th><th>方向</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>rpc_broadcast_mq</code></td><td>Executor → 全Worker</td><td>RPCコマンドのブロードキャスト</td></tr>
+<tr><td><code>worker_response_mq</code> × N</td><td>各Worker → Executor</td><td>実行結果の返送</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:131-136</code> (rpc_broadcast_mq生成)</p>
+<h3 id="collective_rpc-の動作フロー"><a class="header" href="#collective_rpc-の動作フロー">collective_rpc の動作フロー</a></h3>
+<pre><code>MultiprocExecutor.collective_rpc("execute_model", args=(...))
+  │
+  ├─ rpc_broadcast_mq.enqueue((method, args, kwargs, output_rank))
+  │   → pickle → ShmRingBuffer書き込み → メモリフェンス
+  │
+  ├─ Worker-0: dequeue() → execute → response_mq.enqueue()
+  ├─ Worker-1: dequeue() → execute → response_mq.enqueue()
+  │
+  └─ Executor: response_mqs[output_rank].dequeue() → 結果返却
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:303-375</code> (collective_rpc)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)</p>
+<h3 id="worker-プロセスの起動とビジーループ"><a class="header" href="#worker-プロセスの起動とビジーループ">Worker プロセスの起動とビジーループ</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:696</code> (WorkerProc.worker_main)</p>
+<pre><code>WorkerProc.worker_main()
+  ├─ Worker.init_device()
+  │   └─ torch.distributed.init_process_group(backend="nccl")
+  ├─ Worker.load_model()
+  ├─ READY送信（Pipe経由）
+  └─ worker_busy_loop():
+      while True:
+        method, args, kwargs, output_rank = rpc_broadcast_mq.dequeue()
+        output = getattr(worker, method)(*args, **kwargs)
+        worker_response_mq.enqueue((SUCCESS, output))
+</code></pre>
 <h2 id="worker委譲先"><a class="header" href="#worker委譲先">Worker（委譲先）</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:70</code> (Worker)</p>
 <p><code>Worker(WorkerBase)</code> はGPUModelRunnerのラッパーで、以下の追加処理を行う:</p>
@@ -1993,9 +2048,10 @@ EngineCore.step()（続き）
 </ul>
 <h2 id="phase-2-深堀り候補"><a class="header" href="#phase-2-深堀り候補">Phase 2 深堀り候補</a></h2>
 <ul>
-<li>MultiprocExecutorのMessageQueue実装詳細</li>
+<li><del>MultiprocExecutorのMessageQueue実装詳細</del> → 調査済み（本ドキュメント）</li>
 <li>Pipeline Parallelism時のバッチスケジューリング</li>
 <li>Ray分散実行のオーバーヘッドと障害回復</li>
+<li>AsyncScheduling時のasync_output_busy_loop動作</li>
 </ul>
 <h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
 <div class="table-wrapper">
@@ -2006,10 +2062,11 @@ EngineCore.step()（続き）
 <tbody>
 <tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code>, <code>collective_rpc()</code> (L180), <code>execute_model()</code> (L202)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> (L26)</td></tr>
-<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93)</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93), <code>WorkerProc</code> (L493), <code>worker_busy_loop</code> (L845)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/executor/ray_executor.py</code></td><td><code>RayDistributedExecutor</code> (L62)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker</code> (L70), <code>execute_model()</code> (L604)</td></tr>
 <tr><td><code>target/vllm/vllm/v1/worker/worker_base.py</code></td><td><code>WorkerBase</code> (L34), <code>WorkerWrapperBase</code> (L175)</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td><code>ShmRingBuffer</code> (L127), <code>MessageQueue</code> (L272)</td></tr>
 </tbody>
 </table>
 </div>
@@ -6439,6 +6496,235 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
 <tr><td>vllm/…/utils.py</td><td>_merge_multimodal_embeddings()</td></tr>
 <tr><td>HF transformers/…/processing_gemma3.py</td><td>Gemma3Processor, Gemma3ProcessorKwargs (デフォルト値定義)</td></tr>
 <tr><td>HF transformers/…/image_processing_gemma3.py</td><td>Gemma3ImageProcessor (Pan-and-Scan 実装)</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="プロセスアーキテクチャtp2構成"><a class="header" href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要-19"><a class="header" href="#概要-19">概要</a></h2>
+<p>vLLMをGPU2枚・TP=2で起動した場合のプロセス構成、コンポーネント配置、プロセス間通信メカニズムを調査した。</p>
+<h2 id="1-プロセス構成合計4プロセス"><a class="header" href="#1-プロセス構成合計4プロセス">1. プロセス構成（合計4プロセス）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>プロセス名</th><th>生成元</th><th>含まれるコンポーネント</th></tr>
+</thead>
+<tbody>
+<tr><td>Frontend（メインプロセス）</td><td>ユーザー起動</td><td>AsyncLLM, InputProcessor, EngineCoreClient, OutputProcessor</td></tr>
+<tr><td>EngineCore (<code>EngineCore_DP0</code>)</td><td>Frontend (<code>mp.Process</code>)</td><td>EngineCore, Scheduler, KVCacheManager, MultiprocExecutor</td></tr>
+<tr><td>VllmWorker-0</td><td>EngineCore (<code>mp.Process</code>)</td><td>Worker, GPUModelRunner（GPU 0）</td></tr>
+<tr><td>VllmWorker-1</td><td>EngineCore (<code>mp.Process</code>)</td><td>Worker, GPUModelRunner（GPU 1）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:493-507</code> (CoreEngineProcManager)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:147-160</code> (WorkerProc起動)</p>
+<h3 id="コンポーネントとプロセスの対応図"><a class="header" href="#コンポーネントとプロセスの対応図">コンポーネントとプロセスの対応図</a></h3>
+<pre><code>┌─ Frontend Process ─────────────────────────────────────┐
+│  AsyncLLM ─→ InputProcessor                            │
+│  EngineCoreClient (ZMQ ROUTER/PULL)                    │
+│  OutputProcessor ←─ Detokenizer                        │
+└──────────────────────────┬─────────────────────────────┘
+                           │ ZMQ (msgpack)
+                           ▼
+┌─ EngineCore Process ─────────────────────────────────────┐
+│  EngineCore.step()                                       │
+│  ├─ Scheduler ─→ KVCacheManager                         │
+│  └─ MultiprocExecutor                                    │
+│       ├─ rpc_broadcast_mq (SharedMemory → 全Worker)      │
+│       └─ worker_response_mq × 2 (各Worker → Executor)   │
+└──────────┬──────────────────────────────┬────────────────┘
+           │ SharedMemory MQ              │ SharedMemory MQ
+           ▼                              ▼
+┌─ Worker-0 Process ──┐  ┌─ Worker-1 Process ──┐
+│  Worker              │  │  Worker              │
+│  GPUModelRunner      │  │  GPUModelRunner      │
+│  (GPU 0, TP rank 0)  │  │  (GPU 1, TP rank 1)  │
+└──────────┬───────────┘  └──────────┬───────────┘
+           │         NCCL            │
+           └─────────────────────────┘
+             (NVLink / PCIe 直接通信)
+</code></pre>
+<p><strong>注意点</strong>:</p>
+<ul>
+<li>Scheduler、KVCacheManagerは<strong>EngineCoreプロセス内</strong>で動作し、独立プロセスではない</li>
+<li>OutputProcessorは<strong>Frontendプロセス内</strong>で動作する（バックエンドではない）</li>
+<li>MultiprocExecutorはEngineCoreプロセス内に存在し、Workerプロセスへの指令管理を行う</li>
+</ul>
+<h2 id="2-プロセス間通信メカニズム"><a class="header" href="#2-プロセス間通信メカニズム">2. プロセス間通信メカニズム</a></h2>
+<h3 id="21-frontend--enginecore-zmq-over-tcp-loopback"><a class="header" href="#21-frontend--enginecore-zmq-over-tcp-loopback">2.1 Frontend ↔ EngineCore: ZMQ over TCP loopback</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>プロトコル</td><td>ZMQ over TCP (<code>127.0.0.1:&lt;random_port&gt;</code>)</td></tr>
+<tr><td>ソケット型</td><td>Frontend: ROUTER(送信) + PULL(受信), EngineCore: DEALER(受信)</td></tr>
+<tr><td>シリアライゼーション</td><td>msgpack（<code>msgspec.Struct(array_like)</code> 対応）</td></tr>
+<tr><td>スレッドモデル</td><td>バックグラウンドスレッドでシリアライゼーション/デシリアライゼーション</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:510-515</code> (ZMQソケット設定)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:877-950</code> (EngineCoreProc._perform_handshake)</p>
+<h3 id="22-enginecore--workers-sharedmemory-messagequeue"><a class="header" href="#22-enginecore--workers-sharedmemory-messagequeue">2.2 EngineCore ↔ Workers: SharedMemory MessageQueue</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>プロトコル</td><td>共有メモリ（ShmRingBuffer） + ZMQ PUB/SUB（オーバーフロー時）</td></tr>
+<tr><td>キュー</td><td>rpc_broadcast_mq（1対多）+ worker_response_mq（各Worker→Executor）</td></tr>
+<tr><td>シリアライゼーション</td><td>pickle（protocol 5, out-of-band buffers対応）</td></tr>
+<tr><td>同期方式</td><td>ロックフリー。メモリフェンス（<code>threading.Lock</code> acquire/release, ~20ns）のみ</td></tr>
+<tr><td>バッファサイズ</td><td>デフォルト24MiB/チャンク × 10チャンク</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:127</code> (ShmRingBuffer)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272</code> (MessageQueue)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:131-136</code> (rpc_broadcast_mq生成)</p>
+<h4 id="shmringbuffer-メモリレイアウト"><a class="header" href="#shmringbuffer-メモリレイアウト">ShmRingBuffer メモリレイアウト</a></h4>
+<pre><code>┌─────────────────────────────────┬──────────────────────────────────────┐
+│ data: chunk0 | chunk1 | ... | chunkN │ metadata: [written|r0|r1|...|rN] × N │
+│ max_chunks × max_chunk_bytes (24MiB) │ max_chunks × (1 + n_reader) bytes    │
+└─────────────────────────────────┴──────────────────────────────────────┘
+</code></pre>
+<p>メタデータの状態遷移:</p>
+<ul>
+<li><code>0???...???</code>: 未書き込み → 書き込み可</li>
+<li><code>1000...000</code>: 書き込み直後 → 全reader読み取り可</li>
+<li><code>1???...???</code>: 一部readerが読み取り済み</li>
+<li><code>1111...111</code>: 全reader読み取り済み → 書き込み可（再利用）</li>
+</ul>
+<p><strong>オーバーフロー処理</strong>: データが24MiBを超える場合、ZMQ PUB/SUBソケット（IPC）経由で転送する。ローカルではXPUB/SUBソケット、リモート（マルチノード時）ではTCPソケットを使用。</p>
+<h4 id="collective_rpc-の動作フロー-1"><a class="header" href="#collective_rpc-の動作フロー-1">collective_rpc の動作フロー</a></h4>
+<pre><code>MultiprocExecutor.collective_rpc("execute_model", args=(scheduler_output,))
+  │
+  ├─ rpc_broadcast_mq.enqueue((method, args, kwargs, output_rank))
+  │   → pickle → ShmRingBuffer書き込み → メモリフェンス
+  │
+  ├─ Worker-0: rpc_broadcast_mq.dequeue() → Worker.execute_model()
+  │   → worker_response_mq.enqueue((SUCCESS, output))
+  │
+  ├─ Worker-1: rpc_broadcast_mq.dequeue() → Worker.execute_model()
+  │   → worker_response_mq.enqueue((SUCCESS, output))
+  │
+  └─ Executor: response_mqs[0].dequeue() → output[0] を返却
+      （output_rank=0 の場合、rank 0 の結果のみ返す）
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:303-375</code> (collective_rpc)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)</p>
+<h3 id="23-worker--worker-torchdistributed--nccl"><a class="header" href="#23-worker--worker-torchdistributed--nccl">2.3 Worker ↔ Worker: torch.distributed + NCCL</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>初期化</td><td><code>torch.distributed.init_process_group(backend="nccl")</code></td></tr>
+<tr><td>Rendezvous</td><td>TCP（<code>tcp://127.0.0.1:&lt;random_port&gt;</code>）</td></tr>
+<tr><td>通信</td><td>NCCL（NVLink / PCIe によるGPU間直接通信）</td></tr>
+<tr><td>用途</td><td>Tensor Parallelの<code>all_reduce()</code>, <code>all_gather()</code>, <code>broadcast()</code></td></tr>
+<tr><td>タイミング</td><td>モデル forward pass 内部でレイヤーごとに実行</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:263-269</code> (init_worker_distributed_environment)</p>
+<p>NCCLの初期化は<code>Worker.init_device()</code>内で、メモリプロファイリング<strong>前</strong>に行われる。これによりNCCLバッファが確保された後の利用可能メモリが正確に計測される。</p>
+<h2 id="3-起動シーケンス"><a class="header" href="#3-起動シーケンス">3. 起動シーケンス</a></h2>
+<pre><code>1. ユーザーが AsyncLLM を生成
+2. AsyncLLM → EngineCoreClient.make_async_mp_client()
+3.   └─ mp.Process(target=EngineCoreProc.run_engine_core) 起動
+4.       └─ EngineCore.__init__() 内で MultiprocExecutor 生成
+5.           ├─ distributed_init_method = "tcp://127.0.0.1:&lt;port&gt;" 確保
+6.           ├─ rpc_broadcast_mq (ShmRingBuffer) 作成
+7.           └─ for rank in [0, 1]:
+8.               mp.Process(target=WorkerProc.worker_main) 起動
+9.                 ├─ Worker.init_device():
+10.                │   └─ torch.distributed.init_process_group(backend="nccl")
+11.                ├─ Worker.load_model(): モデルロード
+12.                ├─ READY メッセージ送信（Pipe経由）
+13.                └─ worker_busy_loop() でRPC待機開始
+14.      └─ wait_until_ready(): 全Worker READY 待ち
+15. Frontend ↔ EngineCore ZMQハンドシェイク完了
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:696</code> (WorkerProc.worker_main)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:752-770</code> (READY送信)</p>
+<h2 id="4-通信方式の設計判断"><a class="header" href="#4-通信方式の設計判断">4. 通信方式の設計判断</a></h2>
+<h3 id="なぜ-frontend--enginecore-は-zmq-なのか"><a class="header" href="#なぜ-frontend--enginecore-は-zmq-なのか">なぜ Frontend ↔ EngineCore は ZMQ なのか</a></h3>
+<ol>
+<li><strong>疎結合</strong>: Data Parallelism構成では別ノードに配置される可能性がある。ZMQはネットワーク透過</li>
+<li><strong>asyncio統合</strong>: Frontendはasyncioイベントループ上で動作し、ZMQのasyncioポーラーと相性がよい</li>
+<li><strong>バックグラウンドスレッドでの直列化</strong>: msgpackシリアライゼーションをバックグラウンドスレッドで行い、GPU計算とオーバーラップ可能</li>
+<li><strong>メッセージ順序保証</strong>: ROUTER/DEALERソケットで確定的なメッセージ順序を保証</li>
+</ol>
+<h3 id="なぜ-enginecore--workers-は-sharedmemory-mq-なのかzmqではない理由"><a class="header" href="#なぜ-enginecore--workers-は-sharedmemory-mq-なのかzmqではない理由">なぜ EngineCore ↔ Workers は SharedMemory MQ なのか（ZMQではない理由）</a></h3>
+<ol>
+<li><strong>低レイテンシ</strong>: 同一ノード内通信に特化。ZMQはネットワークソケット抽象であり、カーネル空間でのバッファコピーとシステムコールのオーバーヘッドがある</li>
+<li><strong>ゼロコピー可能</strong>: 共有メモリ上でpickleデータを直接読み書きでき、プロセス間のデータコピーが不要</li>
+<li><strong>ロックフリー設計</strong>: リングバッファ + メタデータフラグ + メモリフェンス（~20ns）で同期。ロック競合なし</li>
+<li><strong>collective_rpc最適化</strong>: 1対多ブロードキャスト（rpc_broadcast_mq）パターンにリングバッファが最適</li>
+</ol>
+<h3 id="なぜ-worker--worker-は-nccl-なのか"><a class="header" href="#なぜ-worker--worker-は-nccl-なのか">なぜ Worker ↔ Worker は NCCL なのか</a></h3>
+<ol>
+<li><strong>GPU間テンソル通信専用</strong>: NCCLはGPUメモリ間の集合通信（all-reduce等）に特化した高性能ライブラリ</li>
+<li><strong>NVLink活用</strong>: GPU間直接通信でCPU介在なし。NVLink（最大900GB/s）やPCIe（最大64GB/s）を直接利用</li>
+<li><strong>PyTorch統合</strong>: モデルコード内の<code>torch.distributed</code>呼び出しと直接統合</li>
+<li><strong>Pythonオブジェクト不可</strong>: NCCLはテンソル転送専用であり、Pythonオブジェクト（SchedulerOutput等）の転送には使えない</li>
+</ol>
+<h3 id="通信方式比較"><a class="header" href="#通信方式比較">通信方式比較</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>通信路</th><th>方式</th><th>レイテンシ</th><th>帯域幅</th><th>転送対象</th><th>ネットワーク透過</th></tr>
+</thead>
+<tbody>
+<tr><td>Frontend ↔ EngineCore</td><td>ZMQ (TCP)</td><td>~µs</td><td>中</td><td>Pythonオブジェクト (msgpack)</td><td>Yes</td></tr>
+<tr><td>EngineCore ↔ Workers</td><td>SharedMemory MQ</td><td>~20ns同期</td><td>高</td><td>Pythonオブジェクト (pickle)</td><td>No（同一ノード限定）</td></tr>
+<tr><td>Worker ↔ Worker</td><td>NCCL</td><td>~µs</td><td>最高</td><td>GPUテンソルのみ</td><td>Yes（multi-node NCCL対応）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="5-tp1単一gpuとの比較"><a class="header" href="#5-tp1単一gpuとの比較">5. TP=1（単一GPU）との比較</a></h2>
+<p>TP=1の場合、<code>UniProcExecutor</code>が選択される:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>TP=1</th><th>TP=2</th></tr>
+</thead>
+<tbody>
+<tr><td>Executor</td><td>UniProcExecutor</td><td>MultiprocExecutor</td></tr>
+<tr><td>Workerプロセス</td><td>なし（EngineCoreプロセス内）</td><td>2つの子プロセス</td></tr>
+<tr><td>Worker通信</td><td>関数呼び出し（同一プロセス）</td><td>SharedMemory MQ</td></tr>
+<tr><td>NCCL</td><td>不要</td><td>必要（Worker間）</td></tr>
+<tr><td>合計プロセス数</td><td>2（Frontend + EngineCore）</td><td>4（Frontend + EngineCore + Worker×2）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/uniproc_executor.py:26</code> (UniProcExecutor)</p>
+<h2 id="主要ファイル-7"><a class="header" href="#主要ファイル-7">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td><td><code>AsyncLLM</code> — Frontendプロセスのエントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td><code>EngineCoreClient</code> — ZMQ通信, CoreEngineProcManager</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td><code>EngineCore</code>, <code>EngineCoreProc</code> — EngineCoreプロセスのエントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> — collective_rpc(), execute_model()</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code>, <code>WorkerProc</code> — Worker起動, MessageQueue管理, worker_busy_loop</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> — 単一GPU用</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker</code> — init_device(), torch.distributed初期化</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td><code>ShmRingBuffer</code>, <code>MessageQueue</code> — 共有メモリ通信基盤</td></tr>
 </tbody>
 </table>
 </div>
