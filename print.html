@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-dc74ca0b.js";
+            window.path_to_searchindex_js = "searchindex-b91086f3.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a23096c7.js"></script>
+        <script src="toc-26974776.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -957,15 +957,555 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 </table>
 </div>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ecconnectorencoder-cache-connector"><a class="header" href="#ecconnectorencoder-cache-connector">ECConnector（Encoder Cache Connector）</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM] | <strong>確信度</strong>: [VERIFIED] | <strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要-2"><a class="header" href="#概要-2">概要</a></h2>
+<p>ECConnectorは、マルチモーダルモデルのエンコーダ出力を<strong>vLLMインスタンス間</strong>または<strong>外部ストレージ</strong>と転送するためのプラグインフレームワークである。KV Transfer（デコーダKVキャッシュ用）とは完全に独立した系統で、エンコーダキャッシュに特化している。</p>
+<p>主なユースケースは**Encoder-Prefill-Decode分離（EPD）**で、エンコーダ専用インスタンスが画像処理を行い、その結果をデコーダインスタンスに転送する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/</code> (パッケージ全体)</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<h3 id="ファイル構成"><a class="header" href="#ファイル構成">ファイル構成</a></h3>
+<pre><code>vllm/distributed/ec_transfer/
+├── __init__.py                          # get_ec_transfer(), has_ec_transfer() 公開API
+├── ec_transfer_state.py                 # グローバルシングルトン管理
+└── ec_connector/
+    ├── __init__.py
+    ├── base.py                          # ECConnectorBase 抽象基底クラス
+    ├── factory.py                       # ECConnectorFactory レジストリ + 動的ロード
+    └── example_connector.py             # ECExampleConnector 参照実装（safetensors）
+
+vllm/v1/worker/
+└── ec_connector_model_runner_mixin.py   # GPUModelRunner統合Mixin
+
+vllm/config/
+└── ec_transfer.py                       # ECTransferConfig 設定クラス
+</code></pre>
+<h3 id="2ロール分離アーキテクチャ"><a class="header" href="#2ロール分離アーキテクチャ">2ロール分離アーキテクチャ</a></h3>
+<p>ECConnectorは<strong>Scheduler側</strong>と<strong>Worker側</strong>に分離され、同じクラスが両方のロールを担う：</p>
+<pre class="mermaid">graph TB
+    subgraph "Scheduler Process (ECConnectorRole.SCHEDULER)"
+        SC[ECConnector Scheduler側]
+        SCH[Scheduler]
+        SCH --&gt;|has_cache_item| SC
+        SCH --&gt;|update_state_after_alloc| SC
+        SCH --&gt;|build_connector_meta| SC
+    end
+
+    subgraph "Worker Process (ECConnectorRole.WORKER)"
+        WC[ECConnector Worker側]
+        GMR[GPUModelRunner]
+        GMR --&gt;|bind_connector_metadata| WC
+        GMR --&gt;|start_load_caches| WC
+        GMR --&gt;|save_caches| WC
+        GMR --&gt;|get_finished| WC
+    end
+
+    SC --&gt;|ECConnectorMetadata&lt;br/&gt;SchedulerOutput経由| WC
+</pre>
+
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>生成場所</th><th>主な責務</th></tr>
+</thead>
+<tbody>
+<tr><td>SCHEDULER</td><td><code>Scheduler.__init__()</code> via <code>ECConnectorFactory</code></td><td>キャッシュ存在チェック、メタデータ構築</td></tr>
+<tr><td>WORKER</td><td><code>gpu_worker.py</code> の <code>ensure_ec_transfer_initialized()</code></td><td>キャッシュのロード/セーブ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:135-138</code> (Scheduler側生成)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_transfer_state.py:26-43</code> (Worker側生成)</p>
+<h2 id="ecconnectorbase-抽象基底クラス"><a class="header" href="#ecconnectorbase-抽象基底クラス">ECConnectorBase 抽象基底クラス</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/base.py:59-253</code></p>
+<h3 id="プロパティ"><a class="header" href="#プロパティ">プロパティ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>プロパティ</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>role</code></td><td><code>ECConnectorRole</code></td><td>SCHEDULER or WORKER</td></tr>
+<tr><td><code>is_producer</code></td><td><code>bool</code></td><td>エンコーダキャッシュを生成する側か</td></tr>
+<tr><td><code>is_consumer</code></td><td><code>bool</code></td><td>エンコーダキャッシュを消費する側か</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="抽象メソッド実装必須"><a class="header" href="#抽象メソッド実装必須">抽象メソッド（実装必須）</a></h3>
+<h4 id="worker側3メソッド"><a class="header" href="#worker側3メソッド">Worker側（3メソッド）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start_load_caches</code></td><td><code>(encoder_cache: dict[str, Tensor], **kwargs) → None</code></td><td>メタデータに基づきキャッシュをロード</td></tr>
+<tr><td><code>save_caches</code></td><td><code>(encoder_cache: dict[str, Tensor], mm_hash: str, **kwargs) → None</code></td><td>エンコーダ出力を外部に保存</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="scheduler側3メソッド"><a class="header" href="#scheduler側3メソッド">Scheduler側（3メソッド）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>has_cache_item</code></td><td><code>(identifier: str) → bool</code></td><td>外部にキャッシュが存在するか判定</td></tr>
+<tr><td><code>update_state_after_alloc</code></td><td><code>(request: Request, index: int) → None</code></td><td>割当後の内部状態更新</td></tr>
+<tr><td><code>build_connector_meta</code></td><td><code>(scheduler_output: SchedulerOutput) → ECConnectorMetadata</code></td><td>Worker転送用メタデータ構築</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="具象メソッドオーバーライド任意"><a class="header" href="#具象メソッドオーバーライド任意">具象メソッド（オーバーライド任意）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>デフォルト動作</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bind_connector_metadata</code></td><td>メタデータ保持</td><td>Worker側: 毎step実行前に呼ばれる</td></tr>
+<tr><td><code>clear_connector_metadata</code></td><td>Noneに設定</td><td>Worker側: 毎step実行後に呼ばれる</td></tr>
+<tr><td><code>register_caches</code></td><td>no-op</td><td>将来のP2P機能用</td></tr>
+<tr><td><code>get_finished</code></td><td><code>(None, None)</code></td><td>非同期転送完了通知</td></tr>
+<tr><td><code>update_connector_output</code></td><td>no-op</td><td>Worker出力からScheduler状態を更新</td></tr>
+<tr><td><code>request_finished</code></td><td><code>(False, None)</code></td><td>リクエスト完了時のフック</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ectransferconfig-設定"><a class="header" href="#ectransferconfig-設定">ECTransferConfig 設定</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/ec_transfer.py:16-108</code></p>
+<h3 id="ecロール"><a class="header" href="#ecロール">ECロール</a></h3>
+<pre><code class="language-python">ECRole = Literal["ec_producer", "ec_consumer", "ec_both"]
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>説明</th><th><code>is_producer</code></th><th><code>is_consumer</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>ec_producer</code></td><td>エンコーダ計算+キャッシュ保存</td><td>True</td><td>False</td></tr>
+<tr><td><code>ec_consumer</code></td><td>キャッシュ読み込み+デコーダ実行</td><td>False</td><td>True</td></tr>
+<tr><td><code>ec_both</code></td><td>両方の機能</td><td>True</td><td>True</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="主要設定パラメータ"><a class="header" href="#主要設定パラメータ">主要設定パラメータ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ec_connector</code></td><td>None</td><td>コネクタ名（例: “ECExampleConnector”）</td></tr>
+<tr><td><code>ec_role</code></td><td>None</td><td>ECロール</td></tr>
+<tr><td><code>ec_connector_module_path</code></td><td>None</td><td>カスタムコネクタのPythonモジュールパス</td></tr>
+<tr><td><code>ec_connector_extra_config</code></td><td><code>{}</code></td><td>コネクタ固有の追加設定</td></tr>
+<tr><td><code>ec_buffer_device</code></td><td>“cuda”</td><td>バッファデバイス</td></tr>
+<tr><td><code>ec_buffer_size</code></td><td>1e9</td><td>バッファサイズ（バイト）</td></tr>
+<tr><td><code>ec_ip</code> / <code>ec_port</code></td><td>127.0.0.1:14579</td><td>P2P接続用</td></tr>
+<tr><td><code>ec_rank</code> / <code>ec_parallel_size</code></td><td>None / 1</td><td>分散接続設定</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ecconnectorfactory"><a class="header" href="#ecconnectorfactory">ECConnectorFactory</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/factory.py:20-85</code></p>
+<h3 id="コネクタ登録方式"><a class="header" href="#コネクタ登録方式">コネクタ登録方式</a></h3>
+<p>2つの登録方法がある：</p>
+<ol>
+<li><strong>静的登録</strong>: <code>ECConnectorFactory.register_connector()</code> でモジュール遅延ロード登録</li>
+<li><strong>動的ロード</strong>: <code>ec_connector_module_path</code> で任意のPythonモジュールからロード</li>
+</ol>
+<pre><code class="language-python"># 静的登録（factory.py末尾）
+ECConnectorFactory.register_connector(
+    "ECExampleConnector",
+    "vllm.distributed.ec_transfer.ec_connector.example_connector",
+    "ECExampleConnector",
+)
+
+# 動的ロード（ec_connector_module_pathが設定されている場合）
+connector_module = importlib.import_module(connector_module_path)
+connector_cls = getattr(connector_module, connector_name)
+</code></pre>
+<h3 id="現在登録済みコネクタ"><a class="header" href="#現在登録済みコネクタ">現在登録済みコネクタ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>名前</th><th>実装</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ECExampleConnector</code></td><td><code>example_connector.py</code></td><td>参照実装（safetensorsディスク保存）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ecexampleconnector-参照実装"><a class="header" href="#ecexampleconnector-参照実装">ECExampleConnector 参照実装</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:45-199</code></p>
+<p>safetensorsフォーマットでディスクにエンコーダキャッシュを保存/読み込みする参照実装。</p>
+<h3 id="メタデータ"><a class="header" href="#メタデータ">メタデータ</a></h3>
+<pre><code class="language-python">@dataclass
+class MMMeta:
+    mm_hash: str      # マルチモーダルデータのハッシュ
+    num_token: int     # エンコーダトークン数
+
+@dataclass
+class ECExampleConnectorMetadata(ECConnectorMetadata):
+    mm_datas: list[MMMeta]  # ロードすべきエントリ一覧
+</code></pre>
+<h3 id="ストレージ構造"><a class="header" href="#ストレージ構造">ストレージ構造</a></h3>
+<pre><code>{shared_storage_path}/
+└── {mm_hash}/
+    └── encoder_cache.safetensors    # {"ec_cache": Tensor} 形式
+</code></pre>
+<h3 id="動作フロー"><a class="header" href="#動作フロー">動作フロー</a></h3>
+<h4 id="保存producer側"><a class="header" href="#保存producer側">保存（Producer側）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:98-118</code></p>
+<ol>
+<li>GPUModelRunnerが <code>_execute_mm_encoder()</code> 完了後に <code>maybe_save_ec_to_connector()</code> を呼ぶ</li>
+<li><code>save_caches()</code>: テンソルを <code>.detach().cpu()</code> してsafetensorsで保存</li>
+</ol>
+<h4 id="読み込みconsumer側"><a class="header" href="#読み込みconsumer側">読み込み（Consumer側）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:63-96</code></p>
+<ol>
+<li>Scheduler側: <code>has_cache_item()</code> でファイル存在確認 (<code>os.path.exists</code>)</li>
+<li>Scheduler側: <code>build_connector_meta()</code> でロード対象リストを構築</li>
+<li>Worker側: <code>start_load_caches()</code> でsafetensorsからGPUにロード</li>
+</ol>
+<h4 id="存在確認"><a class="header" href="#存在確認">存在確認</a></h4>
+<p><code>has_cache_item()</code> は <code>os.path.exists()</code> でsafetensorsファイルの存在をチェック。</p>
+<h2 id="schedulerとの統合"><a class="header" href="#schedulerとの統合">Schedulerとの統合</a></h2>
+<h3 id="_schedule_encoder_inputs-内の分岐"><a class="header" href="#_schedule_encoder_inputs-内の分岐">_schedule_encoder_inputs() 内の分岐</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1212-1218</code></p>
+<pre><code class="language-python">if self.ec_connector is not None and self.ec_connector.has_cache_item(identifier):
+    # 外部キャッシュにヒット → エンコーダ計算不要、compute_budget消費なし
+    mm_hashes_to_schedule.add(item_identifier)
+    external_load_encoder_input.append(i)
+    num_embeds_to_schedule += num_encoder_embeds
+    continue
+</code></pre>
+<p>ECConnectorにキャッシュがある場合：</p>
+<ul>
+<li><code>encoder_compute_budget</code> は<strong>消費しない</strong>（エンコーダ計算不要のため）</li>
+<li><code>external_load_encoder_input</code> リストに追加</li>
+<li><code>encoder_cache_manager.allocate()</code> は実行される（GPU側に空きが必要）</li>
+</ul>
+<h3 id="割当後の状態更新"><a class="header" href="#割当後の状態更新">割当後の状態更新</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:523-527</code></p>
+<pre><code class="language-python">if external_load_encoder_input:
+    for i in external_load_encoder_input:
+        self.encoder_cache_manager.allocate(request, i)
+        if self.ec_connector is not None:
+            self.ec_connector.update_state_after_alloc(request, i)
+</code></pre>
+<h3 id="メタデータ構築"><a class="header" href="#メタデータ構築">メタデータ構築</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:899-904</code></p>
+<p><code>build_connector_meta()</code> がSchedulerOutputに <code>ec_connector_metadata</code> を設定。Worker側はこのメタデータを使ってロード対象を特定する。</p>
+<h2 id="gpumodelrunnerとの統合"><a class="header" href="#gpumodelrunnerとの統合">GPUModelRunnerとの統合</a></h2>
+<h3 id="ecconnectormodelrunnermixin"><a class="header" href="#ecconnectormodelrunnermixin">ECConnectorModelRunnerMixin</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/ec_connector_model_runner_mixin.py:25-87</code></p>
+<p>GPUModelRunnerに3つのstatic methodを提供：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>maybe_save_ec_to_connector</code></td><td>エンコーダ出力保存（Producer時）</td></tr>
+<tr><td><code>get_finished_ec_transfers</code></td><td>非同期転送完了確認</td></tr>
+<tr><td><code>maybe_get_ec_connector_output</code></td><td>コンテキストマネージャでライフサイクル管理</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="コンテキストマネージャのライフサイクル"><a class="header" href="#コンテキストマネージャのライフサイクル">コンテキストマネージャのライフサイクル</a></h3>
+<pre><code class="language-python">with self.maybe_get_ec_connector_output(scheduler_output, encoder_cache) as output:
+    # 1. bind_connector_metadata() → メタデータ設定
+    # 2. Consumer時: start_load_caches() → 外部からロード
+    # 3. yield → エンコーダ実行、gather処理
+    # 4. get_finished() → 非同期完了確認
+    # 5. clear_connector_metadata() → クリーンアップ
+</code></pre>
+<h3 id="producer専用モード"><a class="header" href="#producer専用モード">Producer専用モード</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3343-3349</code></p>
+<p>Producer専用インスタンスは、エンコーダ実行後にデコーダ実行をスキップし、空のModelRunnerOutputを返す：</p>
+<pre><code class="language-python">if has_ec_transfer() and get_ec_transfer().is_producer:
+    with self.maybe_get_ec_connector_output(...) as ec_connector_output:
+        self._execute_mm_encoder(scheduler_output)
+        return make_empty_encoder_model_runner_output(scheduler_output)
+</code></pre>
+<p>また、Producer専用インスタンスはKVキャッシュを確保しない：</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:6160-6161</code></p>
+<pre><code class="language-python">if has_ec_transfer() and get_ec_transfer().is_producer:
+    return {}  # KVCacheSpec空 → KVキャッシュ確保なし
+</code></pre>
+<h2 id="ecconnectoroutput"><a class="header" href="#ecconnectoroutput">ECConnectorOutput</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:151-154</code></p>
+<pre><code class="language-python">@dataclass
+class ECConnectorOutput:
+    finished_sending: set[str] | None = None
+    finished_recving: set[str] | None = None
+</code></pre>
+<p>ModelRunnerOutputに含まれてScheduler側に返されるが、<strong>現時点ではScheduler側で未消費</strong>（<code>ec_connector_output</code>を読み取るコードがSchedulerにない）。非同期転送完了フィードバックは将来実装予定。</p>
+<h2 id="グローバルシングルトン管理"><a class="header" href="#グローバルシングルトン管理">グローバルシングルトン管理</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_transfer_state.py:14-43</code></p>
+<pre><code class="language-python">_EC_CONNECTOR_AGENT: ECConnectorBase | None = None
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>関数</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>has_ec_transfer()</code></td><td>ECConnectorが初期化済みか</td></tr>
+<tr><td><code>get_ec_transfer()</code></td><td>シングルトン取得（未初期化ならassert）</td></tr>
+<tr><td><code>ensure_ec_transfer_initialized(config)</code></td><td>Workerロールで初期化（冪等）</td></tr>
+</tbody>
+</table>
+</div>
+<p>Worker側のシングルトン初期化は <code>gpu_worker.py</code> で <code>ensure_ec_transfer_initialized()</code> を呼ぶことで行われる。Scheduler側は <code>ECConnectorFactory.create_connector()</code> で直接生成し、<code>self.ec_connector</code> に保持する（シングルトンではない）。</p>
+<h2 id="カスタムecconnector実装ガイド"><a class="header" href="#カスタムecconnector実装ガイド">カスタムECConnector実装ガイド</a></h2>
+<h3 id="最小実装"><a class="header" href="#最小実装">最小実装</a></h3>
+<ol>
+<li><code>ECConnectorBase</code> を継承</li>
+<li>5つの抽象メソッドを実装</li>
+<li>ECTransferConfigの<code>ec_connector</code>にクラス名、<code>ec_connector_module_path</code>にモジュールパスを指定</li>
+</ol>
+<h3 id="実装の要点"><a class="header" href="#実装の要点">実装の要点</a></h3>
+<ul>
+<li><code>has_cache_item()</code> はSchedulerのホットパスで呼ばれるため<strong>高速</strong>であるべき</li>
+<li><code>start_load_caches()</code> は <code>encoder_cache</code> dict に直接テンソルを追加する</li>
+<li><code>save_caches()</code> は <code>encoder_cache[mm_hash]</code> からGPUテンソルを取得して保存する</li>
+<li><code>build_connector_meta()</code> は内部状態をリセットすること</li>
+</ul>
+<h3 id="起動コマンド例"><a class="header" href="#起動コマンド例">起動コマンド例</a></h3>
+<pre><code class="language-bash"># Producer（エンコーダ専用インスタンス）
+vllm serve model_name \
+    --ec-connector ECExampleConnector \
+    --ec-role ec_producer \
+    --ec-connector-extra-config '{"shared_storage_path": "/shared/cache"}'
+
+# Consumer（デコーダインスタンス）
+vllm serve model_name \
+    --ec-connector ECExampleConnector \
+    --ec-role ec_consumer \
+    --ec-connector-extra-config '{"shared_storage_path": "/shared/cache"}'
+</code></pre>
+<h2 id="上流下流依存関係"><a class="header" href="#上流下流依存関係">上流・下流依存関係</a></h2>
+<h3 id="上流"><a class="header" href="#上流">上流</a></h3>
+<ul>
+<li><strong>ECTransferConfig</strong>: <code>ec_connector</code>, <code>ec_role</code> 等の設定</li>
+<li><strong>Scheduler</strong>: キャッシュ存在確認、状態更新、メタデータ構築の呼び出し</li>
+<li><strong>GPUModelRunner</strong>: エンコーダ実行結果の保存、ロード済みキャッシュの利用</li>
+</ul>
+<h3 id="下流"><a class="header" href="#下流">下流</a></h3>
+<ul>
+<li><strong>外部ストレージ</strong>: safetensors（例）、共有メモリ、ネットワーク等（実装依存）</li>
+</ul>
+<h2 id="開発状況未実装機能"><a class="header" href="#開発状況未実装機能">開発状況・未実装機能</a></h2>
+<ol>
+<li><strong>ECConnectorOutput未消費</strong>: Worker→Scheduler方向の非同期転送完了フィードバックが未実装</li>
+<li><strong>request_finished未統合</strong>: Schedulerから<code>ec_connector.request_finished()</code>が呼ばれていない</li>
+<li><strong>register_caches未実装</strong>: P2P直接転送のためのキャッシュ登録（TODO）</li>
+<li><strong>エンコーダキャッシュ事前割り当て未対応</strong>: <code>encoder_cache</code> が <code>dict</code> のため、固定バッファへの移行が必要</li>
+<li><strong>登録済みコネクタが1つのみ</strong>: ECExampleConnector（デバッグ用）のみ。SHMConnector等は外部PR待ち</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="encodercacheエンコーダキャッシュ"><a class="header" href="#encodercacheエンコーダキャッシュ">EncoderCache（エンコーダキャッシュ）</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM] | <strong>確信度</strong>: [VERIFIED] | <strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要-3"><a class="header" href="#概要-3">概要</a></h2>
+<p>EncoderCacheは、マルチモーダルモデルにおけるエンコーダ出力（例: ビジョンエンコーダの画像埋め込み）のGPUメモリ上キャッシュを管理するコンポーネントである。2層構造で、Scheduler側の論理管理（<code>EncoderCacheManager</code>）とWorker側の物理ストレージ（<code>GPUModelRunner.encoder_cache</code>）に分離されている。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code> (EncoderCacheManager)</p>
+<h2 id="アーキテクチャ-1"><a class="header" href="#アーキテクチャ-1">アーキテクチャ</a></h2>
+<h3 id="2層構造"><a class="header" href="#2層構造">2層構造</a></h3>
+<pre class="mermaid">graph TB
+    subgraph Scheduler Process
+        ECM[EncoderCacheManager&lt;br/&gt;論理管理]
+    end
+    subgraph Worker Process
+        EC["encoder_cache: dict[str, Tensor]&lt;br/&gt;GPU物理ストレージ"]
+    end
+    ECM --&gt;|"free_encoder_mm_hashes&lt;br/&gt;(SchedulerOutput経由)"| EC
+    ECM --&gt;|"scheduled_encoder_inputs&lt;br/&gt;(何を計算すべきか)"| EC
+</pre>
+
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>層</th><th>場所</th><th>データ構造</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td>論理管理</td><td>Scheduler</td><td><code>EncoderCacheManager</code></td><td>キャッシュ容量管理、参照カウント、Eviction判定</td></tr>
+<tr><td>物理ストレージ</td><td>GPUModelRunner</td><td><code>dict[str, torch.Tensor]</code></td><td>mm_hash → エンコーダ出力テンソルの保持</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="encodercachemanager-詳細"><a class="header" href="#encodercachemanager-詳細">EncoderCacheManager 詳細</a></h2>
+<h3 id="主要フィールド"><a class="header" href="#主要フィールド">主要フィールド</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:67-77</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cache_size</code></td><td><code>int</code></td><td>エンコーダ埋め込み数で測った総容量</td></tr>
+<tr><td><code>num_free_slots</code></td><td><code>int</code></td><td>現在利用可能な空きスロット数</td></tr>
+<tr><td><code>num_freeable_slots</code></td><td><code>int</code></td><td>参照ゼロエントリの回収で即座に利用可能になるスロット数</td></tr>
+<tr><td><code>cached</code></td><td><code>dict[str, set[str]]</code></td><td>mm_hash → 参照中リクエストIDの集合</td></tr>
+<tr><td><code>freeable</code></td><td><code>OrderedDict[str, int]</code></td><td>参照ゼロエントリの挿入順リスト（mm_hash → 埋め込み数）</td></tr>
+<tr><td><code>freed</code></td><td><code>list[str]</code></td><td>直近のEvictionで物理解放すべきmm_hashリスト</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="eviction方式-fifo参照ゼロエントリの遅延解放"><a class="header" href="#eviction方式-fifo参照ゼロエントリの遅延解放">Eviction方式: FIFO（参照ゼロエントリの遅延解放）</a></h3>
+<p>EncoderCacheManagerは<strong>遅延解放FIFO方式</strong>を採用する：</p>
+<ol>
+<li>リクエスト完了時、参照カウントが0になったエントリは即座には解放されず <code>freeable</code> OrderedDictに追加</li>
+<li>新しいエンコーダ出力のキャッシュ確保（<code>can_allocate()</code>）時に空きが不足した場合のみ、古い順にEviction</li>
+<li>Evictionされたmm_hashは <code>freed</code> リストに追加され、次の <code>get_freed_mm_hashes()</code> でWorkerに通知</li>
+<li>Worker側で <code>encoder_cache.pop(mm_hash)</code> により物理メモリ解放</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:119-178</code> (can_allocate)</p>
+<pre class="mermaid">stateDiagram-v2
+    [*] --&gt; Active: allocate()
+    Active --&gt; Active: check_and_update_cache()で新リクエスト参照追加
+    Active --&gt; Freeable: free_encoder_input()で参照カウント=0
+    Freeable --&gt; Active: check_and_update_cache()で再参照
+    Freeable --&gt; Evicted: can_allocate()で空き不足時
+    Evicted --&gt; [*]: Worker側でpop()
+</pre>
+
+<h3 id="共有キャッシュ"><a class="header" href="#共有キャッシュ">共有キャッシュ</a></h3>
+<p>同じ画像を含む複数リクエストが同時に処理される場合、同一の<code>mm_hash</code>を持つエンコーダ出力は<strong>共有</strong>される。<code>cached</code> dictのvalue（<code>set[str]</code>）が複数リクエストIDを保持し、全リクエストの完了後にのみ<code>freeable</code>に移行する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:91-117</code> (check_and_update_cache)</p>
+<h3 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>呼び出し元</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>check_and_update_cache(request, input_id)</code></td><td>Scheduler._schedule_encoder_inputs</td><td>キャッシュヒット判定。ヒット時は参照追加してTrue</td></tr>
+<tr><td><code>can_allocate(request, input_id, budget, scheduled)</code></td><td>Scheduler._schedule_encoder_inputs</td><td>空き確認+必要時Eviction。False=予算不足</td></tr>
+<tr><td><code>allocate(request, input_id)</code></td><td>Scheduler（RUNNING/WAITING処理）</td><td>論理的にキャッシュ空間を確保</td></tr>
+<tr><td><code>free_encoder_input(request, input_id)</code></td><td>Scheduler</td><td>1エントリの参照解放</td></tr>
+<tr><td><code>free(request)</code></td><td>Scheduler（リクエスト完了/中断時）</td><td>全エントリの参照解放</td></tr>
+<tr><td><code>get_freed_mm_hashes()</code></td><td>Scheduler._build_scheduler_output</td><td>Eviction済みmm_hashリスト取得（Worker通知用）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="キャッシュ容量の決定"><a class="header" href="#キャッシュ容量の決定">キャッシュ容量の決定</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:269-316</code> (compute_mm_encoder_budget)</p>
+<pre><code class="language-python">encoder_compute_budget = max(max_num_encoder_input_tokens, max_tokens_per_mm_item)
+encoder_cache_size = max(encoder_cache_size_config, max_tokens_per_mm_item)
+</code></pre>
+<ul>
+<li><code>max_tokens_per_mm_item</code>: モデルがサポートする全モダリティの最大トークン数</li>
+<li><code>max_num_encoder_input_tokens</code>: SchedulerConfig設定値</li>
+<li>1アイテムは必ずキャッシュできることを保証</li>
+</ul>
+<h2 id="gpumodelrunnerencoder_cache物理ストレージ"><a class="header" href="#gpumodelrunnerencoder_cache物理ストレージ">GPUModelRunner.encoder_cache（物理ストレージ）</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:439</code></p>
+<pre><code class="language-python">self.encoder_cache: dict[str, torch.Tensor] = {}
+</code></pre>
+<ul>
+<li><strong>キー</strong>: <code>mm_hash</code>（マルチモーダルデータのidentifier）</li>
+<li><strong>値</strong>: エンコーダ出力テンソル（GPU上）</li>
+<li><strong>書き込み</strong>: <code>_execute_mm_encoder()</code> 完了時に <code>encoder_cache[mm_hash] = output</code></li>
+<li><strong>読み取り</strong>: <code>_gather_mm_embeddings()</code> でデコーダ入力に合成</li>
+<li><strong>削除</strong>: <code>_update_states()</code> で <code>scheduler_output.free_encoder_mm_hashes</code> に従い <code>pop()</code></li>
+</ul>
+<h3 id="ecconnectorとの連携"><a class="header" href="#ecconnectorとの連携">ECConnectorとの連携</a></h3>
+<p>エンコーダ出力をGPUキャッシュに保存した直後に、ECConnector（有効時）にも保存する：</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:2442-2445</code></p>
+<pre><code class="language-python">for mm_hash, output in zip(mm_hashes, encoder_outputs):
+    self.encoder_cache[mm_hash] = output
+    self.maybe_save_ec_to_connector(self.encoder_cache, mm_hash)
+</code></pre>
+<p>Consumer側では、<code>execute_model()</code> の冒頭で ECConnector から <code>encoder_cache</code> にロードする：</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/ec_connector_model_runner_mixin.py:76-77</code></p>
+<pre><code class="language-python">if ec_connector.is_consumer:
+    ec_connector.start_load_caches(encoder_cache, **kwargs)
+</code></pre>
+<h2 id="encoderdecodercachemanager"><a class="header" href="#encoderdecodercachemanager">EncoderDecoderCacheManager</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:323-382</code></p>
+<p>Encoder-Decoderモデル（例: Whisper）用の暫定実装。<code>EncoderCacheManager</code>を継承するがキャッシュ共有機能を持たず、毎回エンコーダを実行する。主な違い：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>特性</th><th>EncoderCacheManager (MM)</th><th>EncoderDecoderCacheManager</th></tr>
+</thead>
+<tbody>
+<tr><td>キャッシュ共有</td><td>あり（mm_hash based）</td><td>なし（常にFalse）</td></tr>
+<tr><td>参照カウント</td><td>あり</td><td>なし</td></tr>
+<tr><td>Eviction</td><td>FIFO遅延解放</td><td>即時解放（1step遅延バッファあり）</td></tr>
+<tr><td>用途</td><td>Vision-Language Model</td><td>Encoder-Decoder Model</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="上流下流依存関係-1"><a class="header" href="#上流下流依存関係-1">上流・下流依存関係</a></h2>
+<h3 id="上流-1"><a class="header" href="#上流-1">上流</a></h3>
+<ul>
+<li><strong>Scheduler</strong>: <code>_schedule_encoder_inputs()</code> でキャッシュヒット判定・割当・解放指示</li>
+<li><strong>SchedulerConfig</strong>: <code>encoder_cache_size</code>, <code>max_num_encoder_input_tokens</code> で容量決定</li>
+</ul>
+<h3 id="下流-1"><a class="header" href="#下流-1">下流</a></h3>
+<ul>
+<li><strong>GPUModelRunner</strong>: 物理テンソル保持、エンコーダ実行、gather処理</li>
+<li><strong>ECConnector</strong>: 外部ストレージへの保存/読み込み（有効時）</li>
+</ul>
+<h2 id="データフロー"><a class="header" href="#データフロー">データフロー</a></h2>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant ECM as EncoderCacheManager
+    participant SO as SchedulerOutput
+    participant GMR as GPUModelRunner
+    participant EC as encoder_cache (GPU)
+
+    Note over S: _schedule_encoder_inputs()
+    S-&gt;&gt;ECM: check_and_update_cache(req, i)
+    alt キャッシュヒット
+        ECM--&gt;&gt;S: True（計算スキップ）
+    else キャッシュミス
+        ECM--&gt;&gt;S: False
+        S-&gt;&gt;ECM: can_allocate(req, i, budget, scheduled)
+        alt 空きあり（Eviction含む）
+            ECM--&gt;&gt;S: True
+            S-&gt;&gt;ECM: allocate(req, i)
+        else 空き不足
+            ECM--&gt;&gt;S: False（トークン数調整）
+        end
+    end
+
+    Note over S: _build_scheduler_output()
+    S-&gt;&gt;ECM: get_freed_mm_hashes()
+    ECM--&gt;&gt;S: freed list
+    S-&gt;&gt;SO: free_encoder_mm_hashes, scheduled_encoder_inputs
+
+    Note over GMR: execute_model()
+    GMR-&gt;&gt;EC: _execute_mm_encoder() → 保存
+    GMR-&gt;&gt;EC: _gather_mm_embeddings() → 読取
+    GMR-&gt;&gt;EC: _update_states() → free_encoder_mm_hashes に従い削除
+</pre>
+
+<h2 id="注意事項"><a class="header" href="#注意事項">注意事項</a></h2>
+<ul>
+<li>キャッシュサイズは<strong>エンコーダ埋め込み数</strong>で測定される。画像間のテキストトークン（break tokens等）は含まない</li>
+<li>物理メモリ解放はEviction判定（Scheduler側）と実際の<code>pop()</code>（Worker側）の間に1step以上のラグがある</li>
+<li><code>num_freeable_slots</code> は <code>num_free_slots</code> 以上の値を常に持つ（freeable + free の合計）</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="enginecore-サマリー"><a class="header" href="#enginecore-サマリー">EngineCore サマリー</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-2"><a class="header" href="#概要-2">概要</a></h2>
+<h2 id="概要-4"><a class="header" href="#概要-4">概要</a></h2>
 <p><code>EngineCore</code>はバックエンドプロセス（<code>EngineCoreProc</code>）内で動作する推論ループの中央制御コンポーネントである。<code>Scheduler</code>、<code>ModelExecutor</code>、<code>KVCacheManager</code>を統括し、<code>step()</code>メソッドで <strong>schedule → execute → update</strong> のサイクルを繰り返す。フロントエンドプロセスとはZMQ IPC経由で通信し、<code>EngineCoreRequest</code>を受信して<code>EngineCoreOutputs</code>を返す。</p>
-<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-2"><a class="header" href="#アーキテクチャ-2">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
     subgraph EngineCoreプロセス
         EC["EngineCore"]
@@ -998,7 +1538,7 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<h2 id="主要メソッド-1"><a class="header" href="#主要メソッド-1">主要メソッド</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -1129,9 +1669,9 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-09</p>
 </blockquote>
-<h2 id="概要-3"><a class="header" href="#概要-3">概要</a></h2>
+<h2 id="概要-5"><a class="header" href="#概要-5">概要</a></h2>
 <p><code>EngineCoreClient</code>はフロントエンドプロセス（AsyncLLM / LLM）とバックエンドプロセス（EngineCore）間のプロセス間通信を抽象化するコンポーネントである。ZeroMQソケットとmsgpackシリアライゼーションを使用し、<code>EngineCoreRequest</code>の送信と<code>EngineCoreOutputs</code>の受信を効率的に行う。</p>
-<h2 id="アーキテクチャ-1"><a class="header" href="#アーキテクチャ-1">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-3"><a class="header" href="#アーキテクチャ-3">アーキテクチャ</a></h2>
 <pre><code>フロントエンドプロセス            バックエンドプロセス
 ┌───────────────────┐            ┌───────────────────┐
 │  AsyncMPClient    │            │  EngineCore       │
@@ -1164,7 +1704,7 @@ Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド-1"><a class="header" href="#主要メソッド-1">主要メソッド</a></h2>
+<h2 id="主要メソッド-2"><a class="header" href="#主要メソッド-2">主要メソッド</a></h2>
 <h3 id="enginecoreclient-abc"><a class="header" href="#enginecoreclient-abc">EngineCoreClient (ABC)</a></h3>
 <div class="table-wrapper">
 <table>
@@ -1252,9 +1792,9 @@ AsyncLLM._run_output_handler()
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-09</p>
 </blockquote>
-<h2 id="概要-4"><a class="header" href="#概要-4">概要</a></h2>
+<h2 id="概要-6"><a class="header" href="#概要-6">概要</a></h2>
 <p><code>AsyncLLM</code>と<code>LLM</code>はvLLMの2つの主要エントリポイントである。<code>AsyncLLM</code>はAPIサーバー（OpenAI互換API等）が使用する非同期パスで、<code>LLM</code>はオフラインバッチ推論用の同期パスである。どちらも<code>InputProcessor</code>で入力を処理し、<code>EngineCoreClient</code>経由でバックエンド（EngineCore）にリクエストを送信する。</p>
-<h2 id="アーキテクチャ-2"><a class="header" href="#アーキテクチャ-2">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-4"><a class="header" href="#アーキテクチャ-4">アーキテクチャ</a></h2>
 <pre class="mermaid">graph LR
     subgraph 非同期パス
         OpenAI["OpenAI API Server"] --&gt; AsyncLLM
@@ -1286,7 +1826,7 @@ AsyncLLM._run_output_handler()
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド-2"><a class="header" href="#主要メソッド-2">主要メソッド</a></h2>
+<h2 id="主要メソッド-3"><a class="header" href="#主要メソッド-3">主要メソッド</a></h2>
 <h3 id="asyncllm"><a class="header" href="#asyncllm">AsyncLLM</a></h3>
 <div class="table-wrapper">
 <table>
@@ -1357,7 +1897,7 @@ AsyncLLM._run_output_handler()
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-5"><a class="header" href="#概要-5">概要</a></h2>
+<h2 id="概要-7"><a class="header" href="#概要-7">概要</a></h2>
 <p>Executorは、EngineCoreとWorker（GPUModelRunner）の間に位置する実行委譲レイヤーである。<code>collective_rpc()</code>パターンで全Workerに対して同一メソッドを呼び出し、出力ランクのWorkerの結果を返す。単一プロセス、マルチプロセス、Ray分散の3つの実装を持つ。</p>
 <h2 id="クラス階層"><a class="header" href="#クラス階層">クラス階層</a></h2>
 <pre><code>Executor (ABC)                                     abstract.py:36
@@ -1367,7 +1907,7 @@ AsyncLLM._run_output_handler()
 └── RayDistributedExecutor                         ray_executor.py:62
 </code></pre>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:36</code> (Executor)</p>
-<h2 id="主要メソッド-3"><a class="header" href="#主要メソッド-3">主要メソッド</a></h2>
+<h2 id="主要メソッド-4"><a class="header" href="#主要メソッド-4">主要メソッド</a></h2>
 <h3 id="collective_rpc"><a class="header" href="#collective_rpc">collective_rpc()</a></h3>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:180</code> (collective_rpc)</p>
 <p>全Workerに対して同一メソッドを実行するRPCメカニズム。</p>
@@ -1480,7 +2020,7 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-6"><a class="header" href="#概要-6">概要</a></h2>
+<h2 id="概要-8"><a class="header" href="#概要-8">概要</a></h2>
 <p>GPUModelRunnerは、推論パイプラインの実行中核を担う巨大クラス（約6,300行）である。SchedulerOutputを受け取り、入力テンソルの準備、モデルのforward実行、サンプリングを経て、ModelRunnerOutputを返す。<strong>2フェーズ実行パターン</strong>（<code>execute_model()</code> → <code>sample_tokens()</code>）を採用し、モデルフォワードとgrammar bitmask計算の並行実行を可能にしている。</p>
 <h2 id="クラス定義"><a class="header" href="#クラス定義">クラス定義</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:329</code> (GPUModelRunner)</p>
@@ -1657,9 +2197,9 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-09</p>
 </blockquote>
-<h2 id="概要-7"><a class="header" href="#概要-7">概要</a></h2>
+<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
 <p><code>InputProcessor</code>はユーザー入力（テキストプロンプト、SamplingParams等）を内部表現<code>EngineCoreRequest</code>に変換するコンポーネントである。トークナイズ、パラメータのバリデーションと正規化、マルチモーダル入力の前処理を担当する。AsyncLLMの初期化時に生成され、フロントエンドプロセスで動作する。</p>
-<h2 id="アーキテクチャ-3"><a class="header" href="#アーキテクチャ-3">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-5"><a class="header" href="#アーキテクチャ-5">アーキテクチャ</a></h2>
 <pre class="mermaid">graph LR
     Prompt["PromptType&lt;br&gt;(str / list[int] / dict)"] --&gt; IP["InputProcessor"]
     Params["SamplingParams"] --&gt; IP
@@ -1682,7 +2222,7 @@ EngineCore.step()（続き）
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド-4"><a class="header" href="#主要メソッド-4">主要メソッド</a></h2>
+<h2 id="主要メソッド-5"><a class="header" href="#主要メソッド-5">主要メソッド</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -1759,9 +2299,9 @@ EngineCore.step()（続き）
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-8"><a class="header" href="#概要-8">概要</a></h2>
+<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
 <p><code>KVCacheManager</code> は PagedAttention に基づく KV キャッシュブロックの割り当て・解放・プレフィックスキャッシュ検索を管理するクラスである。4層の階層設計（<code>KVCacheManager</code> → <code>KVCacheCoordinator</code> → <code>SingleTypeKVCacheManager</code> → <code>BlockPool</code>）でマルチグループ KV キャッシュを統括する。Scheduler から呼び出され、各リクエストに必要な GPU メモリブロックを確保する。</p>
-<h2 id="アーキテクチャ-4"><a class="header" href="#アーキテクチャ-4">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-6"><a class="header" href="#アーキテクチャ-6">アーキテクチャ</a></h2>
 <h3 id="クラス階層-1"><a class="header" href="#クラス階層-1">クラス階層</a></h3>
 <pre class="mermaid">graph TD
     KVM["KVCacheManager&lt;br&gt;公開 API"]
@@ -1895,7 +2435,7 @@ class KVCacheBlocks:
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド-5"><a class="header" href="#主要メソッド-5">主要メソッド</a></h2>
+<h2 id="主要メソッド-6"><a class="header" href="#主要メソッド-6">主要メソッド</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -2042,7 +2582,7 @@ class KVCacheBlocks:
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-9"><a class="header" href="#概要-9">概要</a></h2>
+<h2 id="概要-11"><a class="header" href="#概要-11">概要</a></h2>
 <p><code>SingleTypeKVCacheManager</code> は1種類のアテンションタイプの KV キャッシュ管理ロジックを担当する抽象基底クラスである。アテンションタイプごとにサブクラスが存在し、ブロックの割り当て・解放・プレフィックスキャッシュ検索をそれぞれのセマンティクスに合わせて実装する。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py</code></p>
 <h2 id="spec_manager_map-deep-verified"><a class="header" href="#spec_manager_map-deep-verified">spec_manager_map [DEEP] [VERIFIED]</a></h2>
@@ -2404,7 +2944,7 @@ sliding_window_contiguous_blocks = ceil((window - 1) / block_size)
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-10"><a class="header" href="#概要-10">概要</a></h2>
+<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
 <p><code>BlockPool</code> はKVキャッシュの物理ブロックを管理するクラスである。ブロックの割り当て・解放・プレフィックスキャッシュ索引を一元管理し、LRU Eviction によるメモリ再利用を実現する。3つの内部データ構造（<code>FreeKVCacheBlockQueue</code>、<code>BlockHashToBlockMap</code>、<code>KVCacheBlock</code>）で構成される。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:128</code></p>
 <h2 id="kvcacheblock-deep-verified"><a class="header" href="#kvcacheblock-deep-verified">KVCacheBlock [DEEP] [VERIFIED]</a></h2>
@@ -2735,7 +3275,7 @@ def should_sample_block(self) -&gt; bool:
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-11"><a class="header" href="#概要-11">概要</a></h2>
+<h2 id="概要-13"><a class="header" href="#概要-13">概要</a></h2>
 <p>プレフィックスキャッシュは、異なるリクエスト間で共通するプロンプトプレフィックスの KV キャッシュブロックを再利用する機構である。トークン列をブロック単位でハッシュ化し、ハッシュチェーン（各ブロックのハッシュが前のブロックのハッシュに依存）を構築することで、プレフィックスの最長一致を効率的に検索する。</p>
 <h2 id="ハッシュチェーン計算-deep-verified"><a class="header" href="#ハッシュチェーン計算-deep-verified">ハッシュチェーン計算 [DEEP] [VERIFIED]</a></h2>
 <h3 id="hash_block_tokens"><a class="header" href="#hash_block_tokens">hash_block_tokens()</a></h3>
@@ -3039,7 +3579,7 @@ Scheduler.schedule()
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-12"><a class="header" href="#概要-12">概要</a></h2>
+<h2 id="概要-14"><a class="header" href="#概要-14">概要</a></h2>
 <p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
 <h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
 <pre class="mermaid">graph TD
@@ -3512,7 +4052,7 @@ language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
 </pre>
 
 <h2 id="1-encodercachemanager"><a class="header" href="#1-encodercachemanager">1. EncoderCacheManager</a></h2>
-<h3 id="概要-13"><a class="header" href="#概要-13">概要</a></h3>
+<h3 id="概要-15"><a class="header" href="#概要-15">概要</a></h3>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17-267</code></p>
 <p>ビジョンエンコーダの出力（埋め込みテンソル）のライフサイクルを管理する。リファレンスカウント方式でリクエスト間のキャッシュ共有を実現し、遅延Evictionでメモリ効率を高める。</p>
 <h3 id="データ構造-1"><a class="header" href="#データ構造-1">データ構造</a></h3>
@@ -4033,7 +4573,7 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-14"><a class="header" href="#概要-14">概要</a></h2>
+<h2 id="概要-16"><a class="header" href="#概要-16">概要</a></h2>
 <p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、バックエンド（EngineCore）からZMQ経由で受信した<code>EngineCoreOutput</code>を、ユーザー向けの<code>RequestOutput</code>に変換する。主な処理はインクリメンタルデトークナイズ、停止文字列判定、logprobs処理である。AsyncLLMの<code>output_handler</code>バックグラウンドタスクから呼び出される。</p>
 <h2 id="process_outputs-フロー"><a class="header" href="#process_outputs-フロー">process_outputs() フロー</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
@@ -4187,9 +4727,9 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-15"><a class="header" href="#概要-15">概要</a></h2>
+<h2 id="概要-17"><a class="header" href="#概要-17">概要</a></h2>
 <p><code>Scheduler</code>はContinuous Batchingの中核コンポーネントであり、各ステップでどのリクエストにどれだけのトークンを計算させるかを決定する。<code>schedule()</code>メソッドは3フェーズ（RUNNING処理 → WAITING処理 → Output構築）で構成され、トークン予算の範囲内で最大限のリクエストをスケジュールする。Unified Compute Modelを採用し、Prefill/Decodeを明示的に区別せず <code>num_computed_tokens</code> の進捗で統一的に管理する。</p>
-<h2 id="アーキテクチャ-5"><a class="header" href="#アーキテクチャ-5">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-7"><a class="header" href="#アーキテクチャ-7">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
     subgraph schedule 3フェーズ
         P1["Phase 1: RUNNING&lt;br&gt;既実行リクエスト処理&lt;br&gt;L350-517"]
@@ -4223,7 +4763,7 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 </tbody>
 </table>
 </div>
-<h2 id="主要メソッド-6"><a class="header" href="#主要メソッド-6">主要メソッド</a></h2>
+<h2 id="主要メソッド-7"><a class="header" href="#主要メソッド-7">主要メソッド</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4677,9 +5217,9 @@ finally:
 <hr>
 <h2 id="3-ecexampleconnector-参照実装の分析-verified"><a class="header" href="#3-ecexampleconnector-参照実装の分析-verified">3. ECExampleConnector 参照実装の分析 [VERIFIED]</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py</code></p>
-<h3 id="概要-16"><a class="header" href="#概要-16">概要</a></h3>
+<h3 id="概要-18"><a class="header" href="#概要-18">概要</a></h3>
 <p>safetensors を使ってディスクにエンコーダ出力テンソルを保存/読込するデバッグ用実装。全 199 行。</p>
-<h3 id="ストレージ構造"><a class="header" href="#ストレージ構造">ストレージ構造</a></h3>
+<h3 id="ストレージ構造-1"><a class="header" href="#ストレージ構造-1">ストレージ構造</a></h3>
 <pre><code>{shared_storage_path}/
   {mm_hash}/
     encoder_cache.safetensors
@@ -4840,7 +5380,7 @@ self.freed: list[str] = []                       # evict 済みリスト
 </div>
 <hr>
 <h2 id="6-階層キャッシュの実装設計"><a class="header" href="#6-階層キャッシュの実装設計">6. 階層キャッシュの実装設計</a></h2>
-<h3 id="アーキテクチャ-6"><a class="header" href="#アーキテクチャ-6">アーキテクチャ</a></h3>
+<h3 id="アーキテクチャ-8"><a class="header" href="#アーキテクチャ-8">アーキテクチャ</a></h3>
 <pre><code>リクエスト到着
     │
     ▼
@@ -5766,7 +6306,7 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
                         └──────────────────────────────┘
 </code></pre>
 <hr>
-<h2 id="注意事項"><a class="header" href="#注意事項">注意事項</a></h2>
+<h2 id="注意事項-1"><a class="header" href="#注意事項-1">注意事項</a></h2>
 <ol>
 <li>
 <p><strong>ビジョン埋め込みの正規化</strong>: テキスト埋め込みには <code>embed_tokens(ids) × normalizer</code> のスケーリングが適用されるが、ビジョン埋め込みには <code>mm_soft_emb_norm</code>（RMSNorm）のみが適用され、<code>normalizer</code> スケーリングは適用されない。</p>
@@ -5944,6 +6484,22 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>
