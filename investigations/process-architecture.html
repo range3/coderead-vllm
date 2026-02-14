@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-bb2bb663.js";
+            window.path_to_searchindex_js = "../searchindex-43af35ac.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-9e89a2b8.js"></script>
@@ -177,7 +177,7 @@
                     <main>
                         <h1 id="プロセスアーキテクチャtp2構成"><a class="header" href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM]
+<p><strong>深度</strong>: [DEEP]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
@@ -280,6 +280,64 @@
 <li><code>1111...111</code>: 全reader読み取り済み → 書き込み可（再利用）</li>
 </ul>
 <p><strong>オーバーフロー処理</strong>: データが24MiBを超える場合、ZMQ PUB/SUBソケット（IPC）経由で転送する。ローカルではXPUB/SUBソケット、リモート（マルチノード時）ではTCPソケットを使用。</p>
+<h4 id="messagequeue-の詳細設計-deep-verified"><a class="header" href="#messagequeue-の詳細設計-deep-verified">MessageQueue の詳細設計 [DEEP] [VERIFIED]</a></h4>
+<p>MessageQueueは<code>ShmRingBuffer</code>をラップし、pickle protocol 5のout-of-bandバッファ対応のシリアライゼーション層を提供する。</p>
+<p><strong>ロール分離（Writer / Local Reader / Remote Reader）</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>判定条件</th><th>通信手段</th></tr>
+</thead>
+<tbody>
+<tr><td>Writer</td><td>コンストラクタで生成した側</td><td>ShmRingBuffer + ZMQ XPUB</td></tr>
+<tr><td>Local Reader</td><td><code>rank in handle.local_reader_ranks</code></td><td>ShmRingBuffer + ZMQ SUB</td></tr>
+<tr><td>Remote Reader</td><td>上記以外</td><td>ZMQ SUB のみ</td></tr>
+</tbody>
+</table>
+</div>
+<p>Writer側のコンストラクタでShmRingBufferとZMQソケット（XPUB）を両方作成する。Local Readerは共有メモリ経由で受信し、オーバーフロー時のみZMQ SUBにフォールバック。Remote Readerは常にZMQ SUBのみで受信する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272-354</code> (MessageQueue.<strong>init</strong> / create_from_handle)</p>
+<p><strong>enqueue() のデータフォーマット</strong>:</p>
+<pre><code>ShmRingBuffer チャンク内のバイトレイアウト:
++------+-------------------+--------------------+--------------------+-----+
+| [0]  | [1:3]             | [3:7] [7:7+L0]     | [7+L0:11+L0] ...  | ... |
+| flag | buf_count (2byte) | len0+main_pickle   | len1+oob_buffer1   | ... |
++------+-------------------+--------------------+--------------------+-----+
+  flag: 0=通常, 1=オーバーフロー（ZMQ経由で後続送信）
+</code></pre>
+<ul>
+<li><strong>pickle protocol 5 + out-of-band buffers</strong>: <code>buffer_callback</code>でサイズ判定。1MiB未満のバッファはインライン化（main pickle内に含む）、1MiB以上はoob bufferとして別管理</li>
+<li><strong>オーバーフロー判定</strong>: <code>total_bytes + len(main_pickle) &gt;= max_chunk_bytes</code>（デフォルト24MiB）の場合、ShmRingBufferにはflag=1のみ書き込み、実データはZMQ <code>send_multipart</code>で送信</li>
+<li>Remote Readerへは常に<code>send_multipart</code>で送信（ShmRingBufferにアクセスできないため）</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:571-612</code> (enqueue)</p>
+<p><strong>dequeue() のフロー</strong>:</p>
+<ol>
+<li><code>acquire_read()</code>でShmRingBufferからチャンクを取得</li>
+<li>flag=0（通常）: チャンクからbuf_count→各バッファ長→バッファを順次読み出し、<code>pickle.loads(main, buffers=oob_list)</code>でデシリアライズ</li>
+<li>flag=1（オーバーフロー）: <code>acquire_read()</code>のコンテキストを<strong>抜けてから</strong>（readフラグ設定後）、ZMQ SUBソケット経由で<code>recv_multipart</code></li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:614-640</code> (dequeue)</p>
+<p><strong>acquire_write() / acquire_read() の同期プロトコル</strong>:</p>
+<p>Writer:</p>
+<ol>
+<li>メモリフェンスで最新のメタデータを読む</li>
+<li><code>written_flag=0</code>（未書き込み）または全readerが読み済み（<code>read_count == n_reader</code>）のチャンクを探す</li>
+<li><code>written_flag</code>を0にリセット → データ書き込み → 全readerフラグを0にリセット → <strong>メモリフェンス</strong> → <code>written_flag</code>を1に → <strong>メモリフェンス</strong></li>
+<li>フラグ設定順序が重要: 先にreaderフラグをリセット（case 1維持）→最後にwritten=1（case 2へ遷移）。逆順だとcase 3を経由し、readerが不整合なデータを読む危険</li>
+</ol>
+<p>Reader:</p>
+<ol>
+<li>メモリフェンスで最新のメタデータを読む</li>
+<li><code>written_flag=1</code>かつ自分の<code>read_flag=0</code>のチャンクを探す</li>
+<li>データ読み取り → 自分の<code>read_flag</code>を1に → <strong>メモリフェンス</strong></li>
+</ol>
+<p><strong>SpinTimer / SpinSleepTimer</strong>: Readerのスピン待ち戦略。デフォルトは<code>sched_yield()</code>（CPU譲渡）。<code>VLLM_SLEEP_WHEN_IDLE=1</code>時は3秒間アクティビティがないと100msスリープに移行し、CPU消費を削減する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:438-504</code> (acquire_write)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:506-569</code> (acquire_read)</p>
+<p><strong>wait_until_ready() ハンドシェイク</strong>:</p>
+<p>Writer→各ReaderへZMQ <code>XPUB/SUB</code>経由でREADYメッセージを交換する集合操作。ShmRingBuffer自体にはハンドシェイクがないため、ZMQの<code>XPUB_VERBOSE</code>（全サブスクリプションメッセージ受信）を利用してReader接続完了を確認する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:405-436</code> (wait_until_ready)</p>
 <h4 id="collective_rpc-の動作フロー"><a class="header" href="#collective_rpc-の動作フロー">collective_rpc の動作フロー</a></h4>
 <pre><code>MultiprocExecutor.collective_rpc("execute_model", args=(scheduler_output,))
   │
@@ -295,6 +353,89 @@
   └─ Executor: response_mqs[0].dequeue() → output[0] を返却
       （output_rank=0 の場合、rank 0 の結果のみ返す）
 </code></pre>
+<h3 id="24-worker--enginecore-結果返却パス-deep-verified"><a class="header" href="#24-worker--enginecore-結果返却パス-deep-verified">2.4 Worker → EngineCore 結果返却パス [DEEP] [VERIFIED]</a></h3>
+<h4 id="response_mq-の構成"><a class="header" href="#response_mq-の構成">response_mq の構成</a></h4>
+<p>各Workerが<strong>自分専用のwriter側MessageQueue</strong>（<code>worker_response_mq</code>）を持ち、EngineCore側のMultiprocExecutorがそのreaderになる。rpc_broadcast_mq（1→多ブロードキャスト）とは逆方向の<strong>多→1通信</strong>だが、各MQは1 writer : 1 readerの構造。</p>
+<pre><code>┌─ EngineCore (MultiprocExecutor) ─────────────────────────┐
+│                                                           │
+│  response_mqs[0] ◄── reader ─── worker_response_mq (W0)  │
+│  response_mqs[1] ◄── reader ─── worker_response_mq (W1)  │
+│                                                           │
+│  ※ 各MQは独立したShmRingBuffer (n_reader=1, n_local=1)    │
+└───────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:508-509</code> (Worker側: <code>MessageQueue(1, 1)</code>)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:172-185</code> (Executor側: response_mqs構築)</p>
+<h4 id="response_mq-のハンドシェイク"><a class="header" href="#response_mq-のハンドシェイク">response_mq のハンドシェイク</a></h4>
+<ol>
+<li>Worker側: <code>__init__</code>内で<code>MessageQueue(1, 1)</code>を生成（writer兼ShmRingBuffer所有者）</li>
+<li>Worker側: READYメッセージと共に<code>worker_response_mq.export_handle()</code>をPipe経由でExecutor側に送信</li>
+<li>Executor側: <code>wait_for_ready()</code>内でPipeからhandleを受信し、<code>MessageQueue.create_from_handle(handle, 0)</code>でreader側MQを構築</li>
+<li>双方: <code>wait_until_ready()</code>でZMQ XPUB/SUBハンドシェイク完了</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:757-770</code> (READY送信+ハンドシェイク)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:628-646</code> (wait_for_response_handle_ready)</p>
+<h4 id="結果返却の詳細フロー"><a class="header" href="#結果返却の詳細フロー">結果返却の詳細フロー</a></h4>
+<pre><code>Worker.worker_busy_loop()
+  │
+  ├─ rpc_broadcast_mq.dequeue()  ← (method, args, kwargs, output_rank) を受信
+  │
+  ├─ func = getattr(self.worker, method)  ← "execute_model" 等
+  │
+  ├─ output = func(*args, **kwargs)  ← Worker.execute_model() 実行
+  │
+  ├─ if output_rank is None or self.rank == output_rank:
+  │     ├─ [sync路] enqueue_output(output)
+  │     │     ├─ isinstance(AsyncModelRunnerOutput) → .get_output()  ← GPU→CPU転送待ち
+  │     │     ├─ isinstance(Exception) → (FAILURE, str(e))
+  │     │     └─ else → (SUCCESS, output)
+  │     │     └─ worker_response_mq.enqueue(result)
+  │     │
+  │     └─ [async路] async_output_queue.put(output)
+  │           └─ async_output_busy_loop (別スレッド)
+  │                 └─ enqueue_output(output)  ← 同上
+  │
+  └─ (output_rank != self.rank の場合は何も返さない)
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:814-843</code> (enqueue_output / handle_output / async_output_busy_loop)</p>
+<h4 id="output_rank-による結果フィルタリング"><a class="header" href="#output_rank-による結果フィルタリング">output_rank による結果フィルタリング</a></h4>
+<p><code>collective_rpc</code>の呼び出し時に<code>output_rank</code>（<code>unique_reply_rank</code>パラメータ）を指定できる:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>output_rank</th><th>Worker側の動作</th><th>Executor側の動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>None</code></td><td><strong>全Workerが</strong>結果をenqueue</td><td><strong>全response_mqsから</strong>dequeue → リスト返却</td></tr>
+<tr><td><code>0</code></td><td><strong>rank 0のみ</strong>enqueue</td><td><strong>response_mqs[0]のみ</strong>dequeue → 単一値返却</td></tr>
+<tr><td><code>N</code></td><td><strong>rank Nのみ</strong>enqueue</td><td><strong>response_mqs[N]のみ</strong>dequeue → 単一値返却</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>execute_model()</code>は<code>unique_reply_rank=self.output_rank</code>（通常rank 0）で呼ばれるため、<strong>rank 0のWorkerのみが結果を返し</strong>、他のWorkerは結果を破棄する。これはTPモデルでは全Workerが同一の出力を計算するため、1つだけ返せば十分なため。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:270-275</code> (execute_model → unique_reply_rank)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:339-341</code> (response_mqs フィルタリング)</p>
+<h4 id="非同期スケジューリングasync_scheduling"><a class="header" href="#非同期スケジューリングasync_scheduling">非同期スケジューリング（async_scheduling）</a></h4>
+<p><code>scheduler_config.async_scheduling=True</code>の場合、結果返却が非同期化される:</p>
+<ol>
+<li><code>worker_busy_loop</code>内の<code>handle_output()</code>が<code>async_output_queue</code>（<code>queue.Queue</code>）に出力を投入</li>
+<li>別スレッド<code>async_output_busy_loop</code>（デーモンスレッド <code>WorkerAsyncOutputCopy</code>）がキューから取り出し</li>
+<li><code>AsyncModelRunnerOutput.get_output()</code>でGPU→CPU非同期コピー完了を待機</li>
+<li><code>worker_response_mq.enqueue()</code>で結果をEngineCore側に送信</li>
+</ol>
+<p>これにより、worker_busy_loopスレッドは<strong>GPU→CPUコピー完了を待たずに次のRPCを受信</strong>できる。GPU計算と結果転送をパイプライン化する仕組み。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:560-568</code> (async_output_copy_thread起動)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:200-209</code> (AsyncModelRunnerOutput)</p>
+<h4 id="non_blockfuturewrapper"><a class="header" href="#non_blockfuturewrapper">non_block（FutureWrapper）</a></h4>
+<p>Executor側の<code>collective_rpc(non_block=True)</code>では、response_mqからの結果取得を<strong>遅延評価</strong>する:</p>
+<ol>
+<li><code>get_response</code>クロージャを<code>FutureWrapper</code>に包んで即座に返す</li>
+<li>次回の<code>collective_rpc</code>呼び出し時に、pending futuresを先にdrainする（<code>futures_queue</code>から順次pop→<code>wait_for_response</code>）</li>
+<li>実際にresponse_mqから<code>dequeue()</code>するのはdrain時</li>
+</ol>
+<p>これにより、Executor側も結果待ちなしで次のRPCブロードキャストを発行でき、EngineCore.step()内のスケジューリングとWorkerの計算をオーバーラップできる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:365-375</code> (non_block / FutureWrapper)</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:303-375</code> (collective_rpc)
 <strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)</p>
 <h3 id="23-worker--worker-torchdistributed--nccl"><a class="header" href="#23-worker--worker-torchdistributed--nccl">2.3 Worker ↔ Worker: torch.distributed + NCCL</a></h3>
@@ -315,21 +456,27 @@
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:263-269</code> (init_worker_distributed_environment)</p>
 <p>NCCLの初期化は<code>Worker.init_device()</code>内で、メモリプロファイリング<strong>前</strong>に行われる。これによりNCCLバッファが確保された後の利用可能メモリが正確に計測される。</p>
 <h2 id="3-起動シーケンス"><a class="header" href="#3-起動シーケンス">3. 起動シーケンス</a></h2>
-<pre><code>1. ユーザーが AsyncLLM を生成
-2. AsyncLLM → EngineCoreClient.make_async_mp_client()
-3.   └─ mp.Process(target=EngineCoreProc.run_engine_core) 起動
-4.       └─ EngineCore.__init__() 内で MultiprocExecutor 生成
-5.           ├─ distributed_init_method = "tcp://127.0.0.1:&lt;port&gt;" 確保
-6.           ├─ rpc_broadcast_mq (ShmRingBuffer) 作成
-7.           └─ for rank in [0, 1]:
-8.               mp.Process(target=WorkerProc.worker_main) 起動
-9.                 ├─ Worker.init_device():
-10.                │   └─ torch.distributed.init_process_group(backend="nccl")
-11.                ├─ Worker.load_model(): モデルロード
-12.                ├─ READY メッセージ送信（Pipe経由）
-13.                └─ worker_busy_loop() でRPC待機開始
-14.      └─ wait_until_ready(): 全Worker READY 待ち
-15. Frontend ↔ EngineCore ZMQハンドシェイク完了
+<pre><code>1.  ユーザーが AsyncLLM を生成
+2.  AsyncLLM → EngineCoreClient.make_async_mp_client()
+3.    └─ mp.Process(target=EngineCoreProc.run_engine_core) 起動
+4.        └─ EngineCore.__init__() 内で MultiprocExecutor 生成
+5.            ├─ distributed_init_method = "tcp://127.0.0.1:&lt;port&gt;" 確保
+6.            ├─ rpc_broadcast_mq (ShmRingBuffer, n_reader=2) 作成
+7.            └─ for rank in [0, 1]:
+8.                mp.Process(target=WorkerProc.worker_main) 起動
+9.                  ├─ Worker.init_device():
+10.                 │   └─ torch.distributed.init_process_group(backend="nccl")
+11.                 ├─ Worker.load_model(): モデルロード
+12.                 ├─ _init_message_queues():
+13.                 │   ├─ rpc_broadcast_mq = create_from_handle(input_shm_handle, rank)
+14.                 │   └─ worker_response_mq = MessageQueue(1, 1)  ← 各Worker独自
+15.                 ├─ READY メッセージ + response_mq handle 送信（Pipe経由）
+16.                 └─ wait_until_ready() → worker_busy_loop() でRPC待機開始
+17.       └─ wait_for_ready():
+18.            ├─ Pipeからhandle受信 → response_mqs[rank] 構築
+19.            ├─ rpc_broadcast_mq.wait_until_ready()
+20.            └─ 各response_mq.wait_until_ready()
+21. Frontend ↔ EngineCore ZMQハンドシェイク完了
 </code></pre>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:696</code> (WorkerProc.worker_main)
 <strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:752-770</code> (READY送信)</p>
