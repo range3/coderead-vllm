@@ -35,3 +35,6 @@
 - [ ] ProcessorCacheのshm（共有メモリ）モードのSingleWriterShmRingBufferの具体的な動作は？
 - [x] マルチモーダルのプレフィックスキャッシュとProcessorCacheの相互作用の詳細は？（同じ画像のリクエストでKVキャッシュヒットする条件） — **回答**: 3つのキャッシュは独立に動作し、共通のmm_hashをキー基盤として共有。同一画像・同一プロンプト→全ヒット、同一画像・異なるプロンプト→ProcessorCache+EncoderCacheヒット+KVプレフィックスは画像ブロック部分のみヒット可能。extra_keysにidentifierが含まれるため異なる画像は必ずミス。詳細は `docs/src/investigations/gemma3-vision-caches.md`
 - [ ] 複数画像入力時のエンコーダバッチ処理のパフォーマンス特性は？
+- [ ] Mooncake ECConnector統一案はSHMConnectorを置き換えるか？（#33714 議論中）
+- [ ] エンコーダキャッシュのdict→事前割り当て型移行はECConnectorBaseのインタフェースに影響するか？
+- [ ] ECキャッシュ解放メカニズムはどのように実装される予定か？（#32659）

@@ -37,6 +37,7 @@
 
 # 調査報告
 
+- [ECConnector GitHub 議論調査レポート](investigations/ec-connector-github-discussions.md)
 - [EncoderCache 永続化と階層キャッシュ: 調査報告](investigations/encoder-cache-persistence.md)
 - [Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]](investigations/gemma3-vision-caches.md)
 - [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](investigations/gemma3-vision-pipeline.md)

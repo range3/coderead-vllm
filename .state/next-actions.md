@@ -37,6 +37,8 @@
 - [ ] batch_queue パイプライン並列化の実践的な動作（max_concurrent_batches > 1）
 - [ ] EncoderCache FIFO→LRU 変更の実装（設計完了、`encoder-cache-persistence.md` 参照）
 - [ ] カスタム ECConnector の実装（Redis/S3等のバックエンド）
+- [ ] Mooncake ECConnector の進展をウォッチ（#33714 コメント、fake0fan fork）
+- [ ] エンコーダキャッシュ事前割り当て方式の動向追跡（dict→固定バッファ移行の可能性）
 
 ## 完了
 

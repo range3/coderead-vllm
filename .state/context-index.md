@@ -37,6 +37,7 @@
 | `docs/src/investigations/gemma3-vision-pipeline.md` | Gemma3 27Bビジョンパイプライン形状フロー。config.json導出値、Pan-and-Scan設定、APIリクエスト→デコーダ入力のフルステップ（ケース1: PaS無効=256トークン、ケース2: PaS有効=768トークン）、CPU/GPU処理フロー図 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/investigations/gemma3-vision-caches.md` | Gemma3ビジョンパイプラインの3層キャッシュ機構。ProcessorCache(CPU, blake3, Step3スキップ)、EncoderCache(GPU, identifier, Step4+5+6スキップ)、KVプレフィックスキャッシュ(GPU, extra_keys, Step7+8部分スキップ)。キャッシュ間のキー共有(mm_hash基盤)、4シナリオ別動作例 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/investigations/encoder-cache-persistence.md` | EncoderCache永続化・階層キャッシュ化の調査報告。ECConnector既存インフラの発見と分析（ECConnectorBase/ECExampleConnector/ECConnectorFactory/ECTransferConfig）。KV Transferとの比較（ECConnectorが正解）。FIFO→LRU変更設計（encoder_cache_manager.pyの2メソッド修正）。2層キャッシュ設計（L1:GPU/LRU + L2:ECConnector/Storage）。カスタムECConnector実装ガイド | [MEDIUM] | [VERIFIED] | 2026-02-14 |
+| `docs/src/investigations/ec-connector-github-discussions.md` | ECConnector GitHub議論調査。EPD分離基盤(#25233)、Encoder-onlyモード(#30242)、ec_bothロール(#34182)のマージ済み設計。SHMConnector vs Mooncake統一案の進行中議論。エンコーダキャッシュ事前割り当て問題。MM前処理重複排除RFC。主要コントリビューター・タイムライン・未解決課題一覧 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 
 ## 外部リソース (target/ 内参照用)
 
