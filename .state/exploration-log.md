@@ -17,7 +17,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | Scheduler | [MEDIUM] | 2026-02-11 | `docs/src/components/scheduler/summary.md` |
 | KVCacheManager | [DEEP] | 2026-02-11 | `docs/src/components/kv-cache-manager/summary.md` + 3 サブドキュメント |
 | Executor/Worker | [MEDIUM] | 2026-02-14 | `docs/src/components/executor/summary.md` |
-| プロセスアーキテクチャ（TP=2） | [MEDIUM] | 2026-02-14 | `docs/src/investigations/process-architecture.md` |
+| プロセスアーキテクチャ（TP=2） | [DEEP] | 2026-02-14 | `docs/src/investigations/process-architecture.md` |
 | GPUModelRunner | [SHALLOW] | 2026-02-11 | `docs/src/components/gpu-model-runner/summary.md` |
 | OutputProcessor | [SHALLOW] | 2026-02-11 | `docs/src/components/output-processor/summary.md` |
 | モデル層 | [SHALLOW] | 2026-02-09 | `docs/src/architecture/overview.md` |
@@ -42,3 +42,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-14 | 2c+ | ECConnector GitHub議論調査。EPD分離基盤→Encoder-only→ec_both→SHMConnector/Mooncake統一案の開発経緯。未解決課題（キャッシュ解放、事前割り当て、MM前処理重複排除）。主要コントリビューター特定 | `docs/src/investigations/ec-connector-github-discussions.md` |
 | 2026-02-14 | 2d | EncoderCache・ECConnectorコンポーネント文書化。submodule最新化後のコード再調査。EncoderCacheManager（FIFO遅延解放、共有キャッシュ、EncoderDecoderCacheManager）、ECConnector（2ロール分離、Mixin統合、Producer専用モード、未実装機能5点特定） | `.state/sessions/20260214-phase2d-encoder-cache-ec-connector.md` |
 | 2026-02-14 | 2e | プロセスアーキテクチャ調査（TP=2構成）。4プロセス構成、3種通信（ZMQ/SharedMemory MQ/NCCL）、ShmRingBufferロックフリー設計、通信方式選択理由。Executor [SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260214-phase2e-process-architecture.md` |
+| 2026-02-14 | 2e+ | SharedMemory MQ深堀り + Worker→EngineCore結果返却パス。MessageQueue内部（pickle5 oob、バイトフォーマット、メモリフェンスプロトコル、SpinTimer）、response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper。process-architecture.md [MEDIUM]→[DEEP] | `.state/sessions/20260214-phase2e+-shm-mq-deep.md` |

@@ -41,7 +41,7 @@
 | `docs/src/investigations/encoder-cache-persistence.md` | EncoderCache永続化・階層キャッシュ化の調査報告。ECConnector既存インフラの発見と分析（ECConnectorBase/ECExampleConnector/ECConnectorFactory/ECTransferConfig）。KV Transferとの比較（ECConnectorが正解）。FIFO→LRU変更設計（encoder_cache_manager.pyの2メソッド修正）。2層キャッシュ設計（L1:GPU/LRU + L2:ECConnector/Storage）。カスタムECConnector実装ガイド | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/ec-connector-github-discussions.md` | ECConnector GitHub議論調査。EPD分離基盤(#25233)、Encoder-onlyモード(#30242)、ec_bothロール(#34182)のマージ済み設計。SHMConnector vs Mooncake統一案の進行中議論。エンコーダキャッシュ事前割り当て問題。MM前処理重複排除RFC。主要コントリビューター・タイムライン・未解決課題一覧 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/cacheblend-github-discussions.md` | CacheBlend GitHub議論調査。オンライン推論(vllm serve)未対応（8ヶ月間）、トークン化不一致が根本障壁。vLLM本体RFC#25950（サブリクエスト分割アプローチ、コード未公開）。LMCache側の品質バグ多数（ガーブル出力、保存漏れ、layerwise破損）。バージョン互換性マトリクス | [MEDIUM] | [VERIFIED] | 2026-02-14 |
-| `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成（Frontend+EngineCore+Worker×2）、3種通信（ZMQ/SharedMemory MQ/NCCL）、ShmRingBufferロックフリー設計、起動シーケンス、通信方式の設計判断（なぜZMQ/SharedMem/NCCLか）、TP=1との比較 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
+| `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成、3種通信、ShmRingBufferロックフリー設計、MessageQueue詳細（enqueue/dequeueバイトフォーマット、pickle5 oob buffers、メモリフェンスプロトコル、SpinTimer）、Worker→EngineCore結果返却パス（response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper） | [DEEP] | [VERIFIED] | 2026-02-14 |
 
 ## 外部リソース (target/ 内参照用)
 
