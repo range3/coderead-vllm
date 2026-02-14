@@ -39,6 +39,7 @@
 
 # 調査報告
 
+- [CacheBlend GitHub 議論調査](investigations/cacheblend-github-discussions.md)
 - [ECConnector GitHub 議論調査レポート](investigations/ec-connector-github-discussions.md)
 - [EncoderCache 永続化と階層キャッシュ: 調査報告](investigations/encoder-cache-persistence.md)
 - [Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]](investigations/gemma3-vision-caches.md)
