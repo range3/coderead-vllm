@@ -32,7 +32,7 @@
 
 - [ ] プラグインシステム（`vllm/plugins/`）の仕組み把握
 - [ ] C++/CUDAカーネル（`csrc/`）のAPI一覧整理
-- [ ] 分散推論（Tensor/Pipeline並列）の仕組み把握
+- [x] 分散推論（Tensor/Pipeline並列）の仕組み把握 — プロセスアーキテクチャ調査で部分完了（TP=2構成、`docs/src/investigations/process-architecture.md`）。PP詳細は未調査
 - [ ] Speculative Decodingの実装詳細
 - [ ] batch_queue パイプライン並列化の実践的な動作（max_concurrent_batches > 1）
 - [ ] EncoderCache FIFO→LRU 変更の実装（設計完了、`encoder-cache-persistence.md` 参照）

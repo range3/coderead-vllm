@@ -44,6 +44,7 @@
 - [EncoderCache 永続化と階層キャッシュ: 調査報告](investigations/encoder-cache-persistence.md)
 - [Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]](investigations/gemma3-vision-caches.md)
 - [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](investigations/gemma3-vision-pipeline.md)
+- [プロセスアーキテクチャ（TP=2構成）](investigations/process-architecture.md)
 
 ---
 

@@ -22,7 +22,7 @@
 | `docs/src/components/kv-cache-manager/block-pool.md` | BlockPool物理ブロック管理。KVCacheBlock（6フィールド、ライフサイクル）、FreeKVCacheBlockQueue（双方向リンクリスト、O(1) remove）、BlockHashToBlockMap（Union型最適化、重複排除なし）、null_block、Eviction、KV Cache Events、メトリクス | [DEEP] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/kv-cache-manager/prefix-cache.md` | プレフィックスキャッシュ。ハッシュチェーン計算（sha256_cbor等4種）、NONE_HASH、BlockHash型階層、Extra Keys（MM/LoRA/salt/embeds）、リクエストブロックハッシャー（遅延・増分）、BlockHashListWithBlockSize、Lookupアルゴリズム4種、Hybrid fixed-point | [DEEP] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/kv-cache-manager/attention-type-managers.md` | アテンションタイプ別Manager 7種。基底クラス（req_to_blocks/num_cached_block）、FullAttention（左→右scan）、SlidingWindow（右→左contiguous）、ChunkedLocal（chunk境界）、Mamba（align/none、状態管理）、CrossAttention（キャッシュなし）、SinkFullAttention（sink事前確保）、spec_manager_map | [DEEP] | [VERIFIED] | 2026-02-11 |
-| `docs/src/components/executor/summary.md` | Executor。collective_rpc()委譲パターン、UniProc/Multiproc/Ray 3実装、Worker委譲フロー、Pipeline Parallelism対応 | [SHALLOW] | [VERIFIED] | 2026-02-11 |
+| `docs/src/components/executor/summary.md` | Executor。collective_rpc()委譲パターン、UniProc/Multiproc/Ray 3実装、MultiprocExecutor MessageQueue詳細（ShmRingBuffer、ロックフリー、24MiBチャンク）、Worker起動・ビジーループ、Pipeline Parallelism対応 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/components/gpu-model-runner/summary.md` | GPUModelRunner。2フェーズ実行パターン（execute_model→sample_tokens）、ExecuteModelState、6300行の内訳、Phase 2深堀り候補 | [SHALLOW] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/output-processor/summary.md` | OutputProcessor。process_outputs()フロー、Detokenizer階層（Fast/Slow）、停止文字列判定、LogprobsProcessor、RequestOutputKind 3モード | [SHALLOW] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/encoder-cache/summary.md` | EncoderCache。2層構造（Scheduler側EncoderCacheManager論理管理+Worker側GPU物理ストレージ）、FIFO遅延解放Eviction、共有キャッシュ（mm_hash基盤）、EncoderDecoderCacheManager暫定実装、ECConnector連携 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
@@ -41,6 +41,7 @@
 | `docs/src/investigations/encoder-cache-persistence.md` | EncoderCache永続化・階層キャッシュ化の調査報告。ECConnector既存インフラの発見と分析（ECConnectorBase/ECExampleConnector/ECConnectorFactory/ECTransferConfig）。KV Transferとの比較（ECConnectorが正解）。FIFO→LRU変更設計（encoder_cache_manager.pyの2メソッド修正）。2層キャッシュ設計（L1:GPU/LRU + L2:ECConnector/Storage）。カスタムECConnector実装ガイド | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/ec-connector-github-discussions.md` | ECConnector GitHub議論調査。EPD分離基盤(#25233)、Encoder-onlyモード(#30242)、ec_bothロール(#34182)のマージ済み設計。SHMConnector vs Mooncake統一案の進行中議論。エンコーダキャッシュ事前割り当て問題。MM前処理重複排除RFC。主要コントリビューター・タイムライン・未解決課題一覧 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/cacheblend-github-discussions.md` | CacheBlend GitHub議論調査。オンライン推論(vllm serve)未対応（8ヶ月間）、トークン化不一致が根本障壁。vLLM本体RFC#25950（サブリクエスト分割アプローチ、コード未公開）。LMCache側の品質バグ多数（ガーブル出力、保存漏れ、layerwise破損）。バージョン互換性マトリクス | [MEDIUM] | [VERIFIED] | 2026-02-14 |
+| `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成（Frontend+EngineCore+Worker×2）、3種通信（ZMQ/SharedMemory MQ/NCCL）、ShmRingBufferロックフリー設計、起動シーケンス、通信方式の設計判断（なぜZMQ/SharedMem/NCCLか）、TP=1との比較 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 
 ## 外部リソース (target/ 内参照用)
 

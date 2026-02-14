@@ -1,8 +1,8 @@
 # Executor
 
-> **深度**: [SHALLOW]
+> **深度**: [MEDIUM]
 > **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-11
+> **最終更新**: 2026-02-14
 
 ## 概要
 
@@ -79,6 +79,71 @@ def sample_tokens(
 | `MultiprocExecutor` | 複数GPU（TP/PP） | 子プロセス | MessageQueue（共有メモリ）ベース。Pipeline Parallelism対応 |
 | `RayDistributedExecutor` | 分散クラスタ | Rayアクター | Ray経由のリモートWorker管理 |
 
+## MultiprocExecutor のプロセス間通信 [MEDIUM] [VERIFIED]
+
+MultiprocExecutorはSharedMemory MessageQueue（`ShmRingBuffer`）を使って同一ノード内のWorkerプロセスと通信する。
+
+### MessageQueue の仕組み
+
+**参照**: `target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272` (MessageQueue)
+
+2つのチャネルを併用:
+1. **ShmRingBuffer**（共有メモリ）: 24MiB以下の通常データ。ロックフリー、~20nsメモリフェンスのみ
+2. **ZMQ PUB/SUB**（フォールバック）: 24MiBを超えるデータ。ローカルはIPC、リモートはTCP
+
+ShmRingBufferのメモリレイアウト:
+```
+┌──────────────────────────────────┬──────────────────────────────────────┐
+│ data: chunk0 | chunk1 | ... | N  │ metadata: [written|r0|r1|...] × N   │
+│ max_chunks × 24MiB               │ max_chunks × (1 + n_reader) bytes    │
+└──────────────────────────────────┴──────────────────────────────────────┘
+```
+
+メタデータフラグで書き込み/読み取り状態を管理。全readerが読み取り完了するとチャンクが再利用される。
+
+### キュー構成
+
+| キュー | 方向 | 用途 |
+|--------|------|------|
+| `rpc_broadcast_mq` | Executor → 全Worker | RPCコマンドのブロードキャスト |
+| `worker_response_mq` × N | 各Worker → Executor | 実行結果の返送 |
+
+**参照**: `target/vllm/vllm/v1/executor/multiproc_executor.py:131-136` (rpc_broadcast_mq生成)
+
+### collective_rpc の動作フロー
+
+```
+MultiprocExecutor.collective_rpc("execute_model", args=(...))
+  │
+  ├─ rpc_broadcast_mq.enqueue((method, args, kwargs, output_rank))
+  │   → pickle → ShmRingBuffer書き込み → メモリフェンス
+  │
+  ├─ Worker-0: dequeue() → execute → response_mq.enqueue()
+  ├─ Worker-1: dequeue() → execute → response_mq.enqueue()
+  │
+  └─ Executor: response_mqs[output_rank].dequeue() → 結果返却
+```
+
+**参照**: `target/vllm/vllm/v1/executor/multiproc_executor.py:303-375` (collective_rpc)
+**参照**: `target/vllm/vllm/v1/executor/multiproc_executor.py:845-871` (worker_busy_loop)
+
+### Worker プロセスの起動とビジーループ
+
+**参照**: `target/vllm/vllm/v1/executor/multiproc_executor.py:696` (WorkerProc.worker_main)
+
+```
+WorkerProc.worker_main()
+  ├─ Worker.init_device()
+  │   └─ torch.distributed.init_process_group(backend="nccl")
+  ├─ Worker.load_model()
+  ├─ READY送信（Pipe経由）
+  └─ worker_busy_loop():
+      while True:
+        method, args, kwargs, output_rank = rpc_broadcast_mq.dequeue()
+        output = getattr(worker, method)(*args, **kwargs)
+        worker_response_mq.enqueue((SUCCESS, output))
+```
+
 ## Worker（委譲先）
 
 **参照**: `target/vllm/vllm/v1/worker/gpu_worker.py:70` (Worker)
@@ -122,9 +187,10 @@ EngineCore.step()（続き）
 
 ## Phase 2 深堀り候補
 
-- MultiprocExecutorのMessageQueue実装詳細
+- ~~MultiprocExecutorのMessageQueue実装詳細~~ → 調査済み（本ドキュメント）
 - Pipeline Parallelism時のバッチスケジューリング
 - Ray分散実行のオーバーヘッドと障害回復
+- AsyncScheduling時のasync_output_busy_loop動作
 
 ## 主要ファイル
 
@@ -132,7 +198,8 @@ EngineCore.step()（続き）
 |---------|----------------|
 | `target/vllm/vllm/v1/executor/abstract.py` | `Executor`, `collective_rpc()` (L180), `execute_model()` (L202) |
 | `target/vllm/vllm/v1/executor/uniproc_executor.py` | `UniProcExecutor` (L26) |
-| `target/vllm/vllm/v1/executor/multiproc_executor.py` | `MultiprocExecutor` (L93) |
+| `target/vllm/vllm/v1/executor/multiproc_executor.py` | `MultiprocExecutor` (L93), `WorkerProc` (L493), `worker_busy_loop` (L845) |
 | `target/vllm/vllm/v1/executor/ray_executor.py` | `RayDistributedExecutor` (L62) |
 | `target/vllm/vllm/v1/worker/gpu_worker.py` | `Worker` (L70), `execute_model()` (L604) |
 | `target/vllm/vllm/v1/worker/worker_base.py` | `WorkerBase` (L34), `WorkerWrapperBase` (L175) |
+| `target/vllm/vllm/distributed/device_communicators/shm_broadcast.py` | `ShmRingBuffer` (L127), `MessageQueue` (L272) |
