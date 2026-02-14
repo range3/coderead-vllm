@@ -68,14 +68,50 @@ Worker群を管理する抽象層。シングルプロセス（`UniProcExecutor`
 **参照**: `target/vllm/vllm/lora/`
 
 ### KV Transfer
-複数のvLLMインスタンス間でKVキャッシュを転送する機構。Disaggregated Prefill（PrefillとDecodeを異なるインスタンスで実行）等に使用。KVConnector抽象基底クラスとして実装され、LMCache、NIXL、P2P NCCL、Mooncake等の複数バックエンドがある。
+複数のvLLMインスタンス間またはストレージ間でデコーダKVキャッシュを転送するプラグインフレームワーク。KVConnectorBase_V1抽象基底クラス（7 abstractメソッド）と KVConnectorFactory（10個の登録済みコネクタ）で構成。Scheduler側（外部キャッシュ問い合わせ）とWorker側（レイヤー別非同期ロード/セーブ）の2ロール分離。ECConnector（エンコーダキャッシュ用）とは完全に独立した系統。
 
-**参照**: `target/vllm/vllm/distributed/kv_transfer/` (全体), `target/vllm/vllm/config/kv_transfer.py:17` (`KVTransferConfig`)
+**参照**: `target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147` (KVConnectorBase_V1), `docs/src/components/kv-transfer/summary.md`
+
+### KVConnectorBase_V1
+KV Transferのプラグイン基底クラス。Worker側4メソッド（start_load_kv, wait_for_layer_load, save_kv_layer, wait_for_save）とScheduler側3メソッド（get_num_new_matched_tokens, update_state_after_alloc, build_connector_meta）を定義する。KVConnectorMetadataでScheduler→Worker間の通信を行う。
+
+**参照**: `target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147`
+
+### KVConnectorFactory
+KVコネクタの登録・発見・生成を行うファクトリクラス。遅延ロードパターン（module_path + class_name）で10個のコネクタを登録。`kv_connector_module_path`設定で動的ロードも可能。
+
+**参照**: `target/vllm/vllm/distributed/kv_transfer/kv_connector/factory.py:27`
+
+### KVTransferConfig
+KV Transferの設定クラス。kv_connector（コネクタ名）、kv_role（producer/consumer/both）、kv_connector_extra_config（コネクタ固有設定）等を保持。
+
+**参照**: `target/vllm/vllm/config/kv_transfer.py:17`
+
+### KVConnectorModelRunnerMixin
+GPUModelRunnerにミックスインされるKVコネクタ統合クラス。`_get_kv_connector_output()`コンテキストマネージャでbind→start_load→yield→wait_for_save→get_finished→clearのライフサイクルを管理する。
+
+**参照**: `target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:40`
 
 ### LMCache
-vLLMと統合可能な外部KVキャッシュストレージ。KV Transferのバックエンドの一つとして動作し、KVキャッシュのCPUオフロード、インスタンス間共有等を提供する。
+vLLMと統合可能な外部KVキャッシュライブラリ。チャンク単位（デフォルト256トークン）でKVキャッシュを保存し、3層ストレージ階層（CPU→Disk→Remote）を持つ。15+のリモートコネクタ（Redis, S3, FS等）をサポート。Disaggregated Serving（P/D分離）にも対応。
 
-**参照**: `target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py`, `target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/`
+**参照**: `target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:72`, `docs/src/investigations/lmcache-integration.md`
+
+### Disaggregated Prefill (P/D分離)
+PrefillフェーズとDecodeフェーズを異なるvLLMインスタンスで実行するアーキテクチャ。Producerインスタンスがプリフィルを実行してKVキャッシュをKV Transfer経由で転送し、ConsumerインスタンスがKVキャッシュをロードしてデコードのみ実行する。
+
+### WAITING_FOR_REMOTE_KVS
+KV Transferの非同期ロード中のリクエスト状態。Schedulerがブロックを割り当て後、Worker側のKVロード完了を待つ間この状態に置かれる。Worker側コネクタの`get_finished()`で受信完了が報告されると、WAITING状態に戻されて次のスケジューリングサイクルでRUNNINGに昇格する。
+
+### KV Cache Events
+KVキャッシュのブロック保存・削除を外部システムに通知するイベントシステム。BlockStored、BlockRemoved、AllBlocksClearedの3イベント型。KVEventAggregatorで全Worker共通イベントを集約し、EventPublisher（ZMQ等）で配信。
+
+**参照**: `target/vllm/vllm/distributed/kv_events.py:49-84`
+
+### CacheEngineKey (LMCache)
+LMCacheのチャンクを一意に識別するキー。model_name、world_size、worker_id、chunk_hash（トークン列のプレフィックスハッシュ）、dtype、タグで構成。
+
+**参照**: `target/LMCache/lmcache/utils.py:330`
 
 ### Multimodal (マルチモーダル)
 テキスト以外の入力（画像・動画・音声）を扱うモデル機能。`vllm/multimodal/` にプロセッサ・レジストリ等が実装されている。Gemma3等のマルチモーダルモデルが対応。

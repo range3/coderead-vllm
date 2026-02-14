@@ -2,21 +2,13 @@
 
 ## 最優先
 
-- [ ] Phase 2: KV Transfer / LMCache 調査（ユーザー関心2位）
-  - KVConnector 抽象基底クラスの仕組み（KVConnectorBase_V1、7 abstract メソッド）
-  - LMCacheConnectorV1 の実装（vllm_v1_adapter.py ネイティブ実装）
-  - KVConnectorModelRunnerMixin の動作
-  - KV Cache Events との連携
-  - **注**: ECConnector（ec_transfer/）とは独立した系統。デコーダKVCache専用
-  - コンポーネント summary.md 作成
-
-## 次点
-
 - [ ] Phase 2: マルチモーダル DEEP化（ユーザー関心3位、MEDIUM済み）
   - ProcessorCache shm モードの詳細（SharedMemory Ring Buffer）
   - BaseMultiModalProcessor.apply() の内部フロー詳細
   - MM × プレフィックスキャッシュの相互作用
   - Gemma3以外のMMモデルとの差分パターン
+
+## 次点
 
 - [ ] Phase 2: Scheduler 深堀り（優先度A）
   - Speculative Decoding のリジェクション処理
@@ -27,6 +19,13 @@
   - Speculative Decoding 提案メソッド（propose_draft_token_ids）
   - ForwardContextでのreshape_and_cache()消費詳細
   - Attentionバックエンド初期化（initialize_attn_backend / AttentionGroup）
+
+- [ ] Phase 2: KV Transfer DEEP化（MEDIUM済み）
+  - NixlConnector の詳細（RDMA、pre-register、handshake）
+  - OffloadingConnector の詳細（CPU/ディスクオフロード）
+  - MultiConnector の複合パターン
+  - LMCache CacheBlend（blending）の動作
+  - cross-layer blocks の実際の性能影響
 
 ## いつかやる
 
@@ -41,6 +40,16 @@
 - [ ] エンコーダキャッシュ事前割り当て方式の動向追跡（dict→固定バッファ移行の可能性）
 
 ## 完了
+
+- [x] Phase 2g: KV Transfer / LMCache 調査（2026-02-15）
+  - KVConnectorBase_V1: 7 abstract メソッド、2ロール分離（Scheduler/Worker）
+  - KVConnectorFactory: 10個の登録済みコネクタ、遅延ロード
+  - Scheduler統合: WAITING_FOR_REMOTE_KVS状態、外部キャッシュ問い合わせ、遅延解放
+  - Worker/GPUModelRunner統合: KVConnectorModelRunnerMixin、レイヤー別パイプライニング
+  - KV Cache Events: BlockStored/Removed/AllBlocksCleared、ZMQ配信
+  - LMCache: チャンク単位保存（256トークン）、3層ストレージ、15+コネクタ
+  - vLLMアダプタ: native/latest分岐、RequestTracker/ReqMeta
+  - summary.md [SHALLOW]→[MEDIUM] 昇格 + investigations作成
 
 - [x] Phase 2f: GPUModelRunner 深堀り（2026-02-15）
   - KVCache-GPU Interface: ブロックID取込→BlockTable→slot_mapping→DMA→AttentionMetadata
@@ -61,16 +70,4 @@
   - summary.md + 3サブドキュメント作成、[SHALLOW]→[MEDIUM] 昇格
 
 - [x] Phase 2c: EncoderCache永続化・階層キャッシュ化調査（2026-02-14）
-  - ECConnector既存インフラの発見（KV Transferとは独立した専用枠組み）
-  - ECConnectorBase（5 abstract メソッド）、ECExampleConnector（参照実装199行）
-  - KV Transfer不適合の確認（テンソル形状・粒度の不一致）
-  - FIFO→LRU変更設計（encoder_cache_manager.pyの2メソッド修正、API変更なし）
-  - 2層キャッシュ設計（L1:GPU/LRU + L2:ECConnector/Storage）
-  - 成果物: `docs/src/investigations/encoder-cache-persistence.md`
-
 - [x] Phase 2d: EncoderCache・ECConnectorコンポーネント文書化（2026-02-14）
-  - submodule最新化後のコード再調査
-  - EncoderCacheManager: FIFO遅延解放、共有キャッシュ、EncoderDecoderCacheManager
-  - ECConnector: 2ロール分離、Mixin統合、Producer専用モード
-  - 未実装機能5点特定（ECConnectorOutput未消費、request_finished未統合 等）
-  - 成果物: `docs/src/components/encoder-cache/summary.md`, `docs/src/components/ec-connector/summary.md`

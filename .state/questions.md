@@ -4,7 +4,7 @@
 
 ## 優先
 
-- [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？ — **部分回答**: LMCacheはKV形状`(num_layer, 2, chunk_size, num_kv_heads, head_size)`を前提としたチャンク単位保存。NixlはRDMA。P2P NCCLはNCCL接続。Mooncakeはmooncake統合。OffloadingConnectorはCPU/ディスクオフロード。コネクタ一覧は `encoder-cache-persistence.md` セクション4参照。なお、ECConnector（ec_transfer/）はKV Transferとは完全に独立した系統でエンコーダキャッシュ専用
+- [x] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？ — **回答**: KVConnectorFactoryに10個登録。LMCache=チャンク単位保存・3層ストレージ（CPU/Disk/Remote）・15+リモートコネクタ、NIXL=RDMA高速GPU間転送・KVキャッシュ事前登録、P2P NCCL=NCCL直接GPU転送、Mooncake=分散フレームワーク統合、Offloading=CPU/ディスクオフロード、Multi=複数バックエンド束ね。詳細は `docs/src/components/kv-transfer/summary.md` と `docs/src/investigations/lmcache-integration.md`
 - [x] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？ — **回答**: MMキャッシュはKVCacheManagerとは独立。ProcessorCache（P0、HF処理結果）とEncoderCacheManager（P1、エンコーダ出力の論理管理）+ encoder_cache（GPU、テンソル）の3層構造。KVCacheManagerはデコーダ側のKVキャッシュのみ管理。ただしプレフィックスキャッシュのExtra Keysとしてmm_hashが使われ、同じ画像のリクエストはKVキャッシュのプレフィックスも共有可能。詳細は `docs/src/components/multimodal/summary.md`
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
 - [x] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？ — **回答**: 4段変換パス。`_update_states()`でSchedulerOutput.new_block_idsをCachedRequestState.block_ids+InputBatch.block_tableに取込→`BlockTable.compute_slot_mapping()`で`block_number*block_size+offset`の変換→`commit_block_table()`/`commit_slot_mapping()`でCpuGpuBuffer DMA転送→`_build_attention_metadata()`でCommonAttentionMetadata構築→per-layer AttentionMetadata。詳細は `docs/src/components/gpu-model-runner/kv-cache-interface.md`
@@ -40,3 +40,8 @@
 - [ ] Mooncake ECConnector統一案はSHMConnectorを置き換えるか？（#33714 議論中）
 - [ ] エンコーダキャッシュのdict→事前割り当て型移行はECConnectorBaseのインタフェースに影響するか？
 - [ ] ECキャッシュ解放メカニズムはどのように実装される予定か？（#32659）
+- [ ] NixlConnectorのRDMA事前登録（register_kv_caches）はどのような最適化をもたらすか？
+- [ ] cross-layer blocks（prefer_cross_layer_blocks=True）を使うコネクタはどれか、実際の性能差は？
+- [ ] LMCacheのLookupClient/Serverの分散キャッシュ問い合わせの具体的な通信プロトコルは？
+- [ ] LMCache CacheBlend（enable_blending）の動作メカニズムは？（partial KV reuse）
+- [ ] KV Transfer使用時のSchedulerのWAITING_FOR_REMOTE_KVS→WAITING遷移のレイテンシ影響は？

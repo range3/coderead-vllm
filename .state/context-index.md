@@ -29,6 +29,7 @@
 | `docs/src/components/output-processor/summary.md` | OutputProcessor。process_outputs()フロー、Detokenizer階層（Fast/Slow）、停止文字列判定、LogprobsProcessor、RequestOutputKind 3モード | [SHALLOW] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/encoder-cache/summary.md` | EncoderCache。2層構造（Scheduler側EncoderCacheManager論理管理+Worker側GPU物理ストレージ）、FIFO遅延解放Eviction、共有キャッシュ（mm_hash基盤）、EncoderDecoderCacheManager暫定実装、ECConnector連携 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/components/ec-connector/summary.md` | ECConnector。エンコーダキャッシュ外部転送プラグインフレームワーク。2ロール分離（Scheduler/Worker）、ECConnectorBase（5抽象メソッド）、ECTransferConfig（3ロール）、ECConnectorFactory（静的+動的登録）、ECExampleConnector参照実装、ECConnectorModelRunnerMixin、Producer専用モード、未実装機能5点 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
+| `docs/src/components/kv-transfer/summary.md` | KV Transfer。デコーダKVキャッシュ転送プラグインフレームワーク。KVConnectorBase_V1（7 abstract、2ロール分離）、KVConnectorFactory（10コネクタ）、Scheduler統合（WAITING_FOR_REMOTE_KVS、外部キャッシュ問い合わせ、遅延解放）、Worker/Mixin統合（レイヤー別パイプライニング）、KV Cache Events、cross-layer blocks、KVTransferConfig、ECConnector比較表 | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 | `docs/src/components/multimodal/summary.md` | マルチモーダル処理パイプライン全体像。3層キャッシュ構造、テキスト推論との差分、Gemma3固有特徴。3サブドキュメントへのリンク | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/multimodal/mm-processing.md` | フロントエンドMM処理。チャットテンプレート適用、プレースホルダー展開、トークン列構造、MMHasher(blake3)、ProcessorCache 4種(processor_only/lru/shm/none)、P0-P1キャッシュ整合性、MultiModalFeatureSpec構築 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/multimodal/mm-engine-gpu.md` | バックエンドMM処理。EncoderCacheManager(RefCount+FIFO遅延Eviction)、Schedulerエンコーダ予算管理、GPUModelRunnerのencoder_cache/execute/gather/merge | [MEDIUM] | [VERIFIED] | 2026-02-11 |
@@ -44,6 +45,7 @@
 | `docs/src/investigations/ec-connector-github-discussions.md` | ECConnector GitHub議論調査。EPD分離基盤(#25233)、Encoder-onlyモード(#30242)、ec_bothロール(#34182)のマージ済み設計。SHMConnector vs Mooncake統一案の進行中議論。エンコーダキャッシュ事前割り当て問題。MM前処理重複排除RFC。主要コントリビューター・タイムライン・未解決課題一覧 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/cacheblend-github-discussions.md` | CacheBlend GitHub議論調査。オンライン推論(vllm serve)未対応（8ヶ月間）、トークン化不一致が根本障壁。vLLM本体RFC#25950（サブリクエスト分割アプローチ、コード未公開）。LMCache側の品質バグ多数（ガーブル出力、保存漏れ、layerwise破損）。バージョン互換性マトリクス | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成、3種通信、ShmRingBufferロックフリー設計、MessageQueue詳細（enqueue/dequeueバイトフォーマット、pickle5 oob buffers、メモリフェンスプロトコル、SpinTimer）、Worker→EngineCore結果返却パス（response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper） | [DEEP] | [VERIFIED] | 2026-02-14 |
+| `docs/src/investigations/lmcache-integration.md` | LMCache統合調査。チャンク単位KV保存（256トークン/チャンク）、CacheEngineKey（プレフィックスハッシュ）、3層ストレージ階層（CPU/Disk/Remote）、15+リモートコネクタ。vLLMアダプタ（native/latest 2パス分岐）、RequestTracker/ReqMeta/LoadSpec/SaveSpec、GPUConnector 3種、KV形状、セーブ判定ロジック、Disaggregated Serving、設定体系 | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 
 ## 外部リソース (target/ 内参照用)
 
@@ -51,12 +53,13 @@
 | ---- | ---- | ---- |
 | `target/gemma3-27b-it/` | Gemma3-27b-it HF公開モデル設定ファイル群（config.json, preprocessor_config.json, chat_template.json等8ファイル。weightなし） | モデルパラメータ・トークンID・Pan-and-Scan設定の一次情報源 |
 | `target/transformers/src/transformers/models/gemma3/` | HF transformers Gemma3実装（8ファイル: configuration, modeling, processing, image_processing等） | vLLMが直接呼び出す上流コード。ProcessorCacheがGemma3Processorを呼び、Gemma3ProcessorがGemma3ImageProcessorを呼ぶ。processing_gemma3.pyのデフォルト値定義・boi展開ロジック、image_processing_gemma3.pyのPan-and-Scan・リサイズ実装が特に重要 |
+| `target/LMCache/lmcache/` | LMCacheライブラリ本体。v1/cache_engine.py（中核エンジン）、v1/storage_backend/（3層ストレージ+15+コネクタ）、integration/vllm/（latest版vLLMアダプタ） | KV Transferの主要バックエンド実装。チャンク単位KV保存の仕組み、ストレージバックエンド設計の参照 |
 
 ## 付録
 
 | ドキュメント                      | 内容             | 深度 | 確信度 | 最終更新 |
 | --------------------------------- | ---------------- | ---- | ------ | -------- |
-| `docs/src/glossary.md`            | 36用語。Phase 2bで追加: MultiModalFeatureSpec、PlaceholderRange、MultiModalHasher、ProcessorCache(MM)、EncoderCacheManager、SiglipVisionModel、Pan-and-Scan | [SHALLOW] | [VERIFIED] | 2026-02-11 |
+| `docs/src/glossary.md`            | 46用語。Phase 2gで追加: KVConnectorBase_V1、KVConnectorFactory、KVTransferConfig、KVConnectorModelRunnerMixin、Disaggregated Prefill、WAITING_FOR_REMOTE_KVS、KV Cache Events、CacheEngineKey | [SHALLOW] | [VERIFIED] | 2026-02-15 |
 | `.state/questions.md`             | 未解決の疑問     | -    | -      | 2026-02-11 |
 | `docs/src/appendix/file-index.md` | 主要ファイル索引 | -    | -      | -        |
 | `.state/reading-guide.md`         | 構造ルール6つ + ユーザー優先度。v1優先、gemma3リファレンス、CUDA中心 | [INFERRED] | [INFERRED] | 2026-02-09 |
