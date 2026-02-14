@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a2697c32.js";
+            window.path_to_searchindex_js = "searchindex-8442dfb6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-5c85ce16.js"></script>
+        <script src="toc-451ee09b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -218,11 +218,33 @@
 <p>少量の追加パラメータでLLMをファインチューニングする手法。vLLMは複数LoRAの動的切替（Multi-LoRA）をランタイムでサポートする。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/lora/</code></p>
 <h3 id="kv-transfer"><a class="header" href="#kv-transfer">KV Transfer</a></h3>
-<p>複数のvLLMインスタンス間でKVキャッシュを転送する機構。Disaggregated Prefill（PrefillとDecodeを異なるインスタンスで実行）等に使用。KVConnector抽象基底クラスとして実装され、LMCache、NIXL、P2P NCCL、Mooncake等の複数バックエンドがある。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/</code> (全体), <code>target/vllm/vllm/config/kv_transfer.py:17</code> (<code>KVTransferConfig</code>)</p>
+<p>複数のvLLMインスタンス間またはストレージ間でデコーダKVキャッシュを転送するプラグインフレームワーク。KVConnectorBase_V1抽象基底クラス（7 abstractメソッド）と KVConnectorFactory（10個の登録済みコネクタ）で構成。Scheduler側（外部キャッシュ問い合わせ）とWorker側（レイヤー別非同期ロード/セーブ）の2ロール分離。ECConnector（エンコーダキャッシュ用）とは完全に独立した系統。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code> (KVConnectorBase_V1), <code>docs/src/components/kv-transfer/summary.md</code></p>
+<h3 id="kvconnectorbase_v1"><a class="header" href="#kvconnectorbase_v1">KVConnectorBase_V1</a></h3>
+<p>KV Transferのプラグイン基底クラス。Worker側4メソッド（start_load_kv, wait_for_layer_load, save_kv_layer, wait_for_save）とScheduler側3メソッド（get_num_new_matched_tokens, update_state_after_alloc, build_connector_meta）を定義する。KVConnectorMetadataでScheduler→Worker間の通信を行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code></p>
+<h3 id="kvconnectorfactory"><a class="header" href="#kvconnectorfactory">KVConnectorFactory</a></h3>
+<p>KVコネクタの登録・発見・生成を行うファクトリクラス。遅延ロードパターン（module_path + class_name）で10個のコネクタを登録。<code>kv_connector_module_path</code>設定で動的ロードも可能。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/factory.py:27</code></p>
+<h3 id="kvtransferconfig"><a class="header" href="#kvtransferconfig">KVTransferConfig</a></h3>
+<p>KV Transferの設定クラス。kv_connector（コネクタ名）、kv_role（producer/consumer/both）、kv_connector_extra_config（コネクタ固有設定）等を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/kv_transfer.py:17</code></p>
+<h3 id="kvconnectormodelrunnermixin"><a class="header" href="#kvconnectormodelrunnermixin">KVConnectorModelRunnerMixin</a></h3>
+<p>GPUModelRunnerにミックスインされるKVコネクタ統合クラス。<code>_get_kv_connector_output()</code>コンテキストマネージャでbind→start_load→yield→wait_for_save→get_finished→clearのライフサイクルを管理する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:40</code></p>
 <h3 id="lmcache"><a class="header" href="#lmcache">LMCache</a></h3>
-<p>vLLMと統合可能な外部KVキャッシュストレージ。KV Transferのバックエンドの一つとして動作し、KVキャッシュのCPUオフロード、インスタンス間共有等を提供する。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py</code>, <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/</code></p>
+<p>vLLMと統合可能な外部KVキャッシュライブラリ。チャンク単位（デフォルト256トークン）でKVキャッシュを保存し、3層ストレージ階層（CPU→Disk→Remote）を持つ。15+のリモートコネクタ（Redis, S3, FS等）をサポート。Disaggregated Serving（P/D分離）にも対応。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:72</code>, <code>docs/src/investigations/lmcache-integration.md</code></p>
+<h3 id="disaggregated-prefill-pd分離"><a class="header" href="#disaggregated-prefill-pd分離">Disaggregated Prefill (P/D分離)</a></h3>
+<p>PrefillフェーズとDecodeフェーズを異なるvLLMインスタンスで実行するアーキテクチャ。Producerインスタンスがプリフィルを実行してKVキャッシュをKV Transfer経由で転送し、ConsumerインスタンスがKVキャッシュをロードしてデコードのみ実行する。</p>
+<h3 id="waiting_for_remote_kvs"><a class="header" href="#waiting_for_remote_kvs">WAITING_FOR_REMOTE_KVS</a></h3>
+<p>KV Transferの非同期ロード中のリクエスト状態。Schedulerがブロックを割り当て後、Worker側のKVロード完了を待つ間この状態に置かれる。Worker側コネクタの<code>get_finished()</code>で受信完了が報告されると、WAITING状態に戻されて次のスケジューリングサイクルでRUNNINGに昇格する。</p>
+<h3 id="kv-cache-events"><a class="header" href="#kv-cache-events">KV Cache Events</a></h3>
+<p>KVキャッシュのブロック保存・削除を外部システムに通知するイベントシステム。BlockStored、BlockRemoved、AllBlocksClearedの3イベント型。KVEventAggregatorで全Worker共通イベントを集約し、EventPublisher（ZMQ等）で配信。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:49-84</code></p>
+<h3 id="cacheenginekey-lmcache"><a class="header" href="#cacheenginekey-lmcache">CacheEngineKey (LMCache)</a></h3>
+<p>LMCacheのチャンクを一意に識別するキー。model_name、world_size、worker_id、chunk_hash（トークン列のプレフィックスハッシュ）、dtype、タグで構成。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/utils.py:330</code></p>
 <h3 id="multimodal-マルチモーダル"><a class="header" href="#multimodal-マルチモーダル">Multimodal (マルチモーダル)</a></h3>
 <p>テキスト以外の入力（画像・動画・音声）を扱うモデル機能。<code>vllm/multimodal/</code> にプロセッサ・レジストリ等が実装されている。Gemma3等のマルチモーダルモデルが対応。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/</code></p>

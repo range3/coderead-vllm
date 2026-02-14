@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a2697c32.js";
+            window.path_to_searchindex_js = "searchindex-8442dfb6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-5c85ce16.js"></script>
+        <script src="toc-451ee09b.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -3983,13 +3983,448 @@ Scheduler.schedule()
 <li><a href="#用語集">用語集</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="kv-transfer-medium-verified"><a class="header" href="#kv-transfer-medium-verified">KV Transfer [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-15
+<strong>対象ソース</strong>: <code>target/vllm/vllm/distributed/kv_transfer/</code>, <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py</code></p>
+</blockquote>
+<h2 id="概要-16"><a class="header" href="#概要-16">概要</a></h2>
+<p>KV Transferは、vLLMインスタンス間またはストレージ間でデコーダKVキャッシュを転送するためのプラグインフレームワーク。Disaggregated Prefill（P/D分離）、KVキャッシュのオフロード、外部キャッシュ（LMCache等）との連携を実現する。</p>
+<p><strong>ECConnector（<code>ec_transfer/</code>）とは完全に独立した系統</strong>。ECConnectorがエンコーダキャッシュ専用であるのに対し、KV Transferはデコーダ側のKVキャッシュのみを対象とする。ただし、設計パターン（2ロール分離、Factory、Mixin統合）は共通している。</p>
+<h2 id="アーキテクチャ-7"><a class="header" href="#アーキテクチャ-7">アーキテクチャ</a></h2>
+<pre class="mermaid">graph TD
+    subgraph Scheduler["Scheduler プロセス"]
+        S[Scheduler] --&gt;|"get_num_new_matched_tokens()"| KC_S[KVConnector&lt;br/&gt;SCHEDULER ロール]
+        S --&gt;|"update_state_after_alloc()"| KC_S
+        S --&gt;|"build_connector_meta()"| KC_S
+        S --&gt;|"request_finished()"| KC_S
+        S --&gt;|"take_events()"| KC_S
+    end
+
+    subgraph Worker["Worker プロセス"]
+        MR[GPUModelRunner] --&gt;|"Mixin"| KC_W[KVConnector&lt;br/&gt;WORKER ロール]
+        KC_W --&gt;|"start_load_kv()"| EXT[外部ストレージ&lt;br/&gt;LMCache / NIXL / etc.]
+        KC_W --&gt;|"save_kv_layer()"| EXT
+        ATT[Attention層] --&gt;|"wait_for_layer_load()"| KC_W
+        ATT --&gt;|"save_kv_layer()"| KC_W
+    end
+
+    KC_S -.-&gt;|"KVConnectorMetadata&lt;br/&gt;(via SchedulerOutput)"| KC_W
+    KC_W -.-&gt;|"KVConnectorOutput&lt;br/&gt;(via ModelRunnerOutput)"| KC_S
+</pre>
+
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code> (KVConnectorBase_V1)</p>
+<h3 id="2ロール分離"><a class="header" href="#2ロール分離">2ロール分離</a></h3>
+<p>KVConnectorBase_V1は<strong>同一クラス</strong>だが、SchedulerプロセスとWorkerプロセスで<strong>別インスタンス</strong>が生成される。KVConnectorFactory.create_connector()がロールを引数に取り、各プロセスで適切なインスタンスを構築する。</p>
+<pre><code class="language-python"># KVConnectorRole enum
+class KVConnectorRole(enum.Enum):
+    SCHEDULER = 0  # Schedulerプロセス内
+    WORKER = 1     # Workerプロセス内
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:121</code></p>
+<h3 id="グローバル状態管理"><a class="header" href="#グローバル状態管理">グローバル状態管理</a></h3>
+<p>Worker側のKVConnectorインスタンスはグローバル変数で管理される。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>関数</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>get_kv_transfer_group()</code></td><td>現在のコネクタインスタンス取得（assertで非None保証）</td></tr>
+<tr><td><code>has_kv_transfer_group()</code></td><td>コネクタ初期化済みか確認</td></tr>
+<tr><td><code>ensure_kv_transfer_initialized()</code></td><td>未初期化なら初期化（<code>is_kv_transfer_instance=True</code>時のみ）</td></tr>
+<tr><td><code>ensure_kv_transfer_shutdown()</code></td><td>コネクタ停止・グローバル変数クリア</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_transfer_state.py:16-74</code></p>
+<h2 id="kvconnectorbase_v1-抽象基底クラス"><a class="header" href="#kvconnectorbase_v1-抽象基底クラス">KVConnectorBase_V1 抽象基底クラス</a></h2>
+<h3 id="abstract-メソッド7つ"><a class="header" href="#abstract-メソッド7つ">Abstract メソッド（7つ）</a></h3>
+<h4 id="worker側4つ"><a class="header" href="#worker側4つ">Worker側（4つ）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>呼び出し元</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start_load_kv()</code></td><td><code>(ForwardContext, **kwargs) → None</code></td><td>Mixin（forward前）</td><td>KVキャッシュの非同期ロード開始</td></tr>
+<tr><td><code>wait_for_layer_load()</code></td><td><code>(layer_name: str) → None</code></td><td>Attention層内</td><td>レイヤー別ロード完了待機</td></tr>
+<tr><td><code>save_kv_layer()</code></td><td><code>(layer_name, kv_layer, attn_metadata, **kwargs) → None</code></td><td>Attention層内</td><td>レイヤー別KVの非同期セーブ開始</td></tr>
+<tr><td><code>wait_for_save()</code></td><td><code>() → None</code></td><td>Mixin（forward後）</td><td>全セーブ完了待機</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>レイヤーバイレイヤー・パイプライニング</strong>: <code>start_load_kv()</code>で全レイヤーのロードを非同期開始し、各Attention層のforward内で<code>wait_for_layer_load()</code>を呼ぶことで、前のレイヤーの計算中に次レイヤーのKVをロードできる。セーブも<code>save_kv_layer()</code>で即座に非同期開始し、<code>wait_for_save()</code>で全体の完了を保証する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:275-338</code></p>
+<h4 id="scheduler側3つ"><a class="header" href="#scheduler側3つ">Scheduler側（3つ）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>呼び出し元</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>get_num_new_matched_tokens()</code></td><td><code>(Request, int) → (int|None, bool)</code></td><td>Scheduler._schedule_waiting()</td><td>外部KVキャッシュで利用可能なトークン数を返す</td></tr>
+<tr><td><code>update_state_after_alloc()</code></td><td><code>(Request, KVCacheBlocks, int) → None</code></td><td>Scheduler._schedule_waiting()</td><td>ブロック割り当て後のコネクタ状態更新</td></tr>
+<tr><td><code>build_connector_meta()</code></td><td><code>(SchedulerOutput) → KVConnectorMetadata</code></td><td>Scheduler.schedule()</td><td>ステップ用メタデータ構築（状態リセットを伴う）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>get_num_new_matched_tokens() の戻り値</strong>:</p>
+<ul>
+<li><code>(N, False)</code> — N個の外部トークンが同期的に利用可能</li>
+<li><code>(N, True)</code> — N個の外部トークンが非同期ロード（WAITING_FOR_REMOTE_KVS状態へ遷移）</li>
+<li><code>(None, _)</code> — まだ判定不能（次回再問い合わせ）</li>
+<li><code>(0, False)</code> — 外部キャッシュなし</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:416-485</code></p>
+<h3 id="非abstract-重要メソッド"><a class="header" href="#非abstract-重要メソッド">非Abstract 重要メソッド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>用途</th><th>デフォルト動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bind_connector_metadata()</code></td><td>Scheduler→Workerメタデータ設定</td><td><code>_connector_metadata</code>に保存</td></tr>
+<tr><td><code>clear_connector_metadata()</code></td><td>メタデータクリア</td><td>Noneに設定</td></tr>
+<tr><td><code>register_kv_caches()</code></td><td>KVキャッシュテンソル事前登録（NIXL等で必要）</td><td>no-op</td></tr>
+<tr><td><code>register_cross_layers_kv_cache()</code></td><td>全レイヤー一括KVテンソル登録</td><td>no-op</td></tr>
+<tr><td><code>set_host_xfer_buffer_ops()</code></td><td>ホスト↔デバイス間コピー操作設定</td><td>no-op</td></tr>
+<tr><td><code>handle_preemptions()</code></td><td>プリエンプション通知（ブロック上書き前）</td><td>no-op</td></tr>
+<tr><td><code>get_finished()</code></td><td>非同期転送完了リクエストID取得</td><td><code>(None, None)</code></td></tr>
+<tr><td><code>get_block_ids_with_load_errors()</code></td><td>ロード失敗ブロックID取得</td><td><code>set()</code></td></tr>
+<tr><td><code>request_finished()</code></td><td>リクエスト完了通知・遅延解放制御</td><td><code>(False, None)</code></td></tr>
+<tr><td><code>take_events()</code></td><td>KVキャッシュイベント取得</td><td>空</td></tr>
+<tr><td><code>update_connector_output()</code></td><td>Worker出力でScheduler状態更新</td><td>no-op</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="補助クラスインタフェース"><a class="header" href="#補助クラスインタフェース">補助クラス・インタフェース</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>クラス</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>KVConnectorMetadata</code> (ABC)</td><td>Scheduler→Worker間通信メタデータ</td></tr>
+<tr><td><code>KVConnectorHandshakeMetadata</code> (ABC)</td><td>P/Dワーカー間帯域外ハンドシェイク</td></tr>
+<tr><td><code>SupportsHMA</code> (ABC)</td><td>Hybrid Memory Allocator対応インタフェース</td></tr>
+<tr><td><code>CopyBlocksOp</code> (Callable)</td><td><code>(s_tensors, d_tensors, s_indices, d_indices, direction) → None</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:82-144</code></p>
+<h3 id="cross-layer-blocks"><a class="header" href="#cross-layer-blocks">Cross-Layer Blocks</a></h3>
+<p><code>prefer_cross_layer_blocks</code>プロパティが<code>True</code>のコネクタは、全レイヤーのKVを1つの連続テンソルにまとめたレイアウトを使用する。これにより、ブロック単位で全レイヤーのKVデータを一括転送でき、転送効率が向上する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:113-177</code></p>
+<h2 id="kvconnectorfactory"><a class="header" href="#kvconnectorfactory">KVConnectorFactory</a></h2>
+<p>遅延ロードパターンのファクトリ。<code>module_path</code> + <code>class_name</code>を登録し、使用時にimportする。</p>
+<h3 id="登録済みコネクタ10個"><a class="header" href="#登録済みコネクタ10個">登録済みコネクタ（10個）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>名前</th><th>用途</th><th>特徴</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ExampleConnector</code></td><td>デバッグ用</td><td>safetensorsでディスク保存</td></tr>
+<tr><td><code>LMCacheConnectorV1</code></td><td>LMCache統合</td><td>チャンク単位KV保存・3層ストレージ</td></tr>
+<tr><td><code>LMCacheMPConnector</code></td><td>LMCacheマルチプロセス版</td><td>別プロセスでLMCache実行</td></tr>
+<tr><td><code>NixlConnector</code></td><td>NIXL (RDMA)</td><td>高速GPU間転送</td></tr>
+<tr><td><code>P2pNcclConnector</code></td><td>P2P NCCL</td><td>NCCL経由の直接GPU転送</td></tr>
+<tr><td><code>OffloadingConnector</code></td><td>KVオフロード</td><td>CPU/ディスクへのオフロード</td></tr>
+<tr><td><code>MultiConnector</code></td><td>複合コネクタ</td><td>複数バックエンドを束ねる</td></tr>
+<tr><td><code>MoRIIOConnector</code></td><td>MORIIO</td><td>MORIIOフレームワーク</td></tr>
+<tr><td><code>MooncakeConnector</code></td><td>Mooncake</td><td>分散学習フレームワーク</td></tr>
+<tr><td><code>DecodeBenchConnector</code></td><td>ベンチマーク用</td><td>デコード性能測定</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>動的ロード</strong>: <code>kv_connector_module_path</code>設定で未登録クラスも使用可能。旧2引数シグネチャとの互換性チェック（<code>supports_kw()</code>）あり。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/factory.py:27-203</code></p>
+<h2 id="scheduler統合"><a class="header" href="#scheduler統合">Scheduler統合</a></h2>
+<h3 id="外部キャッシュ問い合わせフロー"><a class="header" href="#外部キャッシュ問い合わせフロー">外部キャッシュ問い合わせフロー</a></h3>
+<p>WAITINGリクエストのスケジューリング時、ローカルプレフィックスキャッシュに加えて外部KVキャッシュも問い合わせる。</p>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant KV as KVConnector (SCHEDULER)
+    participant CM as KVCacheManager
+
+    Note over S: _schedule_waiting()
+    S-&gt;&gt;CM: get_computed_blocks(request)
+    CM--&gt;&gt;S: local_computed_tokens
+
+    S-&gt;&gt;KV: get_num_new_matched_tokens(request, local_computed_tokens)
+    KV--&gt;&gt;S: (external_tokens, is_async)
+
+    Note over S: total = local + external
+    S-&gt;&gt;CM: allocate_slots(request, num_new_tokens, ..., delay_cache_blocks=is_async)
+    CM--&gt;&gt;S: new_blocks
+
+    S-&gt;&gt;KV: update_state_after_alloc(request, blocks, external_tokens)
+
+    alt is_async=True
+        Note over S: request.status = WAITING_FOR_REMOTE_KVS
+    else is_async=False
+        Note over S: request.status = RUNNING
+    end
+
+    Note over S: schedule()末尾
+    S-&gt;&gt;KV: build_connector_meta(scheduler_output)
+    KV--&gt;&gt;S: KVConnectorMetadata
+</pre>
+
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:608-772</code></p>
+<h3 id="waiting_for_remote_kvs-状態管理"><a class="header" href="#waiting_for_remote_kvs-状態管理">WAITING_FOR_REMOTE_KVS 状態管理</a></h3>
+<p>非同期KVロード中のリクエストは<code>WAITING_FOR_REMOTE_KVS</code>状態に遷移する。</p>
+<ol>
+<li><strong><code>_update_from_kv_xfer_finished()</code></strong>: Worker側コネクタの<code>finished_recving</code>/<code>finished_sending</code>を処理
+<ul>
+<li><code>finished_recving</code> → <code>finished_recving_kv_req_ids</code>に追加（次stepで処理）</li>
+<li><code>finished_sending</code> → ブロック即時解放</li>
+</ul>
+</li>
+<li><strong><code>_update_waiting_for_remote_kv()</code></strong>: WAITING_FOR_REMOTE_KVS状態のリクエストを確認
+<ul>
+<li>受信完了 → <code>kv_cache_manager.cache_blocks()</code>でキャッシュ → WAITING状態に戻す</li>
+<li>ロードエラー → 有効なcomputed_tokensだけキャッシュ、またはブロック解放</li>
+</ul>
+</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1961-2034</code></p>
+<h3 id="リクエスト完了時の遅延解放"><a class="header" href="#リクエスト完了時の遅延解放">リクエスト完了時の遅延解放</a></h3>
+<p><code>_connector_finished()</code>は<code>request_finished()</code>を呼び、コネクタがブロックの非同期送信を引き受けるかを確認する。</p>
+<pre><code class="language-python">delay_free, kv_xfer_params = connector.request_finished(request, block_ids)
+# delay_free=True → ブロックはget_finished()で送信完了報告後に解放
+# kv_xfer_params → リクエスト出力に含めるKV転送パラメータ
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1930-1959</code></p>
+<h2 id="workergpumodelrunner-統合"><a class="header" href="#workergpumodelrunner-統合">Worker/GPUModelRunner 統合</a></h2>
+<h3 id="kvconnectormodelrunnermixin"><a class="header" href="#kvconnectormodelrunnermixin">KVConnectorModelRunnerMixin</a></h3>
+<p>GPUModelRunnerにミックスインされ、KVコネクタのライフサイクルを管理する。</p>
+<h4 id="_get_kv_connector_output--コアライフサイクル"><a class="header" href="#_get_kv_connector_output--コアライフサイクル"><code>_get_kv_connector_output()</code> — コアライフサイクル</a></h4>
+<pre><code class="language-python">@contextmanager
+def _get_kv_connector_output(scheduler_output, wait_for_save=True):
+    output = KVConnectorOutput()
+    kv_connector = get_kv_transfer_group()
+
+    # 1. Scheduler側メタデータをバインド
+    kv_connector.bind_connector_metadata(scheduler_output.kv_connector_metadata)
+
+    # 2. 非同期KVロード開始（forward前）
+    kv_connector.start_load_kv(get_forward_context())
+
+    try:
+        yield output  # ← ここでモデルforward実行（save_kv_layer含む）
+    finally:
+        # 3. セーブ完了待機
+        if wait_for_save:
+            kv_connector.wait_for_save()
+
+        # 4. 完了・エラー情報収集
+        output.finished_sending, output.finished_recving = (
+            kv_connector.get_finished(scheduler_output.finished_req_ids))
+        output.invalid_block_ids = kv_connector.get_block_ids_with_load_errors()
+        output.kv_connector_stats = kv_connector.get_kv_connector_stats()
+        output.kv_cache_events = kv_connector.get_kv_connector_kv_cache_events()
+
+        # 5. メタデータクリア
+        kv_connector.clear_connector_metadata()
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:80-111</code></p>
+<h4 id="execute_model-内の呼び出し位置"><a class="header" href="#execute_model-内の呼び出し位置">execute_model() 内の呼び出し位置</a></h4>
+<pre><code class="language-python"># GPUModelRunner.execute_model()
+
+# (1) プリエンプション処理
+if scheduler_output.preempted_req_ids and has_kv_transfer_group():
+    get_kv_transfer_group().handle_preemptions(scheduler_output.preempted_req_ids)
+
+# (2) forward不要時のKV転送
+if num_reqs == 0:
+    return self.kv_connector_no_forward(scheduler_output, self.vllm_config)
+
+# (3) モデルforward + KVコネクタ
+with self.maybe_get_kv_connector_output(scheduler_output) as kv_connector_output:
+    model_output = self._model_forward(...)
+
+# (4) sample_tokens()に引き渡し
+self.kv_connector_output = kv_connector_output  # ephemeral state
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3330-3617</code></p>
+<h3 id="kvコネクタ初期化"><a class="header" href="#kvコネクタ初期化">KVコネクタ初期化</a></h3>
+<p>GPUModelRunner.<code>_initialize_kv_caches()</code>内で、KVキャッシュ確保後にコネクタを登録する。</p>
+<pre><code class="language-python">if has_kv_transfer_group():
+    kv_transfer_group = get_kv_transfer_group()
+    if self.cross_layers_kv_cache is not None:
+        kv_transfer_group.register_cross_layers_kv_cache(
+            self.cross_layers_kv_cache, self.cross_layers_attn_backend)
+    else:
+        kv_transfer_group.register_kv_caches(kv_caches)
+    kv_transfer_group.set_host_xfer_buffer_ops(copy_kv_blocks)
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:6079-6088</code></p>
+<h2 id="kvconnectoroutput"><a class="header" href="#kvconnectoroutput">KVConnectorOutput</a></h2>
+<p>Worker→Schedulerへのフィードバック構造体。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>finished_sending</code></td><td><code>set[str] | None</code></td><td>送信完了リクエストID</td></tr>
+<tr><td><code>finished_recving</code></td><td><code>set[str] | None</code></td><td>受信完了リクエストID</td></tr>
+<tr><td><code>kv_connector_stats</code></td><td><code>KVConnectorStats | None</code></td><td>転送統計</td></tr>
+<tr><td><code>kv_cache_events</code></td><td><code>KVConnectorKVEvents | None</code></td><td>ブロック保存/削除イベント</td></tr>
+<tr><td><code>invalid_block_ids</code></td><td><code>set[int]</code></td><td>ロード失敗ブロックID</td></tr>
+<tr><td><code>expected_finished_count</code></td><td><code>int</code></td><td>ハンドシェイクベースコネクタ用</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:123-148</code></p>
+<h2 id="kv-cache-events"><a class="header" href="#kv-cache-events">KV Cache Events</a></h2>
+<p>外部システム（ルーティング、モニタリング等）へのKVキャッシュ状態通知システム。</p>
+<h3 id="イベント型"><a class="header" href="#イベント型">イベント型</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>イベント</th><th>フィールド</th><th>発行タイミング</th></tr>
+</thead>
+<tbody>
+<tr><td><code>BlockStored</code></td><td><code>block_hashes, parent_block_hash, token_ids, block_size, lora_id, medium</code></td><td>KVブロック保存時</td></tr>
+<tr><td><code>BlockRemoved</code></td><td><code>block_hashes, medium</code></td><td>KVブロック削除時</td></tr>
+<tr><td><code>AllBlocksCleared</code></td><td>なし</td><td>全ブロッククリア時</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:49-84</code></p>
+<h3 id="イベントフロー"><a class="header" href="#イベントフロー">イベントフロー</a></h3>
+<ol>
+<li>Worker側コネクタが<code>BlockStored</code>/<code>BlockRemoved</code>イベントを生成</li>
+<li><code>_get_kv_connector_output()</code>がイベントを<code>KVConnectorOutput.kv_cache_events</code>に収集</li>
+<li>Scheduler側で<code>update_connector_output()</code>→<code>KVEventAggregator</code>で全Worker共通イベントを集約</li>
+<li><code>take_events()</code>で集約済みイベントを取得</li>
+<li><code>EventPublisher</code>（ZMQ PUB/ROUTERまたはNull）で外部に配信</li>
+</ol>
+<h3 id="eventpublisher"><a class="header" href="#eventpublisher">EventPublisher</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>実装</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>NullEventPublisher</code></td><td>no-op（デフォルト）</td></tr>
+<tr><td><code>ZmqEventPublisher</code></td><td>ZMQ PUB/ROUTERで配信。インメモリreplay buffer付き</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:205-473</code></p>
+<h2 id="kvtransferconfig"><a class="header" href="#kvtransferconfig">KVTransferConfig</a></h2>
+<p>KV Transferの設定。<code>--kv-transfer-config</code>で指定する。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>デフォルト</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kv_connector</code></td><td>None</td><td>コネクタ名（“LMCacheConnectorV1“等）</td></tr>
+<tr><td><code>kv_role</code></td><td>None</td><td><code>"kv_producer"</code> / <code>"kv_consumer"</code> / <code>"kv_both"</code></td></tr>
+<tr><td><code>engine_id</code></td><td>UUID</td><td>エンジン識別子</td></tr>
+<tr><td><code>kv_buffer_device</code></td><td>“cuda”</td><td>バッファデバイス</td></tr>
+<tr><td><code>kv_buffer_size</code></td><td>1e9</td><td>バッファサイズ（バイト）</td></tr>
+<tr><td><code>kv_rank</code></td><td>None</td><td>P/D内のランク（0=prefill, 1=decode）</td></tr>
+<tr><td><code>kv_parallel_size</code></td><td>1</td><td>並列インスタンス数</td></tr>
+<tr><td><code>kv_ip</code> / <code>kv_port</code></td><td>“127.0.0.1” / 14579</td><td>接続先</td></tr>
+<tr><td><code>kv_connector_extra_config</code></td><td>{}</td><td>コネクタ固有追加設定</td></tr>
+<tr><td><code>kv_connector_module_path</code></td><td>None</td><td>動的ロード用モジュールパス</td></tr>
+<tr><td><code>kv_load_failure_policy</code></td><td>“recompute”</td><td>ロード失敗時ポリシー（“recompute” or “fail”）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/kv_transfer.py:17-117</code></p>
+<h2 id="ecconnectorとの比較"><a class="header" href="#ecconnectorとの比較">ECConnectorとの比較</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>観点</th><th>KV Transfer</th><th>ECConnector</th></tr>
+</thead>
+<tbody>
+<tr><td>対象</td><td>デコーダKVキャッシュ</td><td>エンコーダキャッシュ</td></tr>
+<tr><td>基底クラス</td><td><code>KVConnectorBase_V1</code></td><td><code>ECConnectorBase</code></td></tr>
+<tr><td>abstractメソッド数</td><td>7</td><td>5</td></tr>
+<tr><td>ロール分離</td><td>SCHEDULER / WORKER</td><td>SCHEDULER / WORKER</td></tr>
+<tr><td>Factory</td><td><code>KVConnectorFactory</code></td><td><code>ECConnectorFactory</code></td></tr>
+<tr><td>Mixin</td><td><code>KVConnectorModelRunnerMixin</code></td><td><code>ECConnectorModelRunnerMixin</code></td></tr>
+<tr><td>レイヤー別操作</td><td>あり（save/load per layer）</td><td>なし（エンコーダ出力一括）</td></tr>
+<tr><td>非同期ロード</td><td>あり（WAITING_FOR_REMOTE_KVS）</td><td>なし</td></tr>
+<tr><td>イベント通知</td><td>あり（BlockStored/Removed）</td><td>なし</td></tr>
+<tr><td>登録済み実装数</td><td>10</td><td>2（Example, SHM）</td></tr>
+<tr><td>設定クラス</td><td><code>KVTransferConfig</code></td><td><code>ECTransferConfig</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ディレクトリ構造"><a class="header" href="#ディレクトリ構造">ディレクトリ構造</a></h2>
+<pre><code>target/vllm/vllm/distributed/kv_transfer/
+├── kv_connector/
+│   ├── base.py                    # KVConnectorBase リダイレクト
+│   ├── factory.py                 # KVConnectorFactory + 10コネクタ登録
+│   ├── utils.py
+│   └── v1/
+│       ├── base.py                # KVConnectorBase_V1 (抽象基底)
+│       ├── metrics.py             # KVConnectorStats, Prometheus
+│       ├── example_connector.py   # safetensorsデバッグ用
+│       ├── lmcache_connector.py   # LMCacheラッパー
+│       ├── lmcache_mp_connector.py
+│       ├── nixl_connector.py
+│       ├── offloading_connector.py
+│       ├── multi_connector.py     # 複合コネクタ
+│       ├── decode_bench_connector.py
+│       ├── lmcache_integration/   # native LMCache実装
+│       │   ├── vllm_v1_adapter.py
+│       │   ├── multi_process_adapter.py
+│       │   └── utils.py
+│       ├── p2p/                   # P2P NCCLコネクタ
+│       ├── moriio/                # MORIIOコネクタ
+│       └── mooncake/              # Mooncakeコネクタ
+├── kv_transfer_state.py           # グローバル状態管理
+└── __init__.py
+
+target/vllm/vllm/distributed/kv_events.py  # イベントシステム
+target/vllm/vllm/config/kv_transfer.py     # KVTransferConfig
+target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py  # Mixin
+</code></pre>
+<h2 id="依存関係"><a class="header" href="#依存関係">依存関係</a></h2>
+<h3 id="上流kv-transferを使う側"><a class="header" href="#上流kv-transferを使う側">上流（KV Transferを使う側）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>使い方</th></tr>
+</thead>
+<tbody>
+<tr><td>Scheduler</td><td>外部キャッシュ問い合わせ、メタデータ構築、完了処理</td></tr>
+<tr><td>GPUModelRunner</td><td>Mixinでライフサイクル管理、KVキャッシュ登録</td></tr>
+<tr><td>Attention層</td><td><code>wait_for_layer_load()</code> / <code>save_kv_layer()</code> 呼び出し</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="下流kv-transferが使う側"><a class="header" href="#下流kv-transferが使う側">下流（KV Transferが使う側）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>使い方</th></tr>
+</thead>
+<tbody>
+<tr><td>KVCacheManager</td><td>ブロック割り当て・解放情報の取得</td></tr>
+<tr><td>ForwardContext</td><td>KVキャッシュテンソルへのアクセス</td></tr>
+<tr><td>LMCache / NIXL / etc.</td><td>実際のKVデータ保存・取得</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-16"><a class="header" href="#概要-16">概要</a></h2>
+<h2 id="概要-17"><a class="header" href="#概要-17">概要</a></h2>
 <p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
 <h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
 <pre class="mermaid">graph TD
@@ -4462,7 +4897,7 @@ language_model.model(inputs_embeds=merged)  # Gemma3 Decoder
 </pre>
 
 <h2 id="1-encodercachemanager"><a class="header" href="#1-encodercachemanager">1. EncoderCacheManager</a></h2>
-<h3 id="概要-17"><a class="header" href="#概要-17">概要</a></h3>
+<h3 id="概要-18"><a class="header" href="#概要-18">概要</a></h3>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17-267</code></p>
 <p>ビジョンエンコーダの出力（埋め込みテンソル）のライフサイクルを管理する。リファレンスカウント方式でリクエスト間のキャッシュ共有を実現し、遅延Evictionでメモリ効率を高める。</p>
 <h3 id="データ構造-1"><a class="header" href="#データ構造-1">データ構造</a></h3>
@@ -4983,7 +5418,7 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-18"><a class="header" href="#概要-18">概要</a></h2>
+<h2 id="概要-19"><a class="header" href="#概要-19">概要</a></h2>
 <p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、バックエンド（EngineCore）からZMQ経由で受信した<code>EngineCoreOutput</code>を、ユーザー向けの<code>RequestOutput</code>に変換する。主な処理はインクリメンタルデトークナイズ、停止文字列判定、logprobs処理である。AsyncLLMの<code>output_handler</code>バックグラウンドタスクから呼び出される。</p>
 <h2 id="process_outputs-フロー"><a class="header" href="#process_outputs-フロー">process_outputs() フロー</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
@@ -5137,9 +5572,9 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-11</p>
 </blockquote>
-<h2 id="概要-19"><a class="header" href="#概要-19">概要</a></h2>
+<h2 id="概要-20"><a class="header" href="#概要-20">概要</a></h2>
 <p><code>Scheduler</code>はContinuous Batchingの中核コンポーネントであり、各ステップでどのリクエストにどれだけのトークンを計算させるかを決定する。<code>schedule()</code>メソッドは3フェーズ（RUNNING処理 → WAITING処理 → Output構築）で構成され、トークン予算の範囲内で最大限のリクエストをスケジュールする。Unified Compute Modelを採用し、Prefill/Decodeを明示的に区別せず <code>num_computed_tokens</code> の進捗で統一的に管理する。</p>
-<h2 id="アーキテクチャ-7"><a class="header" href="#アーキテクチャ-7">アーキテクチャ</a></h2>
+<h2 id="アーキテクチャ-8"><a class="header" href="#アーキテクチャ-8">アーキテクチャ</a></h2>
 <pre class="mermaid">graph TD
     subgraph schedule 3フェーズ
         P1["Phase 1: RUNNING&lt;br&gt;既実行リクエスト処理&lt;br&gt;L350-517"]
@@ -5726,7 +6161,7 @@ finally:
 <hr>
 <h2 id="3-ecexampleconnector-参照実装の分析-verified"><a class="header" href="#3-ecexampleconnector-参照実装の分析-verified">3. ECExampleConnector 参照実装の分析 [VERIFIED]</a></h2>
 <p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py</code></p>
-<h3 id="概要-20"><a class="header" href="#概要-20">概要</a></h3>
+<h3 id="概要-21"><a class="header" href="#概要-21">概要</a></h3>
 <p>safetensors を使ってディスクにエンコーダ出力テンソルを保存/読込するデバッグ用実装。全 199 行。</p>
 <h3 id="ストレージ構造-1"><a class="header" href="#ストレージ構造-1">ストレージ構造</a></h3>
 <pre><code>{shared_storage_path}/
@@ -5889,7 +6324,7 @@ self.freed: list[str] = []                       # evict 済みリスト
 </div>
 <hr>
 <h2 id="6-階層キャッシュの実装設計"><a class="header" href="#6-階層キャッシュの実装設計">6. 階層キャッシュの実装設計</a></h2>
-<h3 id="アーキテクチャ-8"><a class="header" href="#アーキテクチャ-8">アーキテクチャ</a></h3>
+<h3 id="アーキテクチャ-9"><a class="header" href="#アーキテクチャ-9">アーキテクチャ</a></h3>
 <pre><code>リクエスト到着
     │
     ▼
@@ -6853,13 +7288,418 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
 </table>
 </div>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="lmcache-統合調査報告-medium-verified"><a class="header" href="#lmcache-統合調査報告-medium-verified">LMCache 統合調査報告 [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-15
+<strong>対象ソース</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py</code>, <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/</code>, <code>target/LMCache/lmcache/</code></p>
+</blockquote>
+<h2 id="調査目的"><a class="header" href="#調査目的">調査目的</a></h2>
+<p>LMCacheがvLLMのKVConnectorBase_V1インタフェースをどのように実装し、チャンク単位のKVキャッシュ保存・取得を実現しているかを明らかにする。</p>
+<h2 id="lmcache-概要"><a class="header" href="#lmcache-概要">LMCache 概要</a></h2>
+<p>LMCacheはLLM推論のKVキャッシュを外部に保存・共有するためのライブラリ。vLLMと統合して、同じプロンプトプレフィックスのKVキャッシュを再利用したり、Prefill/Decode分離（Disaggregated Serving）でKVキャッシュを転送したりする。</p>
+<h3 id="チャンク単位保存"><a class="header" href="#チャンク単位保存">チャンク単位保存</a></h3>
+<p>KVキャッシュをトークン列のチャンク（デフォルト256トークン）に分割して保存する。各チャンクは独立したキーで管理される。</p>
+<pre><code>プロンプト: [t0, t1, ..., t511]
+  → チャンク0: [t0..t255] のKV → CacheEngineKey(chunk_hash=hash([t0..t255]))
+  → チャンク1: [t256..t511] のKV → CacheEngineKey(chunk_hash=hash([t0..t511]))
+</code></pre>
+<p><strong>ハッシュチェーン</strong>: チャンクハッシュはプレフィックス全体のハッシュ（先頭からそのチャンク末尾まで）。これにより、同一プレフィックスを持つ異なるリクエスト間でKVキャッシュが共有可能。</p>
+<h3 id="cacheenginekey"><a class="header" href="#cacheenginekey">CacheEngineKey</a></h3>
+<pre><code class="language-python">@dataclass(slots=True)
+class CacheEngineKey:
+    model_name: str       # モデル名
+    world_size: int       # TP並列度
+    worker_id: int        # TPランク
+    chunk_hash: int       # トークン列ハッシュ
+    dtype: torch.dtype    # KVキャッシュのデータ型
+    request_configs: dict | None  # リクエスト固有タグ
+    tags: tuple | None    # (key, value) ペア
+</code></pre>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/utils.py:330-410</code></p>
+<h3 id="3層ストレージ階層"><a class="header" href="#3層ストレージ階層">3層ストレージ階層</a></h3>
+<pre class="mermaid">graph LR
+    GPU["GPU&lt;br/&gt;(vLLM paged buffer)"]
+    L1["L1: LocalCPU&lt;br/&gt;(ピン留めメモリ)"]
+    L2["L2: LocalDisk&lt;br/&gt;(NVMe/SSD)"]
+    L3["L3: Remote&lt;br/&gt;(Redis/S3/FS/etc.)"]
+
+    GPU &lt;--&gt;|"GPUConnector"| L1
+    L1 &lt;--&gt;|"StorageManager"| L2
+    L2 &lt;--&gt;|"StorageManager"| L3
+</pre>
+
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>層</th><th>バックエンド</th><th>設定</th><th>容量目安</th></tr>
+</thead>
+<tbody>
+<tr><td>L1</td><td>LocalCPUBackend</td><td><code>local_cpu=True, max_local_cpu_size</code></td><td>~5GB</td></tr>
+<tr><td>L2</td><td>LocalDiskBackend</td><td><code>local_disk, max_local_disk_size</code></td><td>~数十GB</td></tr>
+<tr><td>L3</td><td>RemoteBackend</td><td><code>remote_url</code></td><td>無制限</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>追加バックエンド</strong>: P2PBackend（GPU直接）, GdsBackend（GPU Direct Storage）, NixlStorageBackend（RDMA）, PDBackend（P/D分離用）</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/</code></p>
+<h3 id="リモートコネクタ15実装"><a class="header" href="#リモートコネクタ15実装">リモートコネクタ（15+実装）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コネクタ</th><th>URLスキーム</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td>RedisConnector</td><td><code>redis://</code></td><td>Redis単体</td></tr>
+<tr><td>RedisSentinelConnector</td><td><code>redis-sentinel://</code></td><td>Redis Sentinel</td></tr>
+<tr><td>RedisClusterConnector</td><td><code>redis://</code> (cluster)</td><td>Redisクラスタ</td></tr>
+<tr><td>S3Connector</td><td><code>s3://</code></td><td>AWS S3</td></tr>
+<tr><td>FSConnector</td><td><code>fs:///</code></td><td>ローカルファイルシステム</td></tr>
+<tr><td>MooncakestoreConnector</td><td><code>mooncakestore://</code></td><td>Mooncake</td></tr>
+<tr><td>ValkeyConnector</td><td><code>valkey://</code></td><td>Valkey</td></tr>
+<tr><td>EICConnector</td><td><code>infinistore://</code></td><td>InfiniStore</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/connector/</code></p>
+<h2 id="vllm統合アーキテクチャ"><a class="header" href="#vllm統合アーキテクチャ">vLLM統合アーキテクチャ</a></h2>
+<h3 id="2つの実装パス"><a class="header" href="#2つの実装パス">2つの実装パス</a></h3>
+<p><code>LMCacheConnectorV1</code>はvLLM側のラッパーで、<code>use_native</code>設定により2つの実装を切り替える。</p>
+<pre><code class="language-python"># target/vllm/.../lmcache_connector.py:83-101
+use_native = vllm_config.kv_transfer_config.get_from_extra_config("use_native", False)
+if use_native:
+    # vLLM内蔵の native 実装
+    cls = lmcache_integration.vllm_v1_adapter.LMCacheConnectorV1Impl
+else:
+    # lmcache パッケージの latest 実装
+    cls = lmcache.integration.vllm.vllm_v1_adapter.LMCacheConnectorV1Impl
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パス</th><th>ソース</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td>native</td><td><code>target/vllm/.../lmcache_integration/vllm_v1_adapter.py</code></td><td>vLLM同梱版。安定性重視</td></tr>
+<tr><td>latest</td><td><code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py</code></td><td>LMCache最新版。機能追加優先</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:72-103</code></p>
+<h3 id="クラス階層-3"><a class="header" href="#クラス階層-3">クラス階層</a></h3>
+<pre class="mermaid">graph TD
+    KVBase["KVConnectorBase_V1&lt;br/&gt;(vLLM抽象基底)"]
+    LMC["LMCacheConnectorV1&lt;br/&gt;(vLLM側ラッパー)"]
+    Impl["LMCacheConnectorV1Impl&lt;br/&gt;(実装本体)"]
+    Engine["LMCacheEngine&lt;br/&gt;(チャンク管理)"]
+    SM["StorageManager&lt;br/&gt;(バックエンド管理)"]
+    GPU["GPUConnector&lt;br/&gt;(paged buffer橋渡し)"]
+    TDB["TokenDatabase&lt;br/&gt;(トークン→チャンク)"]
+    LC["LookupClient&lt;br/&gt;(Scheduler側キャッシュ問い合わせ)"]
+
+    KVBase --&gt;|"継承"| LMC
+    LMC --&gt;|"_lmcache_engine"| Impl
+    Impl --&gt;|"lmcache_engine (Worker)"| Engine
+    Impl --&gt;|"lookup_client (Scheduler)"| LC
+    Engine --&gt; SM
+    Engine --&gt; GPU
+    Engine --&gt; TDB
+</pre>
+
+<h3 id="ロール別初期化"><a class="header" href="#ロール別初期化">ロール別初期化</a></h3>
+<p><code>LMCacheConnectorV1Impl.__init__()</code>はロールにより異なるコンポーネントを初期化する。</p>
+<p><strong>Scheduler側</strong> (<code>role=SCHEDULER</code>):</p>
+<ul>
+<li><code>LookupClient</code> — 外部KVキャッシュの存在確認（<code>get_num_new_matched_tokens</code>用）</li>
+<li><code>_request_trackers</code> — リクエスト状態管理</li>
+<li><code>load_specs</code> — ロード仕様管理</li>
+<li><code>lmcache_engine = None</code> — エンジンは持たない</li>
+</ul>
+<p><strong>Worker側</strong> (<code>role=WORKER</code>):</p>
+<ul>
+<li><code>LMCacheEngine</code> — KVキャッシュの保存・取得エンジン</li>
+<li><code>LookupServer</code> — Scheduler側LookupClientへの応答</li>
+<li><code>ZMQOffloadServer</code> — KVオフロードサーバ</li>
+<li><code>GPUConnector</code> — vLLMのpaged bufferとの橋渡し（3種: Paged/Layerwise/Buffer）</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:570-715</code></p>
+<h2 id="主要データ構造"><a class="header" href="#主要データ構造">主要データ構造</a></h2>
+<h3 id="requesttracker"><a class="header" href="#requesttracker">RequestTracker</a></h3>
+<p>リクエストのライフサイクルを追跡する。</p>
+<pre><code class="language-python">@dataclass
+class RequestTracker:
+    req_id: str
+    prompt_len: int                    # プロンプト全長
+    token_ids: list[int]               # スケジュール済みトークン列
+    allocated_block_ids: list[int]     # 割り当て済みブロックID
+    num_saved_tokens: int = 0          # 保存済みトークン数
+    disagg_spec: DisaggSpec | None     # P/D分離仕様
+    mm_hashes: list[str] | None        # マルチモーダルハッシュ
+    mm_positions: list[PlaceholderRange] | None  # MM位置情報
+    request_configs: dict | None       # リクエスト固有設定
+    is_decode_phase: bool = False      # デコードフェーズか
+    skip_save: bool = False            # 保存スキップフラグ
+</code></pre>
+<p><strong>ライフサイクル</strong>:</p>
+<ol>
+<li><code>from_new_request()</code> — 新規リクエスト時にSchedulerOutputから生成</li>
+<li><code>update()</code> — 各stepで新トークン・新ブロック追加</li>
+<li><code>is_decode_phase</code> — 新トークン数=1でデコードフェーズ判定</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:121-246</code></p>
+<h3 id="reqmeta"><a class="header" href="#reqmeta">ReqMeta</a></h3>
+<p>各stepでWorkerに送信されるメタデータ。</p>
+<pre><code class="language-python">@dataclass
+class ReqMeta:
+    req_id: str
+    token_ids: list[int]             # 保存/ロード対象トークン
+    slot_mapping: torch.Tensor       # vLLM paged bufferへのマッピング
+    is_last_prefill: bool = False    # 最終プリフィルステップか
+    save_spec: SaveSpec | None       # セーブ仕様
+    load_spec: LoadSpec | None       # ロード仕様
+    disagg_spec: DisaggSpec | None   # P/D分離仕様
+    request_configs: dict | None     # リクエスト固有設定
+</code></pre>
+<p><strong>slot_mapping計算</strong>: <code>block_id * block_size + offset</code>（vLLMのBlockTable.compute_slot_mappingと同じ方式）</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:248-398</code></p>
+<h3 id="loadspec--savespec"><a class="header" href="#loadspec--savespec">LoadSpec / SaveSpec</a></h3>
+<pre><code class="language-python">@dataclass
+class LoadSpec:
+    vllm_cached_tokens: int      # vLLMローカルキャッシュ済みトークン数
+    lmcache_cached_tokens: int   # LMCacheキャッシュ済みトークン数
+    can_load: bool               # Schedulerがロードを許可
+
+@dataclass
+class SaveSpec:
+    skip_leading_tokens: int     # スキップする先頭トークン数（既保存分）
+    can_save: bool               # セーブ実行するか
+</code></pre>
+<h3 id="セーブ判定ロジック"><a class="header" href="#セーブ判定ロジック">セーブ判定ロジック</a></h3>
+<p>以下のいずれかに該当する場合、セーブをスキップ:</p>
+<ol>
+<li>既に保存済み(<code>num_saved_tokens &gt; 0</code>)で、未保存トークンがチャンク境界に達していない</li>
+<li>デコードフェーズで<code>save_decode_cache=False</code></li>
+<li>リクエスト設定で<code>lmcache.skip_save=True</code></li>
+<li>Disagg接続でない場合のみスキップ（Disaggは転送のためスキップ不可）</li>
+</ol>
+<p>部分チャンク（チャンクサイズ未満）は<code>discard_partial_chunks</code>設定でセーブ可否が決まる。最終プリフィルでない場合は必ず破棄される（次stepでトークンが追加されるため）。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:295-338</code></p>
+<h2 id="kv形状とgpuconnector"><a class="header" href="#kv形状とgpuconnector">KV形状とGPUConnector</a></h2>
+<h3 id="kv形状"><a class="header" href="#kv形状">KV形状</a></h3>
+<pre><code class="language-python">kv_shape = (num_layer, 1 if use_mla else 2, chunk_size, num_kv_head, head_size)
+# 通常: (num_layer, 2, 256, num_kv_heads, head_size)
+#   2 = Key + Value
+# MLA: (num_layer, 1, 256, 1, aligned_head_size)
+#   1 = compressed_kv (KeyとValueが圧縮済み)
+</code></pre>
+<h3 id="gpuconnector-3種"><a class="header" href="#gpuconnector-3種">GPUConnector 3種</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コネクタ</th><th>用途</th><th>特徴</th></tr>
+</thead>
+<tbody>
+<tr><td><code>VLLMPagedMemGPUConnectorV2</code></td><td>標準</td><td>vLLMのpaged bufferから直接読み書き</td></tr>
+<tr><td><code>VLLMPagedMemLayerwiseGPUConnector</code></td><td>レイヤー別</td><td>レイヤーごとに個別処理</td></tr>
+<tr><td><code>VLLMBufferLayerwiseGPUConnector</code></td><td>Blending用</td><td>中間バッファ経由でブレンディング</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:500-541</code></p>
+<h2 id="エンドツーエンドフロー"><a class="header" href="#エンドツーエンドフロー">エンドツーエンドフロー</a></h2>
+<h3 id="ロード外部kv取得"><a class="header" href="#ロード外部kv取得">ロード（外部KV取得）</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant S as Scheduler
+    participant LC as LMCache (SCHEDULER)
+    participant W as Worker
+    participant LW as LMCache (WORKER)
+    participant ST as StorageBackend
+
+    Note over S: WAITING処理
+    S-&gt;&gt;LC: get_num_new_matched_tokens(request, local_computed)
+    LC-&gt;&gt;LC: LookupClientでキャッシュ存在確認
+    LC--&gt;&gt;S: (external_tokens, False)
+
+    Note over S: allocate_slots()
+    S-&gt;&gt;LC: update_state_after_alloc(request, blocks, external_tokens)
+    LC-&gt;&gt;LC: RequestTracker作成、LoadSpec設定
+
+    Note over S: schedule()末尾
+    S-&gt;&gt;LC: build_connector_meta(scheduler_output)
+    LC-&gt;&gt;LC: 各RequestTrackerからReqMeta生成
+    LC--&gt;&gt;S: LMCacheConnectorMetadata
+
+    Note over S: SchedulerOutput送信
+    S-&gt;&gt;W: SchedulerOutput (kv_connector_metadata含む)
+
+    Note over W: execute_model()
+    W-&gt;&gt;LW: bind_connector_metadata(metadata)
+    W-&gt;&gt;LW: start_load_kv(forward_context)
+    LW-&gt;&gt;ST: チャンク取得（GPU→CPU→Storage）
+    LW-&gt;&gt;LW: slot_mappingでpaged bufferに書き込み
+
+    Note over W: Attention層 forward
+    W-&gt;&gt;LW: wait_for_layer_load(layer_name)
+    LW--&gt;&gt;W: ロード完了
+
+    Note over W: forward完了
+    W-&gt;&gt;LW: get_finished(finished_req_ids)
+    LW--&gt;&gt;W: KVConnectorOutput
+</pre>
+
+<h3 id="セーブkv保存"><a class="header" href="#セーブkv保存">セーブ（KV保存）</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant W as Worker
+    participant LW as LMCache (WORKER)
+    participant ST as StorageBackend
+
+    Note over W: Attention層 forward
+    W-&gt;&gt;LW: save_kv_layer(layer_name, kv_layer, attn_metadata)
+    LW-&gt;&gt;LW: ReqMetaからsave_spec確認
+    LW-&gt;&gt;LW: slot_mappingでpaged bufferから読み出し
+    LW-&gt;&gt;ST: チャンク保存（非同期）
+
+    Note over W: forward完了後
+    W-&gt;&gt;LW: wait_for_save()
+    LW--&gt;&gt;W: 全チャンク保存完了
+
+    Note over W: リクエスト完了時
+    W-&gt;&gt;LW: request_finished(request, block_ids)
+    LW--&gt;&gt;W: (delay_free=True, kv_transfer_params)
+    Note over W: ブロック解放は送信完了後
+</pre>
+
+<h2 id="lmcacheengine-内部"><a class="header" href="#lmcacheengine-内部">LMCacheEngine 内部</a></h2>
+<h3 id="storagemanager"><a class="header" href="#storagemanager">StorageManager</a></h3>
+<p><code>OrderedDict[name, StorageBackendInterface]</code>でバックエンドを管理。ルックアップは登録順に検索し、最初にヒットしたバックエンドから取得する。保存は全バックエンドに書き込む（write-through）。</p>
+<h3 id="tokendatabase"><a class="header" href="#tokendatabase">TokenDatabase</a></h3>
+<p>トークン列からチャンクキー（<code>CacheEngineKey</code>）へのマッピングを管理。2つの実装:</p>
+<ul>
+<li><code>ChunkedTokenDatabase</code> — 固定チャンクサイズで分割</li>
+<li><code>SegmentTokenDatabase</code> — セグメント単位で管理</li>
+</ul>
+<h3 id="kvイベント生成"><a class="header" href="#kvイベント生成">KVイベント生成</a></h3>
+<p>LMCacheConnectorV1はWorker側でKV保存時に<code>BlockStored</code>イベントを生成する。これはvLLMのKVイベントシステム（<code>kv_events.py</code>）に変換され、外部のルーティングシステム等に配信される。</p>
+<pre><code class="language-python"># LMCacheConnectorV1.get_kv_connector_kv_cache_events()
+events = self._lmcache_engine.get_kv_events()
+blocks = [BlockStored(block_hashes=e.block_hashes, ...) for e in events]
+lmcache_kv_events = LMCacheKVEvents(num_workers=1)
+lmcache_kv_events.add_events(blocks)
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:220-244</code></p>
+<h2 id="disaggregated-servingpd分離"><a class="header" href="#disaggregated-servingpd分離">Disaggregated Serving（P/D分離）</a></h2>
+<p>LMCacheはDisaggregated Serving（PrefillインスタンスとDecodeインスタンスの分離）もサポートする。</p>
+<h3 id="disaggspec"><a class="header" href="#disaggspec">DisaggSpec</a></h3>
+<pre><code class="language-python">@dataclass
+class DisaggSpec:
+    req_id: str
+    receiver_id: str          # 受信側エンジンID
+    receiver_host: str        # 受信側ホスト
+    receiver_init_port: int   # 初期化ポート
+    receiver_alloc_port: int  # 割り当てポート
+    is_last_prefill: bool = False
+    num_transferred_tokens: int = 0
+</code></pre>
+<p>P/D分離時のフロー:</p>
+<ol>
+<li>Producerインスタンス（<code>kv_role=kv_producer</code>）がプリフィル実行</li>
+<li>KVキャッシュをLMCache経由で保存/転送</li>
+<li>Consumerインスタンス（<code>kv_role=kv_consumer</code>）がKVキャッシュをロード</li>
+<li>Consumerはデコードのみ実行</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:88-99</code></p>
+<h2 id="設定-6"><a class="header" href="#設定-6">設定</a></h2>
+<h3 id="vllm側kvtransferconfig"><a class="header" href="#vllm側kvtransferconfig">vLLM側（KVTransferConfig）</a></h3>
+<pre><code class="language-bash">vllm serve model_name \
+  --kv-transfer-config '{"kv_connector": "LMCacheConnectorV1", "kv_role": "kv_both"}'
+</code></pre>
+<h3 id="lmcache側lmcache_config_file"><a class="header" href="#lmcache側lmcache_config_file">LMCache側（LMCACHE_CONFIG_FILE）</a></h3>
+<p>環境変数<code>LMCACHE_CONFIG_FILE</code>でYAML設定ファイルを指定。主要設定:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>設定</th><th>デフォルト</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>chunk_size</code></td><td>256</td><td>チャンクサイズ（トークン数）</td></tr>
+<tr><td><code>local_cpu</code></td><td>True</td><td>CPUキャッシュ有効化</td></tr>
+<tr><td><code>max_local_cpu_size</code></td><td>5.0</td><td>CPU最大容量（GB）</td></tr>
+<tr><td><code>local_disk</code></td><td>None</td><td>ディスクキャッシュパス</td></tr>
+<tr><td><code>remote_url</code></td><td>None</td><td>リモートストレージURL</td></tr>
+<tr><td><code>enable_async_loading</code></td><td>True</td><td>非同期ロード</td></tr>
+<tr><td><code>use_layerwise</code></td><td>False</td><td>レイヤー別処理</td></tr>
+<tr><td><code>enable_blending</code></td><td>False</td><td>CacheBlendモード</td></tr>
+<tr><td><code>save_decode_cache</code></td><td>False</td><td>デコードKVも保存</td></tr>
+<tr><td><code>save_unfull_chunk</code></td><td>True</td><td>部分チャンク保存</td></tr>
+<tr><td><code>enable_pd</code></td><td>False</td><td>P/D分離モード</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="vllm-extra_configからの設定伝搬"><a class="header" href="#vllm-extra_configからの設定伝搬">vLLM extra_configからの設定伝搬</a></h3>
+<p><code>kv_connector_extra_config</code>で<code>lmcache.</code>プレフィックス付きの設定をLMCacheに渡せる:</p>
+<pre><code class="language-json">{
+  "kv_connector": "LMCacheConnectorV1",
+  "kv_role": "kv_both",
+  "kv_connector_extra_config": {
+    "lmcache.chunk_size": 512,
+    "lmcache.skip_save": true
+  }
+}
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:586-601</code></p>
+<h2 id="lmcacheディレクトリ構造"><a class="header" href="#lmcacheディレクトリ構造">LMCacheディレクトリ構造</a></h2>
+<pre><code>target/LMCache/lmcache/
+├── v1/
+│   ├── cache_engine.py              # LMCacheEngine（中核エンジン）
+│   ├── config.py                    # LMCacheEngineConfig
+│   ├── metadata.py                  # LMCacheMetadata
+│   ├── manager.py                   # LMCacheManager（ライフサイクル）
+│   ├── storage_backend/
+│   │   ├── storage_manager.py       # StorageManager
+│   │   ├── abstract_backend.py      # StorageBackendInterface
+│   │   ├── local_cpu_backend.py     # LocalCPUBackend (L1)
+│   │   ├── local_disk_backend.py    # LocalDiskBackend (L2)
+│   │   ├── remote_backend.py        # RemoteBackend (L3)
+│   │   ├── connector/               # 15+リモートコネクタ
+│   │   ├── cache_policy/            # Evictionポリシー
+│   │   └── naive_serde/             # シリアライゼーション
+│   ├── gpu_connector/               # GPU↔CPU橋渡し
+│   ├── compute/                     # CacheBlend等
+│   ├── token_database/              # トークン→チャンクマッピング
+│   ├── lookup_client/               # Scheduler側問い合わせ
+│   └── ...
+├── integration/
+│   └── vllm/                        # vLLM統合（latest版）
+│       ├── lmcache_connector_v1.py  # エントリポイント
+│       ├── vllm_v1_adapter.py       # 主実装（~700行）
+│       └── utils.py
+└── utils.py                         # CacheEngineKey等
+</code></pre>
+<h2 id="ecconnectorとの類似点相違点"><a class="header" href="#ecconnectorとの類似点相違点">ECConnectorとの類似点・相違点</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>観点</th><th>LMCache (KV Transfer)</th><th>ECConnector</th></tr>
+</thead>
+<tbody>
+<tr><td>対象</td><td>デコーダKVキャッシュ</td><td>エンコーダキャッシュ</td></tr>
+<tr><td>粒度</td><td>チャンク単位（256トークン）</td><td>エンコーダ出力全体</td></tr>
+<tr><td>ストレージ</td><td>3層階層（CPU/Disk/Remote）</td><td>safetensors（参照実装）</td></tr>
+<tr><td>問い合わせ</td><td>LookupClient（非同期）</td><td>has_cache_item（同期）</td></tr>
+<tr><td>非同期ロード</td><td>あり（WAITING_FOR_REMOTE_KVS）</td><td>なし</td></tr>
+<tr><td>P/D分離</td><td>サポート</td><td>なし</td></tr>
+<tr><td>KVイベント</td><td>BlockStored/Removed</td><td>なし</td></tr>
+<tr><td>成熟度</td><td>本番利用可能（10+コネクタ）</td><td>参照実装段階</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="プロセスアーキテクチャtp2構成"><a class="header" href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [DEEP]
 <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-14</p>
 </blockquote>
-<h2 id="概要-21"><a class="header" href="#概要-21">概要</a></h2>
+<h2 id="概要-22"><a class="header" href="#概要-22">概要</a></h2>
 <p>vLLMをGPU2枚・TP=2で起動した場合のプロセス構成、コンポーネント配置、プロセス間通信メカニズムを調査した。</p>
 <h2 id="1-プロセス構成合計4プロセス"><a class="header" href="#1-プロセス構成合計4プロセス">1. プロセス構成（合計4プロセス）</a></h2>
 <div class="table-wrapper">
@@ -7272,11 +8112,33 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
 <p>少量の追加パラメータでLLMをファインチューニングする手法。vLLMは複数LoRAの動的切替（Multi-LoRA）をランタイムでサポートする。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/lora/</code></p>
 <h3 id="kv-transfer"><a class="header" href="#kv-transfer">KV Transfer</a></h3>
-<p>複数のvLLMインスタンス間でKVキャッシュを転送する機構。Disaggregated Prefill（PrefillとDecodeを異なるインスタンスで実行）等に使用。KVConnector抽象基底クラスとして実装され、LMCache、NIXL、P2P NCCL、Mooncake等の複数バックエンドがある。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/</code> (全体), <code>target/vllm/vllm/config/kv_transfer.py:17</code> (<code>KVTransferConfig</code>)</p>
+<p>複数のvLLMインスタンス間またはストレージ間でデコーダKVキャッシュを転送するプラグインフレームワーク。KVConnectorBase_V1抽象基底クラス（7 abstractメソッド）と KVConnectorFactory（10個の登録済みコネクタ）で構成。Scheduler側（外部キャッシュ問い合わせ）とWorker側（レイヤー別非同期ロード/セーブ）の2ロール分離。ECConnector（エンコーダキャッシュ用）とは完全に独立した系統。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code> (KVConnectorBase_V1), <code>docs/src/components/kv-transfer/summary.md</code></p>
+<h3 id="kvconnectorbase_v1"><a class="header" href="#kvconnectorbase_v1">KVConnectorBase_V1</a></h3>
+<p>KV Transferのプラグイン基底クラス。Worker側4メソッド（start_load_kv, wait_for_layer_load, save_kv_layer, wait_for_save）とScheduler側3メソッド（get_num_new_matched_tokens, update_state_after_alloc, build_connector_meta）を定義する。KVConnectorMetadataでScheduler→Worker間の通信を行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code></p>
+<h3 id="kvconnectorfactory-1"><a class="header" href="#kvconnectorfactory-1">KVConnectorFactory</a></h3>
+<p>KVコネクタの登録・発見・生成を行うファクトリクラス。遅延ロードパターン（module_path + class_name）で10個のコネクタを登録。<code>kv_connector_module_path</code>設定で動的ロードも可能。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/factory.py:27</code></p>
+<h3 id="kvtransferconfig-1"><a class="header" href="#kvtransferconfig-1">KVTransferConfig</a></h3>
+<p>KV Transferの設定クラス。kv_connector（コネクタ名）、kv_role（producer/consumer/both）、kv_connector_extra_config（コネクタ固有設定）等を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/kv_transfer.py:17</code></p>
+<h3 id="kvconnectormodelrunnermixin-1"><a class="header" href="#kvconnectormodelrunnermixin-1">KVConnectorModelRunnerMixin</a></h3>
+<p>GPUModelRunnerにミックスインされるKVコネクタ統合クラス。<code>_get_kv_connector_output()</code>コンテキストマネージャでbind→start_load→yield→wait_for_save→get_finished→clearのライフサイクルを管理する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:40</code></p>
 <h3 id="lmcache"><a class="header" href="#lmcache">LMCache</a></h3>
-<p>vLLMと統合可能な外部KVキャッシュストレージ。KV Transferのバックエンドの一つとして動作し、KVキャッシュのCPUオフロード、インスタンス間共有等を提供する。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py</code>, <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/</code></p>
+<p>vLLMと統合可能な外部KVキャッシュライブラリ。チャンク単位（デフォルト256トークン）でKVキャッシュを保存し、3層ストレージ階層（CPU→Disk→Remote）を持つ。15+のリモートコネクタ（Redis, S3, FS等）をサポート。Disaggregated Serving（P/D分離）にも対応。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:72</code>, <code>docs/src/investigations/lmcache-integration.md</code></p>
+<h3 id="disaggregated-prefill-pd分離"><a class="header" href="#disaggregated-prefill-pd分離">Disaggregated Prefill (P/D分離)</a></h3>
+<p>PrefillフェーズとDecodeフェーズを異なるvLLMインスタンスで実行するアーキテクチャ。Producerインスタンスがプリフィルを実行してKVキャッシュをKV Transfer経由で転送し、ConsumerインスタンスがKVキャッシュをロードしてデコードのみ実行する。</p>
+<h3 id="waiting_for_remote_kvs"><a class="header" href="#waiting_for_remote_kvs">WAITING_FOR_REMOTE_KVS</a></h3>
+<p>KV Transferの非同期ロード中のリクエスト状態。Schedulerがブロックを割り当て後、Worker側のKVロード完了を待つ間この状態に置かれる。Worker側コネクタの<code>get_finished()</code>で受信完了が報告されると、WAITING状態に戻されて次のスケジューリングサイクルでRUNNINGに昇格する。</p>
+<h3 id="kv-cache-events-1"><a class="header" href="#kv-cache-events-1">KV Cache Events</a></h3>
+<p>KVキャッシュのブロック保存・削除を外部システムに通知するイベントシステム。BlockStored、BlockRemoved、AllBlocksClearedの3イベント型。KVEventAggregatorで全Worker共通イベントを集約し、EventPublisher（ZMQ等）で配信。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:49-84</code></p>
+<h3 id="cacheenginekey-lmcache"><a class="header" href="#cacheenginekey-lmcache">CacheEngineKey (LMCache)</a></h3>
+<p>LMCacheのチャンクを一意に識別するキー。model_name、world_size、worker_id、chunk_hash（トークン列のプレフィックスハッシュ）、dtype、タグで構成。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/utils.py:330</code></p>
 <h3 id="multimodal-マルチモーダル"><a class="header" href="#multimodal-マルチモーダル">Multimodal (マルチモーダル)</a></h3>
 <p>テキスト以外の入力（画像・動画・音声）を扱うモデル機能。<code>vllm/multimodal/</code> にプロセッサ・レジストリ等が実装されている。Gemma3等のマルチモーダルモデルが対応。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/</code></p>
