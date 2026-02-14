@@ -1,3 +1,6 @@
 [submodule "target/vllm"]
 	path = target/vllm
 	url = https://github.com/vllm-project/vllm.git
+[submodule "target/LMCache"]
+	path = target/LMCache
+	url = https://github.com/LMCache/LMCache.git
