@@ -15,6 +15,8 @@
 
 # コンポーネント
 
+- [ECConnector（Encoder Cache Connector）](components/ec-connector/summary.md)
+- [EncoderCache（エンコーダキャッシュ）](components/encoder-cache/summary.md)
 - [EngineCore サマリー](components/engine-core/summary.md)
 - [EngineCoreClient サマリー](components/engine-core-client/summary.md)
 - [エントリポイント (AsyncLLM / LLM) サマリー](components/entrypoint/summary.md)

@@ -2,7 +2,7 @@
 
 ## 現在のフェーズ
 
-Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了、ECConnector調査完了）
+Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了、EncoderCache MEDIUM完了、ECConnector MEDIUM完了）
 
 ## カバレッジマップ
 
@@ -21,7 +21,8 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | OutputProcessor | [SHALLOW] | 2026-02-11 | `docs/src/components/output-processor/summary.md` |
 | モデル層 | [SHALLOW] | 2026-02-09 | `docs/src/architecture/overview.md` |
 | KV Transfer/LMCache | [SHALLOW] | 2026-02-09 | `docs/src/glossary.md` |
-| ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/investigations/encoder-cache-persistence.md` |
+| EncoderCache | [MEDIUM] | 2026-02-14 | `docs/src/components/encoder-cache/summary.md` |
+| ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/components/ec-connector/summary.md` + investigations 2件 |
 | マルチモーダル | [MEDIUM] | 2026-02-11 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
 
 ## セッション履歴
@@ -38,3 +39,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-11 | 2b++ | Gemma3ビジョンパイプラインのキャッシュ機構調査。ProcessorCache(CPU/blake3)、EncoderCache(GPU/identifier)、KVプレフィックスキャッシュ(GPU/extra_keys)の3層。各キャッシュのハッシュ入力・保存値・スキップ処理を特定 | `docs/src/investigations/gemma3-vision-caches.md` |
 | 2026-02-14 | 2c | EncoderCache永続化・階層キャッシュ化の実現可能性調査。ECConnector既存インフラの発見（KV Transferとは独立した専用枠組み）。FIFO→LRU変更は1ファイル。ECExampleConnector参照実装分析。カスタムECConnector実装ガイド | `docs/src/investigations/encoder-cache-persistence.md` |
 | 2026-02-14 | 2c+ | ECConnector GitHub議論調査。EPD分離基盤→Encoder-only→ec_both→SHMConnector/Mooncake統一案の開発経緯。未解決課題（キャッシュ解放、事前割り当て、MM前処理重複排除）。主要コントリビューター特定 | `docs/src/investigations/ec-connector-github-discussions.md` |
+| 2026-02-14 | 2d | EncoderCache・ECConnectorコンポーネント文書化。submodule最新化後のコード再調査。EncoderCacheManager（FIFO遅延解放、共有キャッシュ、EncoderDecoderCacheManager）、ECConnector（2ロール分離、Mixin統合、Producer専用モード、未実装機能5点特定） | `.state/sessions/20260214-phase2d-encoder-cache-ec-connector.md` |

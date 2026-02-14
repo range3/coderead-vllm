@@ -25,6 +25,8 @@
 | `docs/src/components/executor/summary.md` | Executor。collective_rpc()委譲パターン、UniProc/Multiproc/Ray 3実装、Worker委譲フロー、Pipeline Parallelism対応 | [SHALLOW] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/gpu-model-runner/summary.md` | GPUModelRunner。2フェーズ実行パターン（execute_model→sample_tokens）、ExecuteModelState、6300行の内訳、Phase 2深堀り候補 | [SHALLOW] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/output-processor/summary.md` | OutputProcessor。process_outputs()フロー、Detokenizer階層（Fast/Slow）、停止文字列判定、LogprobsProcessor、RequestOutputKind 3モード | [SHALLOW] | [VERIFIED] | 2026-02-11 |
+| `docs/src/components/encoder-cache/summary.md` | EncoderCache。2層構造（Scheduler側EncoderCacheManager論理管理+Worker側GPU物理ストレージ）、FIFO遅延解放Eviction、共有キャッシュ（mm_hash基盤）、EncoderDecoderCacheManager暫定実装、ECConnector連携 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
+| `docs/src/components/ec-connector/summary.md` | ECConnector。エンコーダキャッシュ外部転送プラグインフレームワーク。2ロール分離（Scheduler/Worker）、ECConnectorBase（5抽象メソッド）、ECTransferConfig（3ロール）、ECConnectorFactory（静的+動的登録）、ECExampleConnector参照実装、ECConnectorModelRunnerMixin、Producer専用モード、未実装機能5点 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/components/multimodal/summary.md` | マルチモーダル処理パイプライン全体像。3層キャッシュ構造、テキスト推論との差分、Gemma3固有特徴。3サブドキュメントへのリンク | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/multimodal/mm-processing.md` | フロントエンドMM処理。チャットテンプレート適用、プレースホルダー展開、トークン列構造、MMHasher(blake3)、ProcessorCache 4種(processor_only/lru/shm/none)、P0-P1キャッシュ整合性、MultiModalFeatureSpec構築 | [MEDIUM] | [VERIFIED] | 2026-02-11 |
 | `docs/src/components/multimodal/mm-engine-gpu.md` | バックエンドMM処理。EncoderCacheManager(RefCount+FIFO遅延Eviction)、Schedulerエンコーダ予算管理、GPUModelRunnerのencoder_cache/execute/gather/merge | [MEDIUM] | [VERIFIED] | 2026-02-11 |

@@ -61,3 +61,10 @@
   - FIFO→LRU変更設計（encoder_cache_manager.pyの2メソッド修正、API変更なし）
   - 2層キャッシュ設計（L1:GPU/LRU + L2:ECConnector/Storage）
   - 成果物: `docs/src/investigations/encoder-cache-persistence.md`
+
+- [x] Phase 2d: EncoderCache・ECConnectorコンポーネント文書化（2026-02-14）
+  - submodule最新化後のコード再調査
+  - EncoderCacheManager: FIFO遅延解放、共有キャッシュ、EncoderDecoderCacheManager
+  - ECConnector: 2ロール分離、Mixin統合、Producer専用モード
+  - 未実装機能5点特定（ECConnectorOutput未消費、request_finished未統合 等）
+  - 成果物: `docs/src/components/encoder-cache/summary.md`, `docs/src/components/ec-connector/summary.md`
