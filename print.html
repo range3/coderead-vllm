@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-41320930.js";
+            window.path_to_searchindex_js = "searchindex-dc74ca0b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cdf86f5c.js"></script>
+        <script src="toc-a23096c7.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4412,6 +4412,139 @@ EngineCore.step()
 <li><a href="#用語集">用語集: Continuous Batching, Unified Compute Model</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ecconnector-github-議論調査レポート"><a class="header" href="#ecconnector-github-議論調査レポート">ECConnector GitHub 議論調査レポート</a></h1>
+<blockquote>
+<p><strong>ステータス</strong>: 調査完了
+<strong>作成日</strong>: 2026-02-14
+<strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>関連ドキュメント</strong>: <a href="#encodercache-永続化と階層キャッシュ-調査報告">EncoderCache 永続化と階層キャッシュ</a>、<a href="#kvcachemanager-サマリー">KVCacheManager</a></p>
+</blockquote>
+<hr>
+<h2 id="1-概要"><a class="header" href="#1-概要">1. 概要</a></h2>
+<p>ECConnector は、マルチモーダルモデルの <strong>Encode-Prefill-Decode (EPD) 分離推論</strong> を実現するために導入されたインフラストラクチャである。エンコーダ出力（画像埋め込みなど）を別プロセス間で転送・キャッシュするための抽象インタフェース <code>ECConnectorBase</code> を定義し、プラグイン可能な設計になっている。</p>
+<p>2025年11月に基盤PR (<a href="https://github.com/vllm-project/vllm/pull/25233">#25233</a>) がマージされた後、encoder-onlyモード、リモートキャッシュチェック最適化、ec_both ロールが順次マージされた。現在は<strong>高性能転送バックエンド</strong>（SHMConnector vs Mooncake ECConnector）の方向性が議論中で、メンテナーは Mooncake ベースの統一的なソリューションを志向している。</p>
+<h2 id="2-マージ済み-pr確定した設計"><a class="header" href="#2-マージ済み-pr確定した設計">2. マージ済み PR（確定した設計）</a></h2>
+<h3 id="21-基盤-epd分離-25233--2025-11-12-マージ-verified"><a class="header" href="#21-基盤-epd分離-25233--2025-11-12-マージ-verified">2.1 基盤: EPD分離 (#25233) — 2025-11-12 マージ [VERIFIED]</a></h3>
+<p><strong>主導</strong>: Chenguang Zheng (fake0fan)</p>
+<p>ECConnectorBase はスケジューラ側とワーカー側の責務を明確に分離:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>責務</th><th>メソッド</th><th>実行場所</th></tr>
+</thead>
+<tbody>
+<tr><td>キャッシュ存在確認</td><td><code>check_caches_exist</code></td><td>スケジューラ</td></tr>
+<tr><td>割当後状態更新</td><td><code>update_state_after_alloc</code></td><td>スケジューラ</td></tr>
+<tr><td>メタデータ構築</td><td><code>build_connector_meta</code></td><td>スケジューラ</td></tr>
+<tr><td>リクエスト完了通知</td><td><code>request_finished</code></td><td>スケジューラ</td></tr>
+<tr><td>キャッシュ読み込み</td><td><code>start_load_caches</code></td><td>ワーカー</td></tr>
+<tr><td>キャッシュ保存</td><td><code>save_caches</code></td><td>ワーカー</td></tr>
+</tbody>
+</table>
+</div>
+<p>参照実装として <code>ECExampleConnector</code>（safetensors でディスク保存）を同梱。<code>ec_connector_module_path</code> によるOOTプラグインロードもサポート。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/</code></p>
+<h3 id="22-encoder-only-モード-30242--2025-12-22-マージ-verified"><a class="header" href="#22-encoder-only-モード-30242--2025-12-22-マージ-verified">2.2 Encoder-only モード (#30242) — 2025-12-22 マージ [VERIFIED]</a></h3>
+<p>EPD分離時にエンコーダ専用インスタンスがLLM重みまでロードしてしまう問題を解決。<code>--convert mm_encoder_only</code> オプションを追加。</p>
+<ul>
+<li>当初 <code>VisionOnly</code> という名称 → オーディオ等も対象のため <code>MMEncoderOnly</code> に変更</li>
+<li>A100でのGPUメモリ使用量: <strong>44GB → 3.7GB</strong> に削減</li>
+<li><code>adapters.py</code> の pooling モデルと同様のアプローチ</li>
+</ul>
+<h3 id="23-リモートキャッシュチェック最適化-32585--2026-01-22-マージ-verified"><a class="header" href="#23-リモートキャッシュチェック最適化-32585--2026-01-22-マージ-verified">2.3 リモートキャッシュチェック最適化 (#32585) — 2026-01-22 マージ [VERIFIED]</a></h3>
+<p>スケジューラでのリモートエンコーダキャッシュ存在確認を最適化。EPD追跡RFCのタスクリストの一環。</p>
+<h3 id="24-ec_both-ロール-34182--2026-02-10-マージ-verified"><a class="header" href="#24-ec_both-ロール-34182--2026-02-10-マージ-verified">2.4 ec_both ロール (#34182) — 2026-02-10 マージ [VERIFIED]</a></h3>
+<p><strong>貢献</strong>: Qi Wang (furionw, NVIDIA)</p>
+<p>従来は producer/consumer のどちらか一方のみだったが、集約ノード（EPD一体型）でのエンベディングオフロード（GPU → CPU → GPU）を可能にするため <code>ec_both</code> ロールを追加。KV Connector の both ロールと同様の概念。変更は3ファイル・計10行程度の小規模PR。</p>
+<h2 id="3-進行中の議論"><a class="header" href="#3-進行中の議論">3. 進行中の議論</a></h2>
+<h3 id="31-高性能転送バックエンド-shmconnector-vs-mooncake-inferred"><a class="header" href="#31-高性能転送バックエンド-shmconnector-vs-mooncake-inferred">3.1 高性能転送バックエンド: SHMConnector vs Mooncake [INFERRED]</a></h3>
+<p><strong>関連 PR</strong>: <a href="https://github.com/vllm-project/vllm/pull/33714">#33714</a> (open)</p>
+<p>PiratePai が共有メモリ + PyTorch RPC ベースの <code>SHMConnector</code> を提案:</p>
+<ul>
+<li>RTX 4090 での1E-1PD構成で ExampleConnector より <strong>8-9% の TTFT 改善</strong> を実証</li>
+</ul>
+<p>しかしメンテナー (NickLucche) は「vllm のツリー内コネクタは少数の高品質ソリューションに絞りたい」と慎重姿勢。fake0fan は <strong>Mooncake ベースの統一 ECConnector</strong> を提案し、RDMA/NVLink/TCP フォールバックの複数バックエンドを1つのコネクタで対応する構想を示している。</p>
+<h4 id="技術的課題-エンコーダキャッシュの固定アドレス問題"><a class="header" href="#技術的課題-エンコーダキャッシュの固定アドレス問題">技術的課題: エンコーダキャッシュの固定アドレス問題</a></h4>
+<p>エンコーダキャッシュテンソルは KVキャッシュと異なり事前割り当てされた固定アドレスを持たない。NickLucche は2つの選択肢を提示:</p>
+<ol>
+<li><strong>中間バッファ方式</strong>: 転送前にコピーする</li>
+<li><strong>事前割り当て方式</strong>: ECConnector 使用時にはエンコーダキャッシュを固定アドレスバッファに切り替える（現在の dict ベースを置き換え）</li>
+</ol>
+<h3 id="32-nixlセグメントツリーベースのepd分離-26009-shallow"><a class="header" href="#32-nixlセグメントツリーベースのepd分離-26009-shallow">3.2 NIXL/セグメントツリーベースのEPD分離 (#26009) [SHALLOW]</a></h3>
+<p>H. Jhoo (MerHS) が NIXL コミュニケータを使った P2P 直接通信方式を提案。セグメントツリーベースのエンコーダキャッシュマネージャ（ベストフィット割り当て）、動的ロールスイッチング、エンコーダ専用スケジューラなど大規模な変更を含む。</p>
+<ul>
+<li>90日間の非活動で stale クローズ（2026-02-07）</li>
+<li>fake0fan の fork に NIXL ECConnector の作業が継続中</li>
+</ul>
+<h3 id="33-マルチモーダル前処理の重複排除-27094-inferred"><a class="header" href="#33-マルチモーダル前処理の重複排除-27094-inferred">3.3 マルチモーダル前処理の重複排除 (#27094) [INFERRED]</a></h3>
+<p>EPD分離時に全ワーカーで画像前処理が繰り返される問題:</p>
+<ul>
+<li>プロファイリングで前処理が推論時間の <strong>約50%</strong>（Qwen2.5-VL-3B で 143ms × 3回 ≈ 430ms）を占める</li>
+<li><code>image_meta</code> タイプの導入を提案し、エンコーダ処理後は形状メタデータのみを後続ワーカーに転送する案</li>
+<li>DarkLight1337 は前処理をエンコーダプロセスに完全移動する方針を示唆</li>
+</ul>
+<h3 id="34-ecキャッシュの解放メカニズム-32659-shallow"><a class="header" href="#34-ecキャッシュの解放メカニズム-32659-shallow">3.4 ECキャッシュの解放メカニズム (#32659) [SHALLOW]</a></h3>
+<p>EPD追跡RFCのタスクの一つ。エンコーダキャッシュの明示的解放メカニズムが未実装で、リソースリークの原因となりうる。fake0fan の fork で作業中。</p>
+<h2 id="4-タイムライン"><a class="header" href="#4-タイムライン">4. タイムライン</a></h2>
+<pre class="mermaid">gantt
+    title ECConnector 開発タイムライン
+    dateFormat YYYY-MM-DD
+    section 基盤
+    初期EPD PR (#21740)          :done, 2025-09-01, 2025-09-19
+    EPD基盤 (#25233)             :done, 2025-09-19, 2025-11-12
+    section 機能拡張
+    NIXL方式提案 (#26009)         :done, 2025-10-01, 2026-02-07
+    Encoder-only (#30242)        :done, 2025-12-01, 2025-12-22
+    キャッシュチェック最適化 (#32585) :done, 2026-01-15, 2026-01-22
+    ec_both ロール (#34182)      :done, 2026-02-03, 2026-02-10
+    section 進行中
+    EPD追跡RFC (#32659)          :active, 2026-01-20, 2026-03-01
+    SHMConnector (#33714)        :active, 2026-02-03, 2026-03-01
+    MM前処理重複排除 (#27094)     :active, 2025-10-17, 2026-03-01
+</pre>
+
+<h2 id="5-未解決の課題一覧"><a class="header" href="#5-未解決の課題一覧">5. 未解決の課題一覧</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>課題</th><th>Issue/PR</th><th>状態</th><th>備考</th></tr>
+</thead>
+<tbody>
+<tr><td>高性能転送バックエンド</td><td><a href="https://github.com/vllm-project/vllm/pull/33714">#33714</a></td><td>方向性議論中</td><td>Mooncake統一案が有力</td></tr>
+<tr><td>ECキャッシュ解放</td><td><a href="https://github.com/vllm-project/vllm/issues/32659">#32659</a></td><td>作業中</td><td>fake0fan fork</td></tr>
+<tr><td>EPDプロキシ最適化</td><td>#31017</td><td>未着手</td><td>—</td></tr>
+<tr><td>MM前処理重複排除</td><td><a href="https://github.com/vllm-project/vllm/issues/27094">#27094</a></td><td>RFC</td><td>前処理の50%コスト</td></tr>
+<tr><td>エンコーダキャッシュ事前割り当て</td><td>#33714 コメント</td><td>提案段階</td><td>dict→固定バッファ</td></tr>
+<tr><td>NIXL ECConnector</td><td>#32659 タスク</td><td>fork作業中</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="6-主要コントリビューター"><a class="header" href="#6-主要コントリビューター">6. 主要コントリビューター</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>名前</th><th>GitHub</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td>Chenguang Zheng</td><td>fake0fan</td><td>ECConnector基盤設計者、EPDフォローアップ主導</td></tr>
+<tr><td>NickLucche</td><td>NickLucche</td><td>vLLM Collaborator、アーキテクチャ方針決定者</td></tr>
+<tr><td>Cyrus Leung</td><td>DarkLight1337</td><td>vLLM Member、マルチモーダルレビューアー</td></tr>
+<tr><td>Qi Wang</td><td>furionw (NVIDIA)</td><td>ec_both ロール貢献</td></tr>
+<tr><td>H. Jhoo</td><td>MerHS</td><td>NIXL方式提案者</td></tr>
+<tr><td>PiratePai</td><td>PiratePai</td><td>SHMConnector 実装者</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="7-プラグイン開発への示唆-inferred"><a class="header" href="#7-プラグイン開発への示唆-inferred">7. プラグイン開発への示唆 [INFERRED]</a></h2>
+<p>独自ECConnectorプラグインを開発する場合の留意点:</p>
+<ol>
+<li><strong>現在の安定インタフェース</strong>: <code>ECConnectorBase</code> の6メソッドは安定しているが、今後のリファクタリング（事前割り当て方式への移行）で変更の可能性あり</li>
+<li><strong>OOTプラグイン</strong>: <code>ec_connector_module_path</code> で外部モジュールロード可能。<code>ECConnectorFactory</code> 経由で登録</li>
+<li><strong>転送方式の選択</strong>: Mooncake方式が統一バックエンドとして推奨される方向。独自実装よりMooncakeの上に構築する方が将来的に有利</li>
+<li><strong>エンコーダキャッシュ管理の変更予定</strong>: dict ベースから事前割り当て型への移行が検討中。プラグインはこの変更に備えるべき</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="encodercache-永続化と階層キャッシュ-調査報告"><a class="header" href="#encodercache-永続化と階層キャッシュ-調査報告">EncoderCache 永続化と階層キャッシュ: 調査報告</a></h1>
 <blockquote>
 <p><strong>ステータス</strong>: 調査完了 — ECConnector 既存インフラの発見により設計方針が確定
@@ -5811,22 +5944,6 @@ min(1240, 877) = 877 &gt; 256 (min_crop_size) → ✅ 有効
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
         <script>
