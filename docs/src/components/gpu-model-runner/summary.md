@@ -1,8 +1,8 @@
 # GPUModelRunner
 
-> **深度**: [SHALLOW]
+> **深度**: [MEDIUM]
 > **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-11
+> **最終更新**: 2026-02-15
 
 ## 概要
 
@@ -19,6 +19,37 @@ class GPUModelRunner(
     ECConnectorModelRunnerMixin,    # エンコーダキャッシュ対応
 ):
 ```
+
+## 状態管理
+
+GPUModelRunnerは2つのデータ構造でリクエスト状態を管理する:
+
+- **`self.requests: dict[str, CachedRequestState]`** — リクエストの論理状態（プリエンプション後も保持）
+- **`self.input_batch: InputBatch`** — 永続バッチテンソル群（事前割り当て、差分更新）
+
+永続バッチ最適化により、連続stepで変更があったリクエストのデータのみCPU側で更新し、GPUへはDMA一括転送する。
+
+詳細は [InputBatch: 永続バッチと状態管理](input-batch.md) を参照。
+
+## KVCache-GPU Interface
+
+KVCacheManager（Scheduler側）が割り当てた論理ブロックIDは、4段階の変換を経てAttentionカーネルが消費する形式になる:
+
+```
+_update_states()        ← ブロックID取込（3ケース: 新規/追加/プリエンプション復帰）
+  ↓
+BlockTable              ← CPU側テーブル（CpuGpuBuffer）
+  ↓
+_prepare_inputs()       ← commit_block_table() DMA + compute_slot_mapping()
+  ↓
+_get_slot_mappings()    ← by_gid（AttentionMetadata用）/ by_layer（ForwardContext用）
+  ↓
+_build_attention_metadata() ← CommonAttentionMetadata → per-layer AttentionMetadata
+```
+
+**核心的な変換式**: `slot = block_number * block_size + (position % block_size)`
+
+詳細は [KVCache-GPU Interface](kv-cache-interface.md) を参照。
 
 ## 2フェーズ実行パターン
 
@@ -47,32 +78,30 @@ sequenceDiagram
 ```
 execute_model(scheduler_output, intermediate_tensors=None)
   │
-  ├─ 早期リターン判定                                      # L3335-3367
-  │   スケジュールトークン0件 → EMPTY_MODEL_RUNNER_OUTPUT
+  ├─ 1. バッチ状態更新 _update_states()                     # L3376
+  │     新規リクエスト登録、ブロックID更新、不要リクエスト除去
   │
-  ├─ 1. バッチ状態更新                                     # L3376
-  │   _update_states(scheduler_output)
-  │   → 新規リクエスト登録、キャッシュ済みリクエスト更新
+  ├─ 2. 入力準備 _prepare_inputs()                          # L3383
+  │     block_table DMA → slot_mapping計算 → positions/input_ids GPU転送
+  │     ※ DMAオーバーラップ最適化（L1472-1474）
   │
-  ├─ 2. 入力準備                                           # L3389
-  │   _prepare_inputs(scheduler_output)
-  │   → input_ids, positions, logits_indices 計算
+  ├─ 3. CUDAGraph判定                                       # L3398
+  │     _determine_batch_execution_and_padding()
+  │     → CUDAGraphMode(FULL/PIECEWISE/NONE) + パディング量決定
   │
-  ├─ 3. Attentionメタデータ構築                             # L3400
-  │   _build_attention_metadata(scheduler_output, ...)
+  ├─ 4. スロットマッピング2形式出力                            # L3468
+  │     _get_slot_mappings() → by_gid + by_layer
   │
-  ├─ 4. 前処理                                             # L3440-3504
-  │   slot_mapping取得、入力トークン/位置/埋め込み準備
+  ├─ 5. Attentionメタデータ構築                               # L3479
+  │     _build_attention_metadata()
+  │     → CommonAttentionMetadata → per-layer AttentionMetadata
   │
-  ├─ 5. モデルフォワード                                    # L3521-3603
-  │   _model_forward(...)
-  │   → hidden_states = model.forward(input_ids, positions, ...)
-  │   → logits = compute_logits(hidden_states)
+  ├─ 6. モデルフォワード                                      # L3538
+  │     set_forward_context(slot_mapping=by_layer)
+  │     → _model_forward() → model.forward() → logits
   │
-  └─ 6. 状態保存                                            # L3605-3615
-      ExecuteModelState(scheduler_output, logits, ...)
-      → self.execute_model_state に保存
-      → None を返す
+  └─ 7. 状態保存                                              # L3605-3615
+      ExecuteModelState に保存 → None を返す
 ```
 
 **戻り値のパターン**:
@@ -88,30 +117,46 @@ execute_model(scheduler_output, intermediate_tensors=None)
 ```
 sample_tokens(grammar_output)
   │
-  ├─ 1. 状態復元                                            # L3643-3657
-  │   ExecuteModelState から logits, scheduler_output 等を復元
-  │   self.execute_model_state = None（クリア）
-  │
-  ├─ 2. Grammar制約適用                                     # L3659-3663
-  │   grammar bitmask を logits に適用（構造化出力時）
-  │
-  ├─ 3. サンプリング                                        # L3665-3666
-  │   _sample(logits, spec_decode_metadata) → SamplerOutput
-  │
-  ├─ 4. 後処理                                             # L3668-3699
-  │   バッチ状態に生成トークンを反映
-  │   PP時のトークンブロードキャスト
-  │   Speculative Decodingのドラフトトークン提案
-  │
-  └─ 5. ModelRunnerOutput構築                               # L3775-3787
-      ModelRunnerOutput(
-        req_ids, req_id_to_index,
-        sampled_token_ids,    # list[list[int]]
-        logprobs,             # numpy配列
-        prompt_logprobs_dict, # torch.Tensor
-        kv_connector_output, ...
-      )
+  ├─ 1. 状態復元 — ExecuteModelState から logits 等を復元     # L3643-3657
+  ├─ 2. Grammar制約適用 — bitmask → logits                  # L3659-3663
+  ├─ 3. サンプリング — _sample() → SamplerOutput             # L3665-3666
+  ├─ 4. 後処理 — バッチ状態反映、PP broadcast、ドラフト提案    # L3668-3699
+  └─ 5. ModelRunnerOutput構築                                # L3775-3787
 ```
+
+## CUDAGraph統合 [VERIFIED]
+
+### CUDAGraphMode
+
+3つの実行モードが存在する:
+
+| モード | 説明 | 使用条件 |
+|--------|------|---------|
+| `FULL` | forward全体をキャプチャ | Attentionバックエンドが対応、cascade attention無効 |
+| `PIECEWISE` | Attention以外をキャプチャ（torch.compile統合） | Attention部分はコンパイル済みコードで実行 |
+| `NONE` | Eagerモード | CUDAGraph無効、バッチサイズ超過、calc_kv_scales時 |
+
+### CudagraphDispatcher
+
+**参照**: `target/vllm/vllm/v1/cudagraph_dispatcher.py:14`
+
+事前キャプチャ済みCUDAGraphの中からランタイムで適切なグラフを選択する:
+
+1. `cudagraph_keys: dict[CUDAGraphMode, set[BatchDescriptor]]` にキャプチャ済みのバッチ記述子を保持
+2. `dispatch()` は入力 `num_tokens` を最小のパディングサイズに丸め上げ
+3. FULL → PIECEWISE → NONE の優先順序でキーを探索
+
+**バッチパディング**: CUDAGraphは固定形状のテンソルを要求するため、実際のトークン数をキャプチャ済みサイズに丸め上げる。未使用スロットはslot_mapping `-1`（PAD_SLOT_ID）で埋められ、`reshape_and_cache()` がスキップする。
+
+### _determine_batch_execution_and_padding()
+
+**参照**: `target/vllm/vllm/v1/worker/gpu_model_runner.py:3076`
+
+毎stepの実行モード判定:
+
+1. `_is_uniform_decode()` — 全リクエストがデコードフェーズ（query_len=1）か判定
+2. `cudagraph_dispatcher.dispatch()` — モードとパディングサイズを決定
+3. Data Parallel時は `coordinate_batch_across_dp()` で全ランク間で合意
 
 ## ExecuteModelState
 
@@ -131,36 +176,27 @@ sample_tokens(grammar_output)
 | `cudagraph_stats` | `CUDAGraphStat \| None` | CUDAGraph統計 |
 | `slot_mappings` | `dict \| list \| None` | KVキャッシュスロットマッピング |
 
-## 6,300行の内訳 [INFERRED]
+## 6,300行の内訳 [VERIFIED]
 
-GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一クラスに集約しているため:
-
-- **バッチ状態管理**: リクエストの追加・削除、永続バッチテンソルの管理
-- **入力準備**: トークンID、位置、埋め込みの計算
-- **Attentionメタデータ**: FlashAttention/FlashInfer用メタデータ構築
-- **モデルフォワード**: CUDAGraph対応、torch.compile統合
-- **サンプリング**: トップk/p/温度、logprobs計算
-- **KV Transfer**: KVコネクタとの連携
-- **Speculative Decoding**: ドラフトトークン提案・検証
-- **Pipeline Parallelism**: 中間テンソル管理
-- **LoRA**: アダプタの動的切り替え
-- **マルチモーダル**: エンコーダ入力の処理
-
-## 上流・下流の関係
-
-- **上流**: Worker（`execute_model()` / `sample_tokens()`経由で呼び出し）
-- **下流**: モデル層（`model.forward()`）、Sampler
-
-## Phase 2 深堀り候補
-
-| テーマ | 関連メソッド | ユーザー関心 |
-|--------|------------|------------|
-| 入力準備の詳細 | `_prepare_inputs()`, `_update_states()` | 中 |
-| Attentionメタデータ | `_build_attention_metadata()` | KVキャッシュ関連で高 |
-| CUDAGraph統合 | `_model_forward()`, CUDAGraphランナー | 中 |
-| サンプリング実装 | `_sample()`, Sampler | 低 |
-| KV Transfer連携 | `KVConnectorModelRunnerMixin` | 高（ユーザー関心2位） |
-| マルチモーダル入力 | エンコーダ処理、mm_cache | 高（ユーザー関心3位） → **Phase 2bで調査済み** |
+| 行範囲 | セクション |
+|--------|-----------|
+| 1-312 | インポート、型エイリアス、Async出力クラス、ExecuteModelState |
+| 329-712 | `__init__`（設定、バッファ割当、状態初期化） |
+| 713-873 | ライフサイクルヘルパー（`reset_mm_cache`, `init_fp8_kv_scales` 等） |
+| 874-1453 | 状態管理: `_update_states()`, `_update_states_after_model_execute()` |
+| 1454-1672 | 入力準備: `_prepare_inputs()`, `_prepare_input_ids()` |
+| 1673-2049 | `_build_attention_metadata()`（Attentionメタデータ構築） |
+| 2050-2557 | 位置計算、MMエンコーダ実行 |
+| 2558-3311 | モデルユーティリティ、`_get_slot_mappings()` |
+| 3312-3620 | `execute_model()`（メインforward） |
+| 3621-3934 | `sample_tokens()`、PP broadcast、ドラフト提案 |
+| 3935-4118 | Speculative Decoding提案 |
+| 4119-4609 | モデルロード: `load_model()`, `reload_weights()` |
+| 4610-5108 | ダミー実行、プロファイリング |
+| 5109-5332 | CUDAGraphキャプチャ: `capture_model()`, `_capture_cudagraphs()` |
+| 5333-5596 | Attentionバックエンド初期化、メタデータビルダー |
+| 5597-6152 | KVキャッシュ初期化: `initialize_kv_cache()` |
+| 6152-6273 | `get_kv_cache_spec()`, タイミング統計 |
 
 ## マルチモーダル処理
 
@@ -174,9 +210,27 @@ GPUModelRunnerが巨大な理由は、以下の多岐にわたる責務を単一
 
 詳細は [バックエンド MM処理パス](../multimodal/mm-engine-gpu.md) を参照。
 
+## 上流・下流の関係
+
+- **上流**: Worker（`execute_model()` / `sample_tokens()`経由で呼び出し）
+- **下流**: モデル層（`model.forward()`）、Sampler
+
+## 深堀り候補（今後）
+
+| テーマ | 関連メソッド | ユーザー関心 |
+|--------|------------|------------|
+| サンプリング実装 | `_sample()`, Sampler | 低 |
+| KV Transfer連携 | `KVConnectorModelRunnerMixin` | 高（ユーザー関心2位。次セッション候補） |
+| Speculative Decoding | `propose_draft_token_ids()` | 中 |
+| async_scheduling | `_update_states_after_model_execute()` | 中 |
+
 ## 主要ファイル
 
 | ファイル | 主要クラス/関数 |
 |---------|----------------|
 | `target/vllm/vllm/v1/worker/gpu_model_runner.py` | `GPUModelRunner` (L329), `execute_model()` (L3312), `sample_tokens()` (L3621), `ExecuteModelState` (L313) |
+| `target/vllm/vllm/v1/worker/gpu_input_batch.py` | `CachedRequestState` (L30), `InputBatch` (L81) |
+| `target/vllm/vllm/v1/worker/block_table.py` | `BlockTable` (L16), `MultiGroupBlockTable` (L253) |
+| `target/vllm/vllm/v1/cudagraph_dispatcher.py` | `CudagraphDispatcher` (L14) |
+| `target/vllm/vllm/v1/utils.py` | `CpuGpuBuffer` (L105) |
 | `target/vllm/vllm/v1/outputs.py` | `ModelRunnerOutput` (L160), `AsyncModelRunnerOutput` (L200) |

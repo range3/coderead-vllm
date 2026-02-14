@@ -2,14 +2,6 @@
 
 ## 最優先
 
-- [ ] Phase 2 続行: GPUModelRunner 深堀り（優先度A）
-  - Attentionメタデータ構築（KVCacheManagerのブロック情報をどう参照するか）
-  - CUDAGraph統合
-  - _prepare_inputs() と _update_states() の詳細
-  - 成果物: gpu-model-runner/summary.md を [SHALLOW]→[MEDIUM] 以上に昇格
-
-## 次点
-
 - [ ] Phase 2: KV Transfer / LMCache 調査（ユーザー関心2位）
   - KVConnector 抽象基底クラスの仕組み（KVConnectorBase_V1、7 abstract メソッド）
   - LMCacheConnectorV1 の実装（vllm_v1_adapter.py ネイティブ実装）
@@ -17,6 +9,8 @@
   - KV Cache Events との連携
   - **注**: ECConnector（ec_transfer/）とは独立した系統。デコーダKVCache専用
   - コンポーネント summary.md 作成
+
+## 次点
 
 - [ ] Phase 2: マルチモーダル DEEP化（ユーザー関心3位、MEDIUM済み）
   - ProcessorCache shm モードの詳細（SharedMemory Ring Buffer）
@@ -27,6 +21,12 @@
 - [ ] Phase 2: Scheduler 深堀り（優先度A）
   - Speculative Decoding のリジェクション処理
   - チャンクプリフィルのトークン予算分割
+
+- [ ] Phase 2: GPUModelRunner DEEP化（MEDIUM済み）
+  - async_scheduling の _update_states_after_model_execute() 詳細
+  - Speculative Decoding 提案メソッド（propose_draft_token_ids）
+  - ForwardContextでのreshape_and_cache()消費詳細
+  - Attentionバックエンド初期化（initialize_attn_backend / AttentionGroup）
 
 ## いつかやる
 
@@ -41,6 +41,12 @@
 - [ ] エンコーダキャッシュ事前割り当て方式の動向追跡（dict→固定バッファ移行の可能性）
 
 ## 完了
+
+- [x] Phase 2f: GPUModelRunner 深堀り（2026-02-15）
+  - KVCache-GPU Interface: ブロックID取込→BlockTable→slot_mapping→DMA→AttentionMetadata
+  - InputBatch永続バッチ: CachedRequestState/InputBatch/MultiGroupBlockTable/CpuGpuBuffer/condense
+  - CUDAGraph統合: 3モード（FULL/PIECEWISE/NONE）、CudagraphDispatcher、パディング
+  - summary.md [SHALLOW]→[MEDIUM] 昇格 + 2サブドキュメント作成
 
 - [x] Phase 2: KVCacheManager 深堀り（2026-02-11）
   - BlockPool（FreeKVCacheBlockQueue、BlockHashToBlockMap、Eviction、null_block）

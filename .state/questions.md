@@ -7,7 +7,9 @@
 - [ ] KV Transferの各バックエンド（LMCache, NIXL, P2P NCCL, Mooncake）の違い・使い分けは？ — **部分回答**: LMCacheはKV形状`(num_layer, 2, chunk_size, num_kv_heads, head_size)`を前提としたチャンク単位保存。NixlはRDMA。P2P NCCLはNCCL接続。Mooncakeはmooncake統合。OffloadingConnectorはCPU/ディスクオフロード。コネクタ一覧は `encoder-cache-persistence.md` セクション4参照。なお、ECConnector（ec_transfer/）はKV Transferとは完全に独立した系統でエンコーダキャッシュ専用
 - [x] mm_cache（マルチモーダルキャッシュ）はKVCacheManagerとどう連携するか？ — **回答**: MMキャッシュはKVCacheManagerとは独立。ProcessorCache（P0、HF処理結果）とEncoderCacheManager（P1、エンコーダ出力の論理管理）+ encoder_cache（GPU、テンソル）の3層構造。KVCacheManagerはデコーダ側のKVキャッシュのみ管理。ただしプレフィックスキャッシュのExtra Keysとしてmm_hashが使われ、同じ画像のリクエストはKVキャッシュのプレフィックスも共有可能。詳細は `docs/src/components/multimodal/summary.md`
 - [ ] プラグインシステムの拡張ポイントはどこにあるか？ — `load_general_plugins()` の仕組み
-- [ ] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？（block_idsがSchedulerOutputに含まれ、GPUModelRunnerに渡される。詳細はGPUModelRunner深堀りで調査）
+- [x] GPUModelRunnerの_build_attention_metadata()はKVCacheManagerのブロック情報をどう参照するか？ — **回答**: 4段変換パス。`_update_states()`でSchedulerOutput.new_block_idsをCachedRequestState.block_ids+InputBatch.block_tableに取込→`BlockTable.compute_slot_mapping()`で`block_number*block_size+offset`の変換→`commit_block_table()`/`commit_slot_mapping()`でCpuGpuBuffer DMA転送→`_build_attention_metadata()`でCommonAttentionMetadata構築→per-layer AttentionMetadata。詳細は `docs/src/components/gpu-model-runner/kv-cache-interface.md`
+- [ ] ForwardContextでのslot_mappings_by_layer消費: reshape_and_cache()の具体的な実装場所は？
+- [ ] CUDAGraph FULL mode時にslot_mappingsは毎step書き直されるか、それとも固定か？
 - [ ] FastIncrementalDetokenizer vs SlowIncrementalDetokenizer の実際のパフォーマンス差は？
 - [ ] batch_queue パイプライン並列化は実際にどう動作するか？（max_concurrent_batches > 1 時のオーバーラップ）
 - [x] block_size の設定方法とパフォーマンスへの影響は？ — **回答**: block_sizeはKVCacheSpecから取得され、モデルのアテンションタイプに依存。DCP/PCP > 1の場合は並列度倍に拡大。Hybrid modelでは異なるblock_sizeのグループが共存し、hash_block_size（最小のblock_size）でハッシュを計算後、BlockHashListWithBlockSizeで粒度変換。詳細は `docs/src/components/kv-cache-manager/prefix-cache.md` と `attention-type-managers.md`

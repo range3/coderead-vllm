@@ -22,6 +22,8 @@
 - [エントリポイント (AsyncLLM / LLM) サマリー](components/entrypoint/summary.md)
 - [Executor](components/executor/summary.md)
 - [GPUModelRunner](components/gpu-model-runner/summary.md)
+  - [InputBatch: 永続バッチと状態管理](components/gpu-model-runner/input-batch.md)
+  - [KVCache-GPU Interface: ブロックテーブルとスロットマッピング](components/gpu-model-runner/kv-cache-interface.md)
 - [InputProcessor サマリー](components/input-processor/summary.md)
 - [KVCacheManager サマリー](components/kv-cache-manager/summary.md)
   - [アテンションタイプ別 Manager 詳細](components/kv-cache-manager/attention-type-managers.md)
