@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>ファイル索引 - コードリーディング: vLLM &amp; LMCache</title>
+        <title>LMCache アーキテクチャ概要 - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -175,17 +175,304 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="ファイル索引"><a class="header" href="#ファイル索引">ファイル索引</a></h1>
+                        <h1 id="lmcache-アーキテクチャ概要"><a class="header" href="#lmcache-アーキテクチャ概要">LMCache アーキテクチャ概要</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 0a）</p>
+</blockquote>
+<h2 id="プロジェクト概要"><a class="header" href="#プロジェクト概要">プロジェクト概要</a></h2>
+<p>LMCacheは、LLMサービングエンジン（vLLM, SGLang等）の<strong>KVキャッシュを外部に保存・再利用</strong>することで、TTFT（Time To First Token）削減とスループット向上を実現する拡張ライブラリ。</p>
+<ul>
+<li><strong>コア機能</strong>: KVキャッシュのチャンク単位（256トークン）保存・検索・ロード</li>
+<li><strong>ストレージ階層</strong>: GPU → CPU → Disk → Remote（Redis/S3/Mooncake/NIXL等）</li>
+<li><strong>統合方式</strong>: vLLMの<code>KVConnectorBase_V1</code>を実装して接続</li>
+<li><strong>追加機能</strong>: CacheBlend（非プレフィックス再利用）、P2P転送、Disaggregated Prefill</li>
+</ul>
+<h2 id="リポジトリ規模"><a class="header" href="#リポジトリ規模">リポジトリ規模</a></h2>
+<ul>
+<li><strong>Python</strong>: 約62,000行（<code>lmcache/</code>配下）</li>
+<li><strong>C++/CUDA</strong>: 20ファイル（<code>csrc/</code>）— CacheGen圧縮、メモリ操作、位置エンコーディングカーネル</li>
+<li><strong>Rust</strong>: 1ファイル（<code>rust/raw_block/</code>）— Raw Block ストレージバックエンド</li>
+</ul>
+<h2 id="全体アーキテクチャ-shallow"><a class="header" href="#全体アーキテクチャ-shallow">全体アーキテクチャ [SHALLOW]</a></h2>
+<pre class="mermaid">graph TD
+    subgraph "サービングエンジン（vLLM）"
+        SE[GPUModelRunner]
+    end
+
+    subgraph "Integration Layer"
+        CONN[LMCacheConnectorV1Dynamic&lt;br/&gt;KVConnectorBase_V1実装]
+        ADAPT[LMCacheConnectorV1Impl&lt;br/&gt;vllm_v1_adapter.py]
+    end
+
+    subgraph "LMCache Core"
+        MGR[LMCacheManager&lt;br/&gt;ライフサイクル管理]
+        ENG[LMCacheEngine&lt;br/&gt;メインエンジン]
+        TDB[TokenDatabase&lt;br/&gt;トークン→チャンクキー変換]
+        GPU_CONN[GPUConnector&lt;br/&gt;GPU↔CPU転送]
+        SM[StorageManager&lt;br/&gt;ストレージ階層管理]
+    end
+
+    subgraph "Storage Backends"
+        CPU[LocalCPUBackend]
+        DISK[LocalDiskBackend]
+        RMT[RemoteBackend&lt;br/&gt;Redis/S3/Valkey等]
+        P2P[P2PBackend]
+        NIXL[NIXLBackend]
+        GDS[GdsBackend]
+    end
+
+    subgraph "Optional Components"
+        CTRL[CacheController&lt;br/&gt;クラスタ管理]
+        BLEND[CacheBlend&lt;br/&gt;非プレフィックス融合]
+        LOOKUP[LookupClient/Server&lt;br/&gt;キャッシュ存在確認]
+        MP[MultiProcess Server&lt;br/&gt;IPC/ZMQ]
+    end
+
+    SE --&gt; CONN --&gt; ADAPT --&gt; MGR
+    MGR --&gt; ENG
+    ENG --&gt; TDB
+    ENG --&gt; GPU_CONN
+    ENG --&gt; SM
+    SM --&gt; CPU
+    SM --&gt; DISK
+    SM --&gt; RMT
+    SM --&gt; P2P
+    SM --&gt; NIXL
+    SM --&gt; GDS
+    ENG --&gt; CTRL
+    ENG --&gt; BLEND
+    MGR --&gt; LOOKUP
+</pre>
+
+<h2 id="パッケージ構造-verified"><a class="header" href="#パッケージ構造-verified">パッケージ構造 [VERIFIED]</a></h2>
+<pre><code>lmcache/
+├── __init__.py
+├── config.py              # レガシー設定（旧API）
+├── connections.py         # 接続ヘルパー
+├── logging.py             # ログ初期化
+├── observability.py       # Prometheus/メトリクス（1,839行）
+├── protocol.py            # LMCacheModelRequest（msgspec）
+├── usage_context.py       # 利用状況トラッキング
+├── utils.py               # CacheEngineKey, ユーティリティ（652行）
+├── non_cuda_equivalents.py # CUDA非依存フォールバック
+│
+├── integration/           # サービングエンジン統合
+│   ├── vllm/              # vLLM統合
+│   │   ├── lmcache_connector_v1.py      # KVConnectorBase_V1実装（latest版）
+│   │   ├── lmcache_connector_v1_085.py  # vLLM 0.8.5互換版
+│   │   ├── vllm_v1_adapter.py           # 実装本体（LMCacheConnectorV1Impl）
+│   │   ├── vllm_multi_process_adapter.py # マルチプロセス対応
+│   │   └── utils.py                     # vLLM固有ユーティリティ
+│   └── sglang/            # SGLang統合
+│       ├── sglang_adapter.py
+│       └── utils.py
+│
+├── server/                # レガシーサーバー
+│
+├── storage_backend/       # レガシーストレージ
+│   ├── evictor/           # Eviction（LRU）
+│   └── serde/             # シリアライゼーション（CacheGen等）
+│
+├── tools/                 # ベンチマーク等
+│
+└── v1/                    # ★ メインコード（v1アーキテクチャ）
+    ├── cache_engine.py          # LMCacheEngine（1,949行）★中核
+    ├── cache_interface.py       # LMCacheModelRequest
+    ├── config.py                # LMCacheEngineConfig
+    ├── config_base.py           # 設定基盤
+    ├── manager.py               # LMCacheManager（694行）
+    ├── metadata.py              # LMCacheMetadata
+    ├── token_database.py        # Chunked/Segment TokenDatabase
+    ├── memory_management.py     # MemoryObj, MemoryAllocator（2,339行）
+    ├── event_manager.py         # イベント管理
+    ├── kv_layer_groups.py       # レイヤーグループ管理
+    ├── lazy_memory_allocator.py # 遅延メモリ確保
+    ├── pin_monitor.py           # ピン監視
+    ├── periodic_thread.py       # 定期実行スレッド
+    ├── protocol.py              # MPプロトコル定義
+    ├── rpc_utils.py             # ZMQ RPC
+    ├── system_detection.py      # NUMA検出
+    │
+    ├── gpu_connector/           # GPU↔CPUデータ転送
+    │   ├── gpu_connectors.py    # GPUConnectorInterface + 実装
+    │   ├── gpu_ops.py           # CUDA memcpy操作
+    │   └── utils.py
+    │
+    ├── storage_backend/         # ストレージ階層
+    │   ├── abstract_backend.py  # StorageBackendInterface
+    │   ├── storage_manager.py   # StorageManager（1,145行）
+    │   ├── local_cpu_backend.py # CPU (L1)
+    │   ├── local_disk_backend.py# Disk (L2)
+    │   ├── remote_backend.py    # Remote (L3)
+    │   ├── p2p_backend.py       # P2P転送
+    │   ├── pd_backend.py        # Prefill-Decode分離
+    │   ├── nixl_storage_backend.py # NIXL
+    │   ├── gds_backend.py       # GPUDirect Storage
+    │   ├── connector/           # 15+リモートコネクタ
+    │   │   ├── base_connector.py
+    │   │   ├── redis_connector.py
+    │   │   ├── s3_connector.py
+    │   │   ├── valkey_connector.py
+    │   │   ├── mooncakestore_connector.py
+    │   │   ├── infinistore_connector.py
+    │   │   ├── fs_connector.py
+    │   │   └── ...
+    │   ├── cache_policy/        # Eviction方針
+    │   │   ├── fifo.py / lru.py / lfu.py / mru.py
+    │   │   └── base_policy.py
+    │   ├── naive_serde/         # シリアライゼーション
+    │   │   ├── naive_serde.py / cachegen_*.py / kivi_serde.py
+    │   │   └── serde.py
+    │   └── job_executor/        # 非同期ジョブ実行
+    │
+    ├── compute/                 # 計算コンポーネント
+    │   ├── attention/           # Attention計算
+    │   │   ├── flash_attn.py / flash_infer_sparse.py
+    │   │   └── metadata.py
+    │   ├── blend/               # CacheBlend
+    │   │   ├── blender.py / metadata.py / utils.py
+    │   │   └── __init__.py
+    │   ├── models/              # モデル固有（Llama/Qwen3）
+    │   │   ├── base.py / llama.py / qwen3.py
+    │   │   └── utils.py
+    │   └── positional_encoding.py # RoPE等
+    │
+    ├── multiprocess/            # マルチプロセスアーキテクチャ
+    │   ├── server.py            # MPサーバー
+    │   ├── blend_server.py      # CacheBlend用サーバー
+    │   ├── mq.py                # メッセージキュー
+    │   ├── session.py           # セッション管理
+    │   ├── token_hasher.py      # トークンハッシュ
+    │   ├── gpu_context.py       # GPUコンテキスト
+    │   ├── protocols/           # プロトコル定義
+    │   └── ...
+    │
+    ├── cache_controller/        # クラスタキャッシュ管理
+    │   ├── controller_manager.py # メイン管理
+    │   ├── worker.py            # LMCacheWorker
+    │   ├── executor.py          # クラスタ実行
+    │   ├── controllers/         # KV/Registration制御
+    │   └── commands/            # コマンド（FullSync等）
+    │
+    ├── lookup_client/           # キャッシュ存在確認
+    │   ├── abstract_client.py   # LookupClientInterface
+    │   ├── lmcache_lookup_client.py  # ZMQベース
+    │   ├── lmcache_async_lookup_client.py
+    │   └── record_strategies/   # 記録戦略（BloomFilter等）
+    │
+    ├── distributed/             # 分散ストレージ管理（MPモード用）
+    │   ├── storage_manager.py   # 分散StorageManager
+    │   ├── l1_manager.py        # L1管理
+    │   ├── memory_manager.py    # メモリ管理
+    │   └── eviction_policy/     # 分散Eviction
+    │
+    ├── transfer_channel/        # データ転送チャネル
+    │   ├── abstract.py
+    │   ├── nixl_channel.py
+    │   └── py_socket_channel.py
+    │
+    ├── offload_server/          # オフロードサーバー
+    │   ├── abstract_server.py
+    │   └── zmq_server.py
+    │
+    ├── health_monitor/          # ヘルスチェック
+    ├── internal_api_server/     # 内部API（FastAPI）
+    ├── standalone/              # スタンドアロンモード
+    └── plugin/                  # ランタイムプラグイン
+</code></pre>
+<h2 id="主要エントリポイント-verified"><a class="header" href="#主要エントリポイント-verified">主要エントリポイント [VERIFIED]</a></h2>
+<h3 id="1-vllm統合メインパス"><a class="header" href="#1-vllm統合メインパス">1. vLLM統合（メインパス）</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/lmcache_connector_v1.py:30</code> (LMCacheConnectorV1Dynamic)</li>
+<li>vLLMの<code>KVConnectorBase_V1</code>を実装。内部で<code>LMCacheConnectorV1Impl</code>に委譲</li>
+<li><code>LMCacheManager</code>がライフサイクル全体を管理</li>
+</ul>
+<h3 id="2-lmcacheengineコア"><a class="header" href="#2-lmcacheengineコア">2. LMCacheEngine（コア）</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:78</code> (LMCacheEngine)</li>
+<li>KVキャッシュのstore/retrieve/prefetchを統合するメインクラス</li>
+<li><code>TokenDatabase</code>でトークン列→チャンクキー変換</li>
+<li><code>GPUConnector</code>でGPU↔CPU転送</li>
+<li><code>StorageManager</code>でストレージ階層管理</li>
+</ul>
+<h3 id="3-storagemanagerストレージ階層"><a class="header" href="#3-storagemanagerストレージ階層">3. StorageManager（ストレージ階層）</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:1</code></li>
+<li><code>OrderedDict</code>でバックエンド登録順管理（L1→L2→L3）</li>
+<li>非同期put/getで階層間データ移動</li>
+</ul>
+<h3 id="4-multiprocess-server"><a class="header" href="#4-multiprocess-server">4. MultiProcess Server</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/v1/multiprocess/server.py:1</code></li>
+<li>ZMQ IPCベースのマルチプロセスアーキテクチャ</li>
+<li>GPUコンテキスト管理、セッション管理</li>
+</ul>
+<h3 id="5-cachecontrollerクラスタ管理"><a class="header" href="#5-cachecontrollerクラスタ管理">5. CacheController（クラスタ管理）</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_controller/controller_manager.py:1</code></li>
+<li>複数インスタンス間のキャッシュ状態管理</li>
+<li>Register/Deregister/Heartbeat/P2P Lookup</li>
+</ul>
+<h3 id="6-lmcache-apiサーバー"><a class="header" href="#6-lmcache-apiサーバー">6. LMCache APIサーバー</a></h3>
+<ul>
+<li><strong>参照</strong>: <code>target/LMCache/lmcache/v1/api_server/__main__.py</code></li>
+<li>スタンドアロンAPIサーバーモード</li>
+</ul>
+<h2 id="新旧アーキテクチャ-verified"><a class="header" href="#新旧アーキテクチャ-verified">新旧アーキテクチャ [VERIFIED]</a></h2>
+<ul>
+<li><strong><code>lmcache/v1/</code></strong>: 現行アーキテクチャ（★フォーカス対象）</li>
+<li><strong><code>lmcache/server/</code></strong>, <strong><code>lmcache/storage_backend/</code></strong>: レガシー（旧API互換）</li>
+<li>v1がメイン。レガシーは基本的にスキップしてよい</li>
+</ul>
+<h2 id="2つの動作モード-shallow"><a class="header" href="#2つの動作モード-shallow">2つの動作モード [SHALLOW]</a></h2>
+<h3 id="in-process-モード"><a class="header" href="#in-process-モード">In-Process モード</a></h3>
+<ul>
+<li>vLLMプロセス内で直接<code>LMCacheEngine</code>を動作</li>
+<li><code>LMCacheConnectorV1Dynamic</code> → <code>LMCacheConnectorV1Impl</code> → <code>LMCacheManager</code> → <code>LMCacheEngine</code></li>
+</ul>
+<h3 id="multiprocess-mp-モード"><a class="header" href="#multiprocess-mp-モード">MultiProcess (MP) モード</a></h3>
+<ul>
+<li>別プロセスでLMCacheサーバーを起動</li>
+<li>ZMQ IPCで通信</li>
+<li><code>multiprocess/server.py</code>がメイン</li>
+<li>分散StorageManager（<code>distributed/storage_manager.py</code>）を使用</li>
+</ul>
+<h2 id="データフロー概要-shallow"><a class="header" href="#データフロー概要-shallow">データフロー概要 [SHALLOW]</a></h2>
+<h3 id="store-パスgpu--storage"><a class="header" href="#store-パスgpu--storage">Store パス（GPU → Storage）</a></h3>
+<ol>
+<li>vLLMのforward完了後、<code>wait_for_save()</code>が呼ばれる</li>
+<li><code>GPUConnector.from_gpu()</code> でGPU KVキャッシュ → CPU MemoryObj</li>
+<li><code>TokenDatabase</code>でトークン列をチャンクキーに変換</li>
+<li><code>StorageManager</code>が各バックエンドに非同期put</li>
+</ol>
+<h3 id="retrieve-パスstorage--gpu"><a class="header" href="#retrieve-パスstorage--gpu">Retrieve パス（Storage → GPU）</a></h3>
+<ol>
+<li>Scheduler側で<code>LookupClient</code>がキャッシュ存在確認</li>
+<li>Worker側で<code>start_load_kv()</code>が呼ばれる</li>
+<li><code>StorageManager</code>がバックエンドからMemoryObjを取得</li>
+<li><code>GPUConnector.to_gpu()</code> でCPU MemoryObj → GPU KVキャッシュ</li>
+</ol>
+<h2 id="重要な設計判断-shallow"><a class="header" href="#重要な設計判断-shallow">重要な設計判断 [SHALLOW]</a></h2>
+<ul>
+<li><strong>チャンク単位保存</strong>: 256トークン（設定可）単位でKVキャッシュを分割保存</li>
+<li><strong>プレフィックスハッシュ</strong>: vLLMと同じsha256ベースのハッシュチェーンでチャンク識別</li>
+<li><strong>非同期ストレージ</strong>: put操作は非同期で実行（Futureベース）</li>
+<li><strong>Eviction方針</strong>: FIFO/LRU/LFU/MRUから選択可能</li>
+<li><strong>Layerwise GPUConnector</strong>: レイヤー単位でのKVキャッシュ転送をサポート</li>
+<li><strong>CacheBlend</strong>: 非プレフィックス部分のKVキャッシュも再利用（セパレータベースセグメント分割）</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../vllm/glossary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../lmcache/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../lmcache/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../lmcache/glossary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -195,11 +482,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../vllm/glossary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../lmcache/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../lmcache/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../lmcache/glossary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
