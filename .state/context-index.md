@@ -45,7 +45,8 @@
 | `docs/src/investigations/ec-connector-github-discussions.md` | ECConnector GitHub議論調査。EPD分離基盤(#25233)、Encoder-onlyモード(#30242)、ec_bothロール(#34182)のマージ済み設計。SHMConnector vs Mooncake統一案の進行中議論。エンコーダキャッシュ事前割り当て問題。MM前処理重複排除RFC。主要コントリビューター・タイムライン・未解決課題一覧 | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/cacheblend-github-discussions.md` | CacheBlend GitHub議論調査。オンライン推論(vllm serve)未対応（8ヶ月間）、トークン化不一致が根本障壁。vLLM本体RFC#25950（サブリクエスト分割アプローチ、コード未公開）。LMCache側の品質バグ多数（ガーブル出力、保存漏れ、layerwise破損）。バージョン互換性マトリクス | [MEDIUM] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成、3種通信、ShmRingBufferロックフリー設計、MessageQueue詳細（enqueue/dequeueバイトフォーマット、pickle5 oob buffers、メモリフェンスプロトコル、SpinTimer）、Worker→EngineCore結果返却パス（response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper） | [DEEP] | [VERIFIED] | 2026-02-14 |
-| `docs/src/investigations/lmcache-integration.md` | LMCache統合調査。チャンク単位KV保存（256トークン/チャンク）、CacheEngineKey（プレフィックスハッシュ）、3層ストレージ階層（CPU/Disk/Remote）、15+リモートコネクタ。vLLMアダプタ（native/latest 2パス分岐）、RequestTracker/ReqMeta/LoadSpec/SaveSpec、GPUConnector 3種、KV形状、セーブ判定ロジック、Disaggregated Serving、設定体系 | [MEDIUM] | [VERIFIED] | 2026-02-15 |
+| `docs/src/investigations/lmcache-integration.md` | LMCache統合調査。チャンク単位KV保存（256トークン/チャンク）、CacheEngineKey（プレフィックスハッシュ）、3層ストレージ階層（CPU/Disk/Remote）、15+リモートコネクタ。vLLMアダプタ（native/latest 2パス分岐）、RequestTracker/ReqMeta/LoadSpec/SaveSpec、GPUConnector 3種、KV形状、セーブ判定ロジック、Disaggregated Serving、設定体系、CacheBlend概要（詳細は別ドキュメント） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
+| `docs/src/investigations/cacheblend-implementation.md` | CacheBlend実装調査。vLLM本体パッチ必須（VLLMModelTracker登録）、独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（中間バッファ+RoPE補正+パイプライン）、対応モデル3種（Llama/Qwen2/Qwen3）、BlendServer（段落分割+段落単位KV保存/ルックアップ）、制約多数（TP/PP未対応、プレフィックスキャッシュ非互換、バッチサイズ1） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 
 ## 外部リソース (target/ 内参照用)
 

@@ -24,7 +24,7 @@
   - NixlConnector の詳細（RDMA、pre-register、handshake）
   - OffloadingConnector の詳細（CPU/ディスクオフロード）
   - MultiConnector の複合パターン
-  - LMCache CacheBlend（blending）の動作
+  - ~~LMCache CacheBlend（blending）の動作~~ ← 完了（`docs/src/investigations/cacheblend-implementation.md`）
   - cross-layer blocks の実際の性能影響
 
 ## いつかやる

@@ -21,7 +21,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | GPUModelRunner | [MEDIUM] | 2026-02-15 | `docs/src/components/gpu-model-runner/summary.md` + 2 サブドキュメント |
 | OutputProcessor | [SHALLOW] | 2026-02-11 | `docs/src/components/output-processor/summary.md` |
 | モデル層 | [SHALLOW] | 2026-02-09 | `docs/src/architecture/overview.md` |
-| KV Transfer/LMCache | [MEDIUM] | 2026-02-15 | `docs/src/components/kv-transfer/summary.md` + `docs/src/investigations/lmcache-integration.md` |
+| KV Transfer/LMCache | [MEDIUM] | 2026-02-15 | `docs/src/components/kv-transfer/summary.md` + `docs/src/investigations/lmcache-integration.md` + `docs/src/investigations/cacheblend-implementation.md` |
 | EncoderCache | [MEDIUM] | 2026-02-14 | `docs/src/components/encoder-cache/summary.md` |
 | ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/components/ec-connector/summary.md` + investigations 2件 |
 | マルチモーダル | [MEDIUM] | 2026-02-11 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
@@ -45,3 +45,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-14 | 2e+ | SharedMemory MQ深堀り + Worker→EngineCore結果返却パス。MessageQueue内部（pickle5 oob、バイトフォーマット、メモリフェンスプロトコル、SpinTimer）、response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper。process-architecture.md [MEDIUM]→[DEEP] | `.state/sessions/20260214-phase2e+-shm-mq-deep.md` |
 | 2026-02-15 | 2f | GPUModelRunner深堀り。KVCache-GPU Interface（ブロックID取込→BlockTable→slot_mapping→DMA→AttentionMetadata 4段変換）、InputBatch永続バッチ（CachedRequestState/InputBatch/MultiGroupBlockTable/CpuGpuBuffer/condense）、CUDAGraph統合（3モード/CudagraphDispatcher/パディング）。summary.md [SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260215-phase2f-gpu-model-runner.md` |
 | 2026-02-15 | 2g | KV Transfer / LMCache調査。KVConnectorBase_V1（7 abstract、2ロール分離）、KVConnectorFactory（10コネクタ）、Scheduler統合（WAITING_FOR_REMOTE_KVS）、Worker/Mixin統合、KV Cache Events、LMCacheチャンク単位保存・3層ストレージ・vLLMアダプタ。[SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260215-phase2g-kv-transfer-lmcache.md` |
+| 2026-02-15 | 2g+ | CacheBlend実装調査。独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（RoPE補正+パイプライン）、vLLM本体パッチ必須（VLLMModelTracker登録）、対応モデル3種のみ、BlendServer段落分割、制約多数 | `.state/sessions/20260215-phase2g+-cacheblend.md` |

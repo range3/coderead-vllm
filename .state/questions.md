@@ -43,5 +43,5 @@
 - [ ] NixlConnectorのRDMA事前登録（register_kv_caches）はどのような最適化をもたらすか？
 - [ ] cross-layer blocks（prefer_cross_layer_blocks=True）を使うコネクタはどれか、実際の性能差は？
 - [ ] LMCacheのLookupClient/Serverの分散キャッシュ問い合わせの具体的な通信プロトコルは？
-- [ ] LMCache CacheBlend（enable_blending）の動作メカニズムは？（partial KV reuse）
+- [x] LMCache CacheBlend（enable_blending）の動作メカニズムは？（partial KV reuse） — **回答**: CacheBlendはRAGチャンク間のKV再利用を実現。セパレータで段落分割→段落単位KV保存・ルックアップ→topk重要token同定（K差分L2ノルム）→選択的KV再計算。vLLMモデルオブジェクトに直接アクセスする独自forward pathを持ち、vLLM本体へのad-hocパッチが必要（プラグインのみでは不完結）。対応モデルはLlama/Qwen2/Qwen3の3種のみ。詳細は `docs/src/investigations/cacheblend-implementation.md`
 - [ ] KV Transfer使用時のSchedulerのWAITING_FOR_REMOTE_KVS→WAITING遷移のレイテンシ影響は？

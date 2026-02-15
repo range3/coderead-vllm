@@ -436,6 +436,20 @@ target/LMCache/lmcache/
 └── utils.py                         # CacheEngineKey等
 ```
 
+## CacheBlend
+
+CacheBlendはRAGシナリオでの非プレフィックスKV再利用を実現する高度な機能。`enable_blending=True`で有効化。段落（チャンク）単位でKVキャッシュを保存し、異なるコンテキストに挿入されたチャンクのKVを再利用する際に、少量の重要tokenのみを選択的に再計算する。
+
+**詳細は別ドキュメント**: [CacheBlend実装調査報告](./cacheblend-implementation.md)
+
+### 要点
+
+- **vLLM本体パッチが必要**: `gpu_worker.py` にモデルオブジェクト登録コード追加
+- **独自forward path**: vLLMのAttention層をバイパスし、LMCache内で独自にforward計算
+- **対応モデル3種**: Llama, Qwen2, Qwen3のみ
+- **専用GPUコネクタ**: `VLLMBufferLayerwiseGPUConnector`（中間バッファ＋RoPE位置補正＋パイプライン）
+- **制約多数**: TP/PP未対応、プレフィックスキャッシュ非互換、バッチサイズ1前提
+
 ## ECConnectorとの類似点・相違点
 
 | 観点 | LMCache (KV Transfer) | ECConnector |
