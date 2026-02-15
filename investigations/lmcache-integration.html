@@ -36,10 +36,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-8442dfb6.js";
+            window.path_to_searchindex_js = "../searchindex-4f025b6b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-451ee09b.js"></script>
+        <script src="../toc-7bdfdf84.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -561,6 +561,17 @@ class DisaggSpec:
 │       └── utils.py
 └── utils.py                         # CacheEngineKey等
 </code></pre>
+<h2 id="cacheblend"><a class="header" href="#cacheblend">CacheBlend</a></h2>
+<p>CacheBlendはRAGシナリオでの非プレフィックスKV再利用を実現する高度な機能。<code>enable_blending=True</code>で有効化。段落（チャンク）単位でKVキャッシュを保存し、異なるコンテキストに挿入されたチャンクのKVを再利用する際に、少量の重要tokenのみを選択的に再計算する。</p>
+<p><strong>詳細は別ドキュメント</strong>: <a href="./cacheblend-implementation.html">CacheBlend実装調査報告</a></p>
+<h3 id="要点"><a class="header" href="#要点">要点</a></h3>
+<ul>
+<li><strong>vLLM本体パッチが必要</strong>: <code>gpu_worker.py</code> にモデルオブジェクト登録コード追加</li>
+<li><strong>独自forward path</strong>: vLLMのAttention層をバイパスし、LMCache内で独自にforward計算</li>
+<li><strong>対応モデル3種</strong>: Llama, Qwen2, Qwen3のみ</li>
+<li><strong>専用GPUコネクタ</strong>: <code>VLLMBufferLayerwiseGPUConnector</code>（中間バッファ＋RoPE位置補正＋パイプライン）</li>
+<li><strong>制約多数</strong>: TP/PP未対応、プレフィックスキャッシュ非互換、バッチサイズ1前提</li>
+</ul>
 <h2 id="ecconnectorとの類似点相違点"><a class="header" href="#ecconnectorとの類似点相違点">ECConnectorとの類似点・相違点</a></h2>
 <div class="table-wrapper">
 <table>
