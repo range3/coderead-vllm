@@ -1,7 +1,7 @@
 # LMCache 用語集
 
 > **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-16（Phase 0a）
+> **最終更新**: 2026-02-16（Phase 1 セッション1）
 
 ## コアコンセプト
 
@@ -9,7 +9,8 @@
 |------|------|
 | **LMCacheEngine** | KVキャッシュのstore/retrieve/prefetchを統合するメインエンジン。`lmcache/v1/cache_engine.py` |
 | **LMCacheManager** | LMCacheの内部コンポーネント（Engine, LookupClient, OffloadServer等）のライフサイクル管理。`lmcache/v1/manager.py` |
-| **CacheEngineKey** | KVキャッシュチャンクの一意識別子。(model_name, world_size, worker_id, chunk_hash, dtype)の5タプル。`lmcache/utils.py:333` |
+| **CacheEngineKey** | KVキャッシュチャンクの一意識別子。(model_name, world_size, worker_id, chunk_hash, dtype, request_configs)の6タプル。`lmcache/utils.py:333` |
+| **LayerCacheEngineKey** | CacheEngineKey + layer_id。レイヤー単位保存時のキー。`split_layers()`で生成。`lmcache/utils.py:392` |
 | **MemoryObj** | KVキャッシュデータを保持する抽象メモリオブジェクト。フォーマット情報とテンソルデータを包含。`lmcache/v1/memory_management.py` |
 | **MemoryFormat** | KVキャッシュのメモリレイアウト種別。KV_2LTD, KV_T2D, KV_2TD, BINARY, KV_MLA_FMT等。 |
 | **LMCacheMetadata** | モデル名、world_size、worker_id、kv_dtype、kv_shape等のメタ情報。サービングエンジンから抽出。 |
@@ -23,7 +24,9 @@
 | **ChunkedTokenDatabase** | 固定サイズ（default 256トークン）チャンクでプレフィックスハッシュを計算。標準の実装。 |
 | **SegmentTokenDatabase** | セパレータベースでセグメント分割。CacheBlend時に使用。 |
 | **chunk_size** | チャンクのトークン数。デフォルト256。 |
-| **chunk_hash** | チャンクのプレフィックスハッシュ値。vLLMのsha256ベースハッシュチェーンと互換。 |
+| **chunk_hash** | チャンクのプレフィックスハッシュ値。vLLMの`sha256_cbor`ハッシュ関数を直接利用（完全互換）。 |
+| **NONE_HASH** | プレフィックスハッシュチェーンの初期値。vLLMの`kv_cache_utils.init_none_hash()`で初期化。 |
+| **store_mask** | store時のマスク。False=already-cached prefix、True=新規トークン。False数はchunk_sizeの倍数必須。 |
 
 ## ストレージ
 
@@ -31,7 +34,9 @@
 |------|------|
 | **StorageManager** | 複数のストレージバックエンドを階層管理。put/get要求を各バックエンドに振り分け。 |
 | **StorageBackendInterface** | ストレージバックエンドの抽象インターフェース。contains/put/get等。 |
-| **LocalCPUBackend** | CPU メモリ上のKVキャッシュストレージ（L1）。 |
+| **LocalCPUBackend** | CPU メモリ上のKVキャッシュストレージ（L1）。hot_cache（OrderedDict）で管理。同期書き込み。 |
+| **hot_cache** | LocalCPUBackendの`OrderedDict[CacheEngineKey, MemoryObj]`。CachePolicyでEviction管理。 |
+| **allocator_backend** | MemoryObj確保を担当するバックエンド。通常はLocalCPUBackend。 |
 | **LocalDiskBackend** | ディスク上のKVキャッシュストレージ（L2）。 |
 | **RemoteBackend** | リモートストレージ（L3）。connector経由でRedis/S3/Valkey等に接続。 |
 | **P2PBackend** | インスタンス間のP2P KVキャッシュ転送。 |
@@ -45,8 +50,11 @@
 | 用語 | 説明 |
 |------|------|
 | **GPUConnectorInterface** | GPU KVキャッシュとCPU MemoryObj間のデータ転送抽象インターフェース。to_gpu/from_gpu。 |
-| **VLLMPagedMemGPUConnectorV2** | vLLMのPaged KVキャッシュ向けGPUコネクタ。ブロック単位のKVキャッシュに対応。 |
-| **Layerwise GPUConnector** | レイヤー単位でKVキャッシュを転送するコネクタ。ジェネレータパターン使用。 |
+| **VLLMPagedMemGPUConnectorV2** | vLLMのPaged KVキャッシュ向けGPUコネクタ（非レイヤーワイズ）。全レイヤー一括転送。 |
+| **VLLMPagedMemLayerwiseGPUConnector** | レイヤー単位でKVキャッシュを転送するコネクタ。ジェネレータパターン使用。主要パス。 |
+| **lmc_ops.single_layer_kv_transfer** | CUDAカーネル。vLLMのページドKVキャッシュからslot_mapping経由でデータを抽出/書き戻し。 |
+| **slot_mapping** | トークン位置→vLLMページドメモリのflat slot位置へのマッピング。GPU Tensor。 |
+| **store_stream** | GPU→CPU転送専用CUDAストリーム。メイン計算ストリームとオーバーラップ可能。 |
 
 ## 統合
 
@@ -55,7 +63,9 @@
 | **LMCacheConnectorV1Dynamic** | vLLMの`KVConnectorBase_V1`実装。`LMCacheConnectorV1Impl`に委譲。 |
 | **LMCacheConnectorV1Impl** | vLLM統合の実装本体（`vllm_v1_adapter.py`）。LoadSpec/SaveSpecでロード・保存を管理。 |
 | **LoadSpec** | ロード仕様。vLLMキャッシュ済みトークン数、LMCacheキャッシュ済みトークン数、ロード可否。 |
-| **SaveSpec** | 保存仕様。スキップするトークン数、保存可否。 |
+| **SaveSpec** | 保存仕様。`skip_leading_tokens`（キャッシュ済みプレフィックス長）、`can_save`（保存可否）。 |
+| **ConnectorMetadata** | Scheduler→Worker間で渡されるメタデータ。各リクエストのtoken_ids, slot_mapping, LoadSpec, SaveSpecを含む。 |
+| **kv_role** | `"kv_both"`（default）/`"kv_producer"`/`"kv_consumer"`。producer時はskip_leading_tokens=0。 |
 | **LookupClient** | Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。 |
 
 ## CacheBlend

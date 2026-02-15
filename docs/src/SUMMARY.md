@@ -62,7 +62,16 @@
 
 # LMCache: アーキテクチャ
 
+- [データフロー](lmcache/architecture/data-flow.md)
 - [LMCache アーキテクチャ概要](lmcache/architecture/overview.md)
+
+# LMCache: コンポーネント
+
+- [LMCacheEngine](lmcache/components/cache-engine/summary.md)
+- [GPUConnector](lmcache/components/gpu-connector/summary.md)
+- [StorageManager + LocalCPUBackend](lmcache/components/storage-manager/summary.md)
+- [TokenDatabase（ChunkedTokenDatabase）](lmcache/components/token-database/summary.md)
+- [vLLM統合（LMCacheConnector）](lmcache/components/vllm-integration/summary.md)
 
 # LMCache: 付録
 

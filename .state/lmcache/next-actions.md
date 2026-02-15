@@ -2,13 +2,12 @@
 
 ## 最優先
 
-- [ ] Phase 1: 垂直スライス — 「vLLM統合でのKVキャッシュ store/retrieve パス」
-  - エントリポイント: LMCacheConnectorV1Dynamic → LMCacheConnectorV1Impl
-  - コアパス: LMCacheManager → LMCacheEngine → TokenDatabase → GPUConnector → StorageManager → LocalCPUBackend
-  - 目標: 各コンポーネントのインターフェースと接続点を理解し、独自プラグイン作成の基盤知識を得る
-  - セッション1: store パス（GPU→CPU→Storage）を追跡
-  - セッション2: retrieve パス（Storage→CPU→GPU）を追跡
-  - （必要に応じてセッション3で補足）
+- [ ] Phase 1 セッション2: 垂直スライス — 「vLLM統合でのKVキャッシュ retrieve パス」
+  - エントリポイント: LMCacheConnectorV1Impl.load_kv_layer() / start_load_kv()
+  - コアパス: LMCacheEngine.retrieve_layer() → StorageManager.batched_get() → LocalCPUBackend → GPUConnector.batched_to_gpu()
+  - 目標: retrieve側の各コンポーネントのインターフェースと接続点を理解
+  - data-flow.mdにretrieveパスを追記
+  - 各コンポーネントsummary.mdのretrieve側を追記
 
 ## 次の優先
 

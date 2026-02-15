@@ -2,19 +2,20 @@
 
 ## 現在のフェーズ
 
-Phase 0a+0b 完了 → Phase 1 開始待ち
+Phase 1 進行中（セッション1完了、セッション2待ち）
 
 ## カバレッジマップ
 
 | 領域 | 深度 | 最終更新 | 関連ドキュメント |
 |------|------|---------|----------------|
 | 全体アーキテクチャ | [SHALLOW] | 2026-02-16 | architecture/overview.md |
-| LMCacheEngine | [SHALLOW] | 2026-02-16 | overview.md内 |
-| StorageManager + Backends | [SHALLOW] | 2026-02-16 | overview.md内 |
-| GPUConnector | [SHALLOW] | 2026-02-16 | overview.md内 |
+| データフロー（storeパス） | [MEDIUM] | 2026-02-16 | architecture/data-flow.md |
+| LMCacheEngine | [MEDIUM] | 2026-02-16 | components/cache-engine/summary.md |
+| StorageManager + Backends | [MEDIUM] | 2026-02-16 | components/storage-manager/summary.md |
+| GPUConnector | [MEDIUM] | 2026-02-16 | components/gpu-connector/summary.md |
+| TokenDatabase | [MEDIUM] | 2026-02-16 | components/token-database/summary.md |
+| vLLM統合(Integration) | [MEDIUM] | 2026-02-16 | components/vllm-integration/summary.md |
 | MemoryManagement | [SHALLOW] | 2026-02-16 | overview.md内 |
-| TokenDatabase | [SHALLOW] | 2026-02-16 | overview.md内 |
-| vLLM統合(Integration) | [SHALLOW] | 2026-02-16 | overview.md内 |
 | CacheBlend | [SHALLOW] | 2026-02-16 | overview.md内 |
 | MultiProcess Server | [SHALLOW] | 2026-02-16 | overview.md内 |
 | CacheController | [SHALLOW] | 2026-02-16 | overview.md内 |
@@ -27,3 +28,4 @@ Phase 0a+0b 完了 → Phase 1 開始待ち
 | 日付 | Phase | 概要 | 詳細 |
 |------|-------|------|------|
 | 2026-02-16 | 0a+0b | オリエンテーション + ユーザー優先度確認 | sessions/20260216-phase0a-orientation.md |
+| 2026-02-16 | 1-s1 | Store パス垂直スライス | sessions/20260216-phase1-store-path.md |
