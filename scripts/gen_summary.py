@@ -2,11 +2,10 @@
 """
 docs/src/SUMMARY.md を docs/src/ のディレクトリ構造から自動生成する。
 
-ルール:
-- docs/src/ 配下の .md ファイルを走査
-- ディレクトリ内に summary.md があればセクションのトップとして扱う
-- README.md, SUMMARY.md は特別扱い
-- ファイル名からタイトルを推測（H1見出しがあればそれを使用）
+マルチOSS対応:
+- docs/src/vllm/ と docs/src/lmcache/ を各OSSセクションとして走査
+- docs/src/cross-project/ をプロジェクト横断セクションとして走査
+- 各OSS内のサブセクション（architecture/components/investigations）を維持
 """
 
 from pathlib import Path
@@ -14,25 +13,45 @@ from pathlib import Path
 
 DOCS_SRC = Path(__file__).parent.parent / "docs" / "src"
 
-# 固定セクション（SUMMARY.mdの先頭部分）
 HEADER = """# Summary
 
 [はじめに](README.md)
 """
 
-# 固定セクション（SUMMARY.mdの末尾部分）
-FOOTER = """
----
-
-# 付録
-
-- [用語集](glossary.md)
-- [ファイル索引](appendix/file-index.md)
-"""
+FOOTER = ""
 
 # 走査から除外するファイル/ディレクトリ
 EXCLUDE_FILES = {"README.md", "SUMMARY.md", "glossary.md"}
-EXCLUDE_DIRS = {"appendix", "investigations"}
+EXCLUDE_DIRS: set[str] = set()
+
+# OSSプロジェクト定義
+OSS_PROJECTS = [
+    {
+        "dir": "vllm",
+        "title": "vLLM",
+        "subsections": [
+            ("architecture", "アーキテクチャ"),
+            ("components", "コンポーネント"),
+            ("investigations", "調査報告"),
+        ],
+        "appendix": [
+            ("glossary.md", "用語集"),
+            ("appendix/file-index.md", "ファイル索引"),
+        ],
+    },
+    {
+        "dir": "lmcache",
+        "title": "LMCache",
+        "subsections": [
+            ("architecture", "アーキテクチャ"),
+            ("components", "コンポーネント"),
+            ("investigations", "調査報告"),
+        ],
+        "appendix": [
+            ("glossary.md", "用語集"),
+        ],
+    },
+]
 
 
 def get_title(filepath: Path) -> str:
@@ -45,7 +64,6 @@ def get_title(filepath: Path) -> str:
                     return line[2:].strip()
     except (OSError, UnicodeDecodeError):
         pass
-    # H1が見つからなければファイル名を整形して返す
     name = filepath.stem
     return name.replace("-", " ").replace("_", " ").title()
 
@@ -57,10 +75,6 @@ def scan_directory(
     lines: list[str] = []
     indent = "  " * depth
 
-    # summary.md があればディレクトリのトップエントリとして扱う
-    summary_file = dirpath / "summary.md"
-
-    # ディレクトリ内のファイルとサブディレクトリをソート
     entries = sorted(dirpath.iterdir())
     md_files = [
         e for e in entries
@@ -89,40 +103,70 @@ def scan_directory(
         else:
             lines.append(f"{indent}- [{dir_title}]()")
 
-        # サブディレクトリ内のファイルを再帰的に走査
         sub_lines = scan_directory(d, base, depth + 1)
         lines.extend(sub_lines)
 
     return lines
 
 
+def generate_oss_section(project: dict) -> list[str]:
+    """1つのOSSプロジェクトのセクションを生成する。"""
+    parts: list[str] = []
+    oss_dir = DOCS_SRC / project["dir"]
+    if not oss_dir.exists():
+        return parts
+
+    # OSSトップレベルのリンク
+    readme = oss_dir / "README.md"
+    if readme.exists():
+        title = get_title(readme)
+        parts.append(f"\n---\n\n# {project['title']}\n")
+        parts.append(f"- [{title}]({project['dir']}/README.md)")
+    else:
+        parts.append(f"\n---\n\n# {project['title']}\n")
+
+    # サブセクション
+    for subdir_name, section_title in project["subsections"]:
+        subdir = oss_dir / subdir_name
+        if not subdir.exists():
+            continue
+        lines = scan_directory(subdir, DOCS_SRC)
+        if lines:
+            parts.append(f"\n## {section_title}\n")
+            parts.append("\n".join(lines))
+
+    # 付録
+    appendix_items = []
+    for rel_path, label in project.get("appendix", []):
+        full_path = oss_dir / rel_path
+        if full_path.exists():
+            appendix_items.append(f"- [{label}]({project['dir']}/{rel_path})")
+    if appendix_items:
+        parts.append(f"\n## 付録\n")
+        parts.append("\n".join(appendix_items))
+
+    return parts
+
+
 def generate_summary() -> str:
     """SUMMARY.md の内容を生成する。"""
     parts = [HEADER]
 
-    # アーキテクチャセクション
-    arch_dir = DOCS_SRC / "architecture"
-    if arch_dir.exists():
-        parts.append("\n---\n\n# アーキテクチャ\n")
-        arch_lines = scan_directory(arch_dir, DOCS_SRC)
-        parts.append("\n".join(arch_lines))
+    # 各OSSプロジェクトのセクション
+    for project in OSS_PROJECTS:
+        oss_parts = generate_oss_section(project)
+        parts.extend(oss_parts)
 
-    # コンポーネントセクション
-    comp_dir = DOCS_SRC / "components"
-    if comp_dir.exists():
-        parts.append("\n\n---\n\n# コンポーネント\n")
-        comp_lines = scan_directory(comp_dir, DOCS_SRC)
-        parts.append("\n".join(comp_lines))
+    # プロジェクト横断セクション
+    cross_dir = DOCS_SRC / "cross-project"
+    if cross_dir.exists():
+        lines = scan_directory(cross_dir, DOCS_SRC)
+        if lines:
+            parts.append("\n\n---\n\n# プロジェクト横断\n")
+            parts.append("\n".join(lines))
 
-    # 調査報告セクション
-    inv_dir = DOCS_SRC / "investigations"
-    if inv_dir.exists():
-        inv_lines = scan_directory(inv_dir, DOCS_SRC)
-        if inv_lines:
-            parts.append("\n\n---\n\n# 調査報告\n")
-            parts.append("\n".join(inv_lines))
-
-    parts.append(FOOTER)
+    if FOOTER:
+        parts.append(FOOTER)
 
     return "\n".join(parts) + "\n"
 
@@ -131,7 +175,6 @@ def main():
     summary_path = DOCS_SRC / "SUMMARY.md"
     content = generate_summary()
 
-    # 既存の内容と比較して変更がある場合のみ書き込み
     if summary_path.exists():
         existing = summary_path.read_text(encoding="utf-8")
         if existing == content:

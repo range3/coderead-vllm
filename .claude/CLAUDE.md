@@ -5,43 +5,72 @@
 このリポジトリはOSSのコードリーディング結果を構造化して蓄積するためのものです。
 対象OSSは `target/` ディレクトリにgit submoduleとして配置されています。
 
-- **対象OSS**: vLLM
+- **対象OSS**: vLLM (`target/vllm/`), LMCache (`target/LMCache/`)
 - **調査目的**: 技術理解・学習（LLM推論サービングの仕組みを深く学ぶ。将来的に独自プラグイン作成も視野）
-- **重点領域**: メモリ管理/KVキャッシュ、KV Transfer/LMCache連携、マルチモーダル（画像入力推論、mm_cache）、API/エントリポイント、スケジューラ/推論パイプライン
+- **重点領域**:
+  - vLLM: メモリ管理/KVキャッシュ、KV Transfer/LMCache連携、マルチモーダル、API/エントリポイント、スケジューラ/推論パイプライン
+  - LMCache: 内部アーキテクチャ、ストレージバックエンド、キャッシュエンジン、vLLM統合
 
 ## ディレクトリ構成
 
 ```
-.claude/CLAUDE.md          ← このファイル（常に参照）
-target/                    ← 対象OSSソースコード（git submodule）
-docs/src/                  ← 公開ドキュメント（mdbook用）
-docs/src/investigations/   ← トピック別調査報告
-.state/                    ← 調査状態管理（Claude Code用）
-.state/questions.md        ← 未解決の疑問（調査を駆動）
-.state/reading-guide.md    ← 対象OSS固有の読解ルール・ユーザー優先度
-templates/                 ← ドキュメントテンプレート
-scripts/                   ← ユーティリティスクリプト
+.claude/CLAUDE.md              ← このファイル（常に参照）
+target/                        ← 対象OSSソースコード（git submodule）
+  vllm/                        ← vLLM本体
+  LMCache/                     ← LMCache本体
+docs/src/                      ← 公開ドキュメント（mdbook用）
+  vllm/                        ← vLLMのドキュメント
+    architecture/              ← アーキテクチャ文書
+    components/                ← コンポーネント別文書
+    investigations/            ← トピック別調査報告
+    glossary.md                ← 用語集
+  lmcache/                     ← LMCacheのドキュメント
+    architecture/
+    components/
+    investigations/
+    glossary.md
+  cross-project/               ← プロジェクト横断調査
+.state/                        ← 調査状態管理（Claude Code用、OSS別）
+  vllm/                        ← vLLMの状態ファイル
+    exploration-log.md
+    reading-guide.md
+    next-actions.md
+    context-index.md
+    questions.md
+    sessions/
+  lmcache/                     ← LMCacheの状態ファイル
+    exploration-log.md
+    reading-guide.md
+    next-actions.md
+    context-index.md
+    questions.md
+    sessions/
+templates/                     ← ドキュメントテンプレート
+scripts/                       ← ユーティリティスクリプト
 ```
 
 ## Phase境界ルール（厳守）
 
-**1セッション = 1 Phase。複数Phaseをまたぐセッションは禁止。**
+**1セッション = 1つのOSSの 1 Phase。複数Phaseまたは複数OSSをまたぐセッションは禁止。**
 
 - Phase Nの完了条件を全て満たすまでPhase N+1に進まない
 - planモードでは現在のPhaseの計画のみを立てる。次Phase以降は「概要」のみ記載可
 - Phase完了時は必ずセッション終了プロトコルを実行し、next-actions.mdに「Phase N+1 開始」と明記する
 - 対象OSSの規模が小さくても、Phase境界は守る（品質とコンテキスト効率のため）
+- 各OSSのPhase進行は独立（vLLMがPhase 2でもLMCacheはPhase 0aから開始）
 
 ## 調査プロトコル
 
 ### セッション開始時（必ず実行）
 
-1. `.state/exploration-log.md` を読んで現在のPhaseと全体の進捗を把握
-2. `.state/reading-guide.md` を読んで対象OSS固有のルールとユーザー優先度を把握
-3. `.state/next-actions.md` を読んで今回の作業を決定（現在のPhaseに関係するアクションのみ）
-4. 必要に応じて `.state/context-index.md` で既存知見を確認
-5. 必要に応じて `.state/questions.md` を読み、調査すべき疑問を把握
-6. 前回の続きの場合は `.state/sessions/` の該当ファイルを読む（任意。詳細が必要な場合のみ）
+**まず、今回のセッションでどのOSSを調査するか確認する。** 以下、対象OSSを `{oss}` と表記する（`vllm` または `lmcache`）。
+
+1. `.state/{oss}/exploration-log.md` を読んで現在のPhaseと全体の進捗を把握
+2. `.state/{oss}/reading-guide.md` を読んで対象OSS固有のルールとユーザー優先度を把握
+3. `.state/{oss}/next-actions.md` を読んで今回の作業を決定（現在のPhaseに関係するアクションのみ）
+4. 必要に応じて `.state/{oss}/context-index.md` で既存知見を確認
+5. 必要に応じて `.state/{oss}/questions.md` を読み、調査すべき疑問を把握
+6. 前回の続きの場合は `.state/{oss}/sessions/` の該当ファイルを読む（任意。詳細が必要な場合のみ）
 
 ### 調査中
 
@@ -58,9 +87,10 @@ scripts/                   ← ユーティリティスクリプト
 - submodule更新後は関連ドキュメントの再検証を検討
 
 #### ドキュメントへの書き込み
-- 発見は適切な `docs/src/` 配下のファイルに記録
-- 新しいコンポーネントを発見したら `docs/src/components/` にディレクトリを作成
-- トピック別の調査報告は `docs/src/investigations/` に配置
+- 発見は適切な `docs/src/{oss}/` 配下のファイルに記録
+- 新しいコンポーネントを発見したら `docs/src/{oss}/components/` にディレクトリを作成
+- トピック別の調査報告は `docs/src/{oss}/investigations/` に配置
+- 複数OSSにまたがる横断的調査は `docs/src/cross-project/` に配置
 - テンプレート（`templates/`）を参照して一貫した形式で書く
 - **ファイル参照は必ず `target/` からの相対パスと行番号を記載**: `target/path/to/file.py:123`
 
@@ -72,20 +102,20 @@ scripts/                   ← ユーティリティスクリプト
 | ファイル種類の検索 | Glob | 高速なファイル発見 |
 | ファイルの一部を読む | Read (offset/limit指定) | コンテキスト最小 |
 | 広い範囲の構造理解 | Task (Explore agent) | 複数パス追跡可能 |
-| 既存知見の確認 | Read (.state/ or docs/src/) | ソース再読より低コスト |
+| 既存知見の確認 | Read (.state/{oss}/ or docs/src/{oss}/) | ソース再読より低コスト |
 | 単純な事実確認 | ドキュメント参照 | ファイル操作不要 |
 
 **注意**: 単純なファイル読みにExplore agentを使わない（コスト高）。
 
 ### セッション終了時（必ず実行）
 
-1. `.state/exploration-log.md` を更新（カバレッジマップ・セッション履歴に追記）
-2. `.state/context-index.md` を更新（新規/変更ドキュメントを反映）
-3. `.state/next-actions.md` を更新（次回やるべきことを記載）
-4. `.state/questions.md` を更新（新しい疑問の追加、解決済みの消込）
-5. `.state/reading-guide.md` を更新（新ルール発見、確信度昇格があれば）
-6. `.state/sessions/` にセッション記録を作成（命名: `YYYYMMDD-phaseN-topic.md`）
-7. `docs/src/` の変更があれば `python scripts/gen_summary.py` でSUMMARY.md更新
+1. `.state/{oss}/exploration-log.md` を更新（カバレッジマップ・セッション履歴に追記）
+2. `.state/{oss}/context-index.md` を更新（新規/変更ドキュメントを反映）
+3. `.state/{oss}/next-actions.md` を更新（次回やるべきことを記載）
+4. `.state/{oss}/questions.md` を更新（新しい疑問の追加、解決済みの消込）
+5. `.state/{oss}/reading-guide.md` を更新（新ルール発見、確信度昇格があれば）
+6. `.state/{oss}/sessions/` にセッション記録を作成（命名: `YYYYMMDD-phaseN-topic.md`）
+7. `docs/src/` の変更があれば `uv run task summary` でSUMMARY.md更新
 
 ## ドキュメント規約
 
@@ -135,8 +165,11 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 8. summary.mdなしで詳細ドキュメントを作成しない → まず概要から
 9. reading-guide.mdでスキップ対象とした領域を深堀りする → ルールに従う
 10. ユーザー優先度を確認せずにPhase 1のスライスを選択する → 必ずユーザーに確認
+11. 1セッション内で複数のOSSを調査する → 1セッション1OSS
 
 ## 調査フェーズガイド
+
+各OSSで独立してPhaseを進行する。パスの `{oss}` は対象OSS名に置き換える。
 
 ### Phase 0: オリエンテーション（1-2セッション）
 
@@ -145,9 +178,9 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 #### Phase 0a: 構造把握（セッション1）
 
 成果物:
-- `docs/src/architecture/overview.md` を作成
-- `docs/src/glossary.md` に主要用語を登録
-- `.state/reading-guide.md` の「コードベース構造ルール」セクションを作成
+- `docs/src/{oss}/architecture/overview.md` を作成
+- `docs/src/{oss}/glossary.md` に主要用語を登録
+- `.state/{oss}/reading-guide.md` の「コードベース構造ルール」セクションを作成
 
 手順:
 1. README、公式ドキュメント、ディレクトリ構成を確認
@@ -157,7 +190,7 @@ ASCII図も可（Mermaidで表現しにくい場合）。
    - 同種の実装が大量にあるか → リファレンス実装を1つ選び、他は差分記録
    - 複数プラットフォーム対応か → 主要プラットフォームを特定
    - 読む必要がない領域はどこか
-4. 分析結果を `.state/reading-guide.md` に記録（`templates/reading-guide.md` 参照）
+4. 分析結果を `.state/{oss}/reading-guide.md` に記録（`templates/reading-guide.md` 参照）
 
 完了条件:
 - [ ] overview.mdが作成されている
@@ -168,7 +201,7 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 #### Phase 0b: 優先度確認（セッション2）
 
 成果物:
-- `.state/reading-guide.md` の「ユーザー優先度」セクションを完成
+- `.state/{oss}/reading-guide.md` の「ユーザー優先度」セクションを完成
 
 手順:
 1. Phase 0aの成果をもとに、発見したコンポーネント/領域の一覧をユーザーに提示
@@ -176,7 +209,7 @@ ASCII図も可（Mermaidで表現しにくい場合）。
    - 「どの領域に最も関心がありますか？（複数可、優先順位をつけてください）」
    - 「この調査で最終的に何を得たいですか？（例: 自社への応用、バグ修正、貢献準備）」
    - 「関心が低い/スキップしてよい領域はありますか？」
-3. 回答を `.state/reading-guide.md` の「ユーザー優先度」セクションに記録
+3. 回答を `.state/{oss}/reading-guide.md` の「ユーザー優先度」セクションに記録
 4. ユーザー優先度と構造ルールを統合し、Phase 1で追跡する垂直スライスを提案
 
 完了条件:
@@ -190,16 +223,16 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 ### Phase 1: 垂直スライス（2-3セッション）
 
 **目標**: 1つのリクエストパスを入力から出力まで完全に追跡
-（`.state/reading-guide.md` のユーザー優先度に基づいてスライスを選択）
+（`.state/{oss}/reading-guide.md` のユーザー優先度に基づいてスライスを選択）
 
 成果物:
-- `docs/src/architecture/data-flow.md` を作成
+- `docs/src/{oss}/architecture/data-flow.md` を作成
 - パス上の各コンポーネントの `summary.md` を作成
 - コンポーネント優先度リストを作成
 
 完了条件:
 - [ ] data-flow.mdにエンドツーエンドのフローが記載されている
-- [ ] フロー上の全コンポーネントが `docs/src/components/` に登録されている
+- [ ] フロー上の全コンポーネントが `docs/src/{oss}/components/` に登録されている
 - [ ] 各コンポーネントの優先度が決定されている
 
 禁止: フロー上にないコンポーネントを深掘りしない。最適化やエッジケースは追わない。reading-guide.mdでスキップ対象とした領域には入らない。
@@ -207,7 +240,7 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 ### Phase 2: コンポーネント別深堀り（継続的）
 
 **目標**: 優先度順にコンポーネントを詳細調査
-（`.state/reading-guide.md` のユーザー優先度と構造ルールに従って順序決定。
+（`.state/{oss}/reading-guide.md` のユーザー優先度と構造ルールに従って順序決定。
   代表実装パターン適用領域では、リファレンス実装を深堀りし他は差分記録）
 
 成果物:
@@ -226,7 +259,8 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 **目標**: 複数コンポーネントにまたがる機能を調査
 
 成果物:
-- `docs/src/investigations/` にトピック別調査報告
+- `docs/src/{oss}/investigations/` にトピック別調査報告
+- 複数OSSにまたがる場合は `docs/src/cross-project/` に配置
 - 既存ドキュメントの相互参照を強化
 
 完了条件（テーマごと）:
@@ -240,17 +274,17 @@ ASCII図も可（Mermaidで表現しにくい場合）。
 ### 読み込み優先度
 
 ```
-レベル0（常に読む）: .state/exploration-log.md, next-actions.md, reading-guide.md （〜80行）
-レベル1（セッション開始時）: context-index.md, questions.md （〜50行）
+レベル0（常に読む）: .state/{oss}/exploration-log.md, next-actions.md, reading-guide.md （〜80行）
+レベル1（セッション開始時）: .state/{oss}/context-index.md, questions.md （〜50行）
 レベル2（必要時）: 対象コンポーネントの summary.md （〜100行）
 レベル3（深堀り時）: 個別ドキュメント、investigations/
-レベル4（前セッション詳細時）: .state/sessions/ の該当ファイル
+レベル4（前セッション詳細時）: .state/{oss}/sessions/ の該当ファイル
 レベル5（ピンポイント）: target/ 内のソースコード
 ```
 
 ### context-index.md の維持
 
-新しいドキュメントを作成/大幅更新したら、context-index.md に1行サマリを追加/更新する。
+新しいドキュメントを作成/大幅更新したら、`.state/{oss}/context-index.md` に1行サマリを追加/更新する。
 これにより、次回セッションで「どのドキュメントに何が書いてあるか」を即座に把握できる。
 
 ### コンテキスト管理戦略
