@@ -1,5 +1,96 @@
-# 用語集
+# LMCache 用語集
 
-> LMCache 固有の用語を記録する。
+> **確信度**: [VERIFIED]
+> **最終更新**: 2026-02-16（Phase 0a）
 
-（Phase 0a で追加予定）
+## コアコンセプト
+
+| 用語 | 説明 |
+|------|------|
+| **LMCacheEngine** | KVキャッシュのstore/retrieve/prefetchを統合するメインエンジン。`lmcache/v1/cache_engine.py` |
+| **LMCacheManager** | LMCacheの内部コンポーネント（Engine, LookupClient, OffloadServer等）のライフサイクル管理。`lmcache/v1/manager.py` |
+| **CacheEngineKey** | KVキャッシュチャンクの一意識別子。(model_name, world_size, worker_id, chunk_hash, dtype)の5タプル。`lmcache/utils.py:333` |
+| **MemoryObj** | KVキャッシュデータを保持する抽象メモリオブジェクト。フォーマット情報とテンソルデータを包含。`lmcache/v1/memory_management.py` |
+| **MemoryFormat** | KVキャッシュのメモリレイアウト種別。KV_2LTD, KV_T2D, KV_2TD, BINARY, KV_MLA_FMT等。 |
+| **LMCacheMetadata** | モデル名、world_size、worker_id、kv_dtype、kv_shape等のメタ情報。サービングエンジンから抽出。 |
+| **LMCacheEngineConfig** | YAML/環境変数ベースの設定。chunk_size, ストレージ設定, blend設定, P2P設定等。 |
+
+## トークン処理
+
+| 用語 | 説明 |
+|------|------|
+| **TokenDatabase** | トークン列をチャンクキー列に変換する抽象基底クラス。 |
+| **ChunkedTokenDatabase** | 固定サイズ（default 256トークン）チャンクでプレフィックスハッシュを計算。標準の実装。 |
+| **SegmentTokenDatabase** | セパレータベースでセグメント分割。CacheBlend時に使用。 |
+| **chunk_size** | チャンクのトークン数。デフォルト256。 |
+| **chunk_hash** | チャンクのプレフィックスハッシュ値。vLLMのsha256ベースハッシュチェーンと互換。 |
+
+## ストレージ
+
+| 用語 | 説明 |
+|------|------|
+| **StorageManager** | 複数のストレージバックエンドを階層管理。put/get要求を各バックエンドに振り分け。 |
+| **StorageBackendInterface** | ストレージバックエンドの抽象インターフェース。contains/put/get等。 |
+| **LocalCPUBackend** | CPU メモリ上のKVキャッシュストレージ（L1）。 |
+| **LocalDiskBackend** | ディスク上のKVキャッシュストレージ（L2）。 |
+| **RemoteBackend** | リモートストレージ（L3）。connector経由でRedis/S3/Valkey等に接続。 |
+| **P2PBackend** | インスタンス間のP2P KVキャッシュ転送。 |
+| **NIXLBackend** | NVIDIA NIXL経由の高速転送。 |
+| **GdsBackend** | GPUDirect Storage経由の転送。 |
+| **CachePolicy** | Eviction方針。FIFO/LRU/LFU/MRUから選択可能。 |
+| **Serde** | シリアライゼーション/デシリアライゼーション。naive（無圧縮）、CacheGen（圧縮）、KIVI等。 |
+
+## GPU連携
+
+| 用語 | 説明 |
+|------|------|
+| **GPUConnectorInterface** | GPU KVキャッシュとCPU MemoryObj間のデータ転送抽象インターフェース。to_gpu/from_gpu。 |
+| **VLLMPagedMemGPUConnectorV2** | vLLMのPaged KVキャッシュ向けGPUコネクタ。ブロック単位のKVキャッシュに対応。 |
+| **Layerwise GPUConnector** | レイヤー単位でKVキャッシュを転送するコネクタ。ジェネレータパターン使用。 |
+
+## 統合
+
+| 用語 | 説明 |
+|------|------|
+| **LMCacheConnectorV1Dynamic** | vLLMの`KVConnectorBase_V1`実装。`LMCacheConnectorV1Impl`に委譲。 |
+| **LMCacheConnectorV1Impl** | vLLM統合の実装本体（`vllm_v1_adapter.py`）。LoadSpec/SaveSpecでロード・保存を管理。 |
+| **LoadSpec** | ロード仕様。vLLMキャッシュ済みトークン数、LMCacheキャッシュ済みトークン数、ロード可否。 |
+| **SaveSpec** | 保存仕様。スキップするトークン数、保存可否。 |
+| **LookupClient** | Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。 |
+
+## CacheBlend
+
+| 用語 | 説明 |
+|------|------|
+| **CacheBlend** | 非プレフィックス部分のKVキャッシュも再利用する技術。重要トークンを再計算して品質保持。 |
+| **Blender** | CacheBlendのblending計算を実行するコンポーネント。`lmcache/v1/compute/blend/` |
+| **blend_recompute_ratios** | 再計算するトークンの割合。 |
+| **blend_special_str** | セグメント分割用セパレータ文字列。デフォルト`" # # "`。 |
+
+## 分散・マルチプロセス
+
+| 用語 | 説明 |
+|------|------|
+| **CacheController** | 複数LMCacheインスタンス間のキャッシュ状態を中央管理するコントローラ。 |
+| **LMCacheWorker** | CacheControllerと通信するワーカー。Heartbeat/Register/P2P Lookup。 |
+| **MultiProcess Server** | ZMQ IPCベースの別プロセスLMCacheサーバー。SessionManager, GPUCacheContext管理。 |
+| **BlendServer** | CacheBlend用MPサーバー。MPCacheEngine継承。 |
+| **OffloadServer** | KVキャッシュオフロード用ZMQサーバー。 |
+| **Disaggregated Prefill (PD)** | Prefill/Decode分離アーキテクチャ。NIXL経由でPD間転送。 |
+
+## 設定キー（主要）
+
+| 設定名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `chunk_size` | 256 | チャンクのトークン数 |
+| `local_cpu` | true | CPU バックエンド有効化 |
+| `max_local_cpu_size` | 5.0 (GB) | CPUストレージ上限 |
+| `local_disk` | None | ディスクパス（Noneで無効） |
+| `remote_url` | None | リモートストレージURL |
+| `remote_serde` | "naive" | リモート用Serde |
+| `use_layerwise` | false | レイヤー単位転送 |
+| `enable_blending` | false | CacheBlend有効化 |
+| `enable_p2p` | false | P2P転送有効化 |
+| `enable_pd` | false | Disaggregated Prefill |
+| `enable_controller` | false | CacheController有効化 |
+| `save_decode_cache` | false | Decodeフェーズのキャッシュも保存 |

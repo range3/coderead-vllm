@@ -60,6 +60,10 @@
 
 - [LMCache](lmcache/README.md)
 
+# LMCache: アーキテクチャ
+
+- [LMCache アーキテクチャ概要](lmcache/architecture/overview.md)
+
 # LMCache: 付録
 
 - [用語集](lmcache/glossary.md)
