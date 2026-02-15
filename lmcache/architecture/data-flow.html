@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>用語集 - コードリーディング: vLLM &amp; LMCache</title>
+        <title>データフロー - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -12,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="../favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
-        <link rel="stylesheet" href="../css/variables-8adf115d.css">
-        <link rel="stylesheet" href="../css/general-2459343d.css">
-        <link rel="stylesheet" href="../css/chrome-ae938929.css">
-        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="../theme/custom-9cb14b51.css">
+        <link rel="stylesheet" href="../../theme/custom-9cb14b51.css">
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "../";
+            const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../searchindex-27792acf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-9f076d22.js"></script>
+        <script src="../../toc-9f076d22.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -106,7 +106,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -141,7 +141,7 @@
                     <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
 
                     <div class="right-buttons">
-                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
@@ -175,150 +175,162 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="lmcache-用語集"><a class="header" href="#lmcache-用語集">LMCache 用語集</a></h1>
+                        <h1 id="データフロー"><a class="header" href="#データフロー">データフロー</a></h1>
 <blockquote>
-<p><strong>確信度</strong>: [VERIFIED]
+<p><strong>深度</strong>: [MEDIUM] / <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-16（Phase 1 セッション1）</p>
 </blockquote>
-<h2 id="コアコンセプト"><a class="header" href="#コアコンセプト">コアコンセプト</a></h2>
+<p>本ドキュメントはLMCacheのKVキャッシュ store パスを追跡する。
+retrieve パスはPhase 1 セッション2で追加予定。</p>
+<h2 id="store-パス概要"><a class="header" href="#store-パス概要">Store パス概要</a></h2>
+<p>vLLMのattentionレイヤー実行中に、KVキャッシュをGPUからCPU（および後段ストレージ）に退避するパス。
+<strong>レイヤーワイズ方式</strong>（<code>use_layerwise=True</code>）が主要パスであり、各attentionレイヤーの実行直後にそのレイヤーのKVデータを転送する。</p>
+<pre class="mermaid">sequenceDiagram
+    participant vLLM as vLLM Attention Layer
+    participant Adapter as V1Impl (adapter)
+    participant Engine as LMCacheEngine
+    participant TDB as TokenDatabase
+    participant GPU as GPUConnector
+    participant SM as StorageManager
+    participant CPU as LocalCPUBackend
+
+    Note over vLLM,Adapter: Layer 0 開始
+    vLLM-&gt;&gt;Adapter: save_kv_layer(layer_name, kv_layer, attn_metadata)
+
+    Note over Adapter: layer==0 のとき、各リクエストに対して Generator 生成
+    Adapter-&gt;&gt;Engine: store_layer(token_ids, mask, kvcaches, slot_mapping, ...)
+    activate Engine
+    Engine-&gt;&gt;TDB: process_tokens(tokens, mask)
+    TDB--&gt;&gt;Engine: [(start, end, CacheEngineKey), ...]
+    Engine-&gt;&gt;SM: batched_allocate(shape, dtype, batch_size=num_layers)
+    SM--&gt;&gt;Engine: List[MemoryObj] × num_layers
+    Engine-&gt;&gt;GPU: batched_from_gpu(memory_objs, starts, ends, ...)
+    Note over GPU: GPU Generator 初期化
+    GPU--&gt;&gt;Engine: Generator (primed)
+    Note over Engine: yield (Layer 0 の DMA 準備完了)
+    deactivate Engine
+
+    Adapter-&gt;&gt;Engine: next(generator) — Layer 0
+    activate Engine
+    Engine-&gt;&gt;GPU: next(mem_obj_generator)
+    Note over GPU: lmc_ops.single_layer_kv_transfer&lt;br/&gt;(paged GPU → buffer → pinned CPU)
+    GPU--&gt;&gt;Engine: yield
+    Engine-&gt;&gt;SM: batched_put(keys[0], memory_objs[0])
+    SM-&gt;&gt;CPU: batched_submit_put_task(keys, objs)
+    Note over CPU: hot_cache[key] = memory_obj
+    Note over Engine: yield (Layer 0 完了)
+    deactivate Engine
+
+    Note over vLLM,Adapter: Layer 1 以降も同じパターン繰り返し
+    vLLM-&gt;&gt;Adapter: save_kv_layer(...)
+    Adapter-&gt;&gt;Engine: next(generator) — Layer N
+    Note over Engine: GPU転送 → StorageManager.batched_put
+</pre>
+
+<h2 id="各コンポーネントの役割"><a class="header" href="#各コンポーネントの役割">各コンポーネントの役割</a></h2>
+<h3 id="1-lmcacheconnectorv1impladapter"><a class="header" href="#1-lmcacheconnectorv1impladapter">1. LMCacheConnectorV1Impl（adapter）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:964</code> (<code>save_kv_layer</code>)</p>
+<p>vLLMの<code>KVConnectorBase_V1.save_kv_layer()</code>フックから呼ばれるアダプタ。
+<code>LMCacheConnectorV1Dynamic</code>は純粋な委譲シェルであり、実装は<code>V1Impl</code>に集約。</p>
+<p><strong>Layer 0での処理</strong>:</p>
+<ol>
+<li><code>connector_metadata.requests</code>を走査し、<code>save_spec.can_save</code>がTrueのリクエストを処理</li>
+<li><code>skip_leading_tokens</code>をLMCacheのchunk_size（256）の倍数に切り下げてマスク境界を整合</li>
+<li><code>store_mask</code>を構築：プレフィックス部分=False、新規部分=True</li>
+<li><code>LMCacheEngine.store_layer()</code>を呼んでGeneratorを取得、<code>self.layerwise_storers</code>に追加</li>
+<li>最初のリクエストのみ<code>sync=True</code>でCUDAストリームを同期</li>
+</ol>
+<p><strong>全レイヤー共通</strong>: <code>self.layerwise_storers</code>内の全Generatorを<code>next()</code>で1ステップ進める。</p>
+<h3 id="2-lmcacheenginestore_layer"><a class="header" href="#2-lmcacheenginestore_layer">2. LMCacheEngine.store_layer()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:528</code></p>
+<p><strong>Generator関数</strong>であり、呼び出し側（adapter）が1レイヤーごとに<code>next()</code>で進める。</p>
+<p><strong>初期化フェーズ</strong>（最初のyieldまで）:</p>
+<ol>
+<li><code>TokenDatabase.process_tokens()</code>でトークン列をチャンク分割し、各チャンクのCacheEngineKeyを取得</li>
+<li><code>StorageManager.contains()</code>で既存チャンクをスキップ（layer 0のキーで判定）</li>
+<li><code>StorageManager.batched_allocate()</code>で各チャンク×全レイヤー分のMemoryObjを確保</li>
+<li>チャンク×レイヤー → レイヤー×チャンクに転置</li>
+<li><code>GPUConnector.batched_from_gpu()</code>でGPU転送Generatorを生成・prime</li>
+</ol>
+<p><strong>レイヤーループ</strong>（<code>num_layers</code>回yield）:</p>
+<pre><code>yield → next(mem_obj_generator) → batched_put(keys[layer_id], memory_objs[layer_id])
+</code></pre>
+<p>各レイヤーで「GPU→CPU DMA」→「ストレージ書き込み」を実行。</p>
+<p><strong>重要</strong>: メモリ確保失敗時（<code>batched_allocate</code>がNone）は<code>break</code>で即座にstore中止。yieldだけ行ってストレージには書かない。</p>
+<h3 id="3-chunkedtokendatabaseprocess_tokens"><a class="header" href="#3-chunkedtokendatabaseprocess_tokens">3. ChunkedTokenDatabase.process_tokens()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/token_database.py:309</code></p>
+<p>トークン列をチャンク（デフォルト256トークン）に分割し、プレフィックスチェーンハッシュを計算。</p>
+<p><strong>ハッシュアルゴリズム</strong>: vLLMと<strong>完全に同一</strong>。</p>
+<ul>
+<li><code>vllm.utils.hashing.get_hash_fn_by_name("sha256_cbor")</code>を直接利用</li>
+<li>NONE_HASHも<code>vllm.v1.core.kv_cache_utils.NONE_HASH</code>から取得</li>
+<li>ハッシュ入力: <code>(prefix_hash, token_tuple, extra_keys)</code></li>
+</ul>
+<p><strong>マスク処理</strong>: <code>mask</code>のFalse数（=already-cached prefix長）がchunk_sizeの倍数であることを検証。False区間のチャンクはスキップ。</p>
+<p><strong>CacheEngineKey生成</strong>: <code>_make_key_by_hash()</code>で<code>(model_name, world_size, worker_id, chunk_hash, kv_dtype, request_configs)</code>の6タプルを構築。その後<code>split_layers()</code>でレイヤーIDを付与した<code>LayerCacheEngineKey</code>に分割。</p>
+<h3 id="4-vllmpagedmemlayerwisegpuconnectorbatched_from_gpu"><a class="header" href="#4-vllmpagedmemlayerwisegpuconnectorbatched_from_gpu">4. VLLMPagedMemLayerwiseGPUConnector.batched_from_gpu()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:1212</code></p>
+<p>GPU上のページドKVキャッシュからCPU上のMemoryObjにデータを転送するGenerator関数。</p>
+<p><strong>2段転送パス</strong>（<code>use_gpu=True</code>時）:</p>
+<ol>
+<li><strong>Paged GPU → 中間GPUバッファ</strong>: <code>lmc_ops.single_layer_kv_transfer()</code>（CUDAカーネル）でslot_mappingに基づきscatter→gatherコピー</li>
+<li><strong>GPUバッファ → Pinned CPU</strong>: <code>memory_obj.tensor.copy_(..., non_blocking=True)</code>で非同期DMA</li>
+</ol>
+<p><strong>直接転送パス</strong>（<code>use_gpu=False</code>時）:</p>
+<ul>
+<li><code>lmc_ops.single_layer_kv_transfer()</code>でpaged GPUから直接pinned CPUへ（チャンク単位）</li>
+</ul>
+<p><strong>CUDAストリーム</strong>: <code>self.store_stream</code>（専用ストリーム）を使用し、計算ストリームとオーバーラップ可能。<code>sync=True</code>の場合のみ<code>store_stream.synchronize()</code>で同期。</p>
+<p><strong>出力形式</strong>: <code>MemoryFormat.KV_T2D</code> = <code>[num_tokens, 2, hidden_dim]</code>（token-major、K/Vインターリーブ）。MLAの場合は<code>KV_MLA_FMT</code> = <code>[num_tokens, hidden_dim]</code>。</p>
+<h3 id="5-storagemanagerbatched_put"><a class="header" href="#5-storagemanagerbatched_put">5. StorageManager.batched_put()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:388</code></p>
+<p>登録された全ストレージバックエンドにデータを配布するディスパッチャ。</p>
+<p><strong>処理フロー</strong>:</p>
+<ol>
+<li><code>allocator_backend</code>（通常LocalCPUBackend）の元データをそのまま利用</li>
+<li><code>OrderedDict</code>順に全バックエンド（L1→L2→L3）を走査</li>
+<li>異なるallocatorを持つバックエンドには<code>allocate_and_copy_objects()</code>で新たにメモリ確保＋コピー</li>
+<li>各バックエンドの<code>batched_submit_put_task()</code>を呼び出し</li>
+<li>最後にref_countをデクリメント</li>
+</ol>
+<p><strong>注意</strong>: <code>put()</code>メソッドは<strong>非推奨</strong>（<code>RuntimeError</code>を投げる）。<code>batched_put()</code>が唯一のエントリポイント。</p>
+<h3 id="6-localcpubackendsubmit_put_task"><a class="header" href="#6-localcpubackendsubmit_put_task">6. LocalCPUBackend.submit_put_task()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:141</code></p>
+<p><strong>同期実行</strong>（バックグラウンドスレッドなし）。<code>cpu_lock</code>下で以下を実行:</p>
+<ol>
+<li>既存キーの重複チェック</li>
+<li><code>memory_obj.ref_count_up()</code>でrefcount増加</li>
+<li><code>hot_cache[key] = memory_obj</code>で保存</li>
+<li><code>cache_policy.update_on_put(key)</code>でEvictionポリシー更新（LRU: OrderedDictの末尾に移動、等）</li>
+<li>必要に応じてcontrollerへADMITメッセージ送信（<code>batched_msg_sender</code>経由）</li>
+</ol>
+<h2 id="パイプライン動作の詳細"><a class="header" href="#パイプライン動作の詳細">パイプライン動作の詳細</a></h2>
+<p>store_layerとbatched_from_gpuは2つの入れ子Generatorで<strong>パイプライン動作</strong>する:</p>
+<pre><code>store_layer Generator:     [初期化] → yield → [L0転送+保存] → yield → [L1転送+保存] → yield → ...
+batched_from_gpu Generator: [初期化] → yield → [L0 DMA]     → yield → [L1 DMA]     → yield → ...
+</code></pre>
+<p><strong>タイミング</strong>（<code>num_layers=N</code>の場合）:</p>
+<ul>
+<li><code>store_layer</code>は<code>N+1</code>回yield（初期化1回 + レイヤーN回）</li>
+<li><code>batched_from_gpu</code>は<code>N+1</code>回yield（初期化prime + レイヤーN回）</li>
+<li>adapterは合計<code>N</code>回<code>next()</code>を呼ぶ（各attentionレイヤー実行後）</li>
+</ul>
+<p><strong>パイプラインのステップ</strong>: Layer Lの<code>next()</code>呼び出しで、<code>batched_from_gpu</code>がLayer LのDMAを実行し、<code>store_layer</code>がLayer LのStorageManager書き込みを行う。つまり<strong>DMAとストレージ書き込みは同一レイヤーで連続実行</strong>される。</p>
+<h2 id="データ構造"><a class="header" href="#データ構造">データ構造</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>用語</th><th>説明</th></tr>
+<tr><th>構造</th><th>型</th><th>説明</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>LMCacheEngine</strong></td><td>KVキャッシュのstore/retrieve/prefetchを統合するメインエンジン。<code>lmcache/v1/cache_engine.py</code></td></tr>
-<tr><td><strong>LMCacheManager</strong></td><td>LMCacheの内部コンポーネント（Engine, LookupClient, OffloadServer等）のライフサイクル管理。<code>lmcache/v1/manager.py</code></td></tr>
-<tr><td><strong>CacheEngineKey</strong></td><td>KVキャッシュチャンクの一意識別子。(model_name, world_size, worker_id, chunk_hash, dtype, request_configs)の6タプル。<code>lmcache/utils.py:333</code></td></tr>
-<tr><td><strong>LayerCacheEngineKey</strong></td><td>CacheEngineKey + layer_id。レイヤー単位保存時のキー。<code>split_layers()</code>で生成。<code>lmcache/utils.py:392</code></td></tr>
-<tr><td><strong>MemoryObj</strong></td><td>KVキャッシュデータを保持する抽象メモリオブジェクト。フォーマット情報とテンソルデータを包含。<code>lmcache/v1/memory_management.py</code></td></tr>
-<tr><td><strong>MemoryFormat</strong></td><td>KVキャッシュのメモリレイアウト種別。KV_2LTD, KV_T2D, KV_2TD, BINARY, KV_MLA_FMT等。</td></tr>
-<tr><td><strong>LMCacheMetadata</strong></td><td>モデル名、world_size、worker_id、kv_dtype、kv_shape等のメタ情報。サービングエンジンから抽出。</td></tr>
-<tr><td><strong>LMCacheEngineConfig</strong></td><td>YAML/環境変数ベースの設定。chunk_size, ストレージ設定, blend設定, P2P設定等。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="トークン処理"><a class="header" href="#トークン処理">トークン処理</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>TokenDatabase</strong></td><td>トークン列をチャンクキー列に変換する抽象基底クラス。</td></tr>
-<tr><td><strong>ChunkedTokenDatabase</strong></td><td>固定サイズ（default 256トークン）チャンクでプレフィックスハッシュを計算。標準の実装。</td></tr>
-<tr><td><strong>SegmentTokenDatabase</strong></td><td>セパレータベースでセグメント分割。CacheBlend時に使用。</td></tr>
-<tr><td><strong>chunk_size</strong></td><td>チャンクのトークン数。デフォルト256。</td></tr>
-<tr><td><strong>chunk_hash</strong></td><td>チャンクのプレフィックスハッシュ値。vLLMの<code>sha256_cbor</code>ハッシュ関数を直接利用（完全互換）。</td></tr>
-<tr><td><strong>NONE_HASH</strong></td><td>プレフィックスハッシュチェーンの初期値。vLLMの<code>kv_cache_utils.init_none_hash()</code>で初期化。</td></tr>
-<tr><td><strong>store_mask</strong></td><td>store時のマスク。False=already-cached prefix、True=新規トークン。False数はchunk_sizeの倍数必須。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="ストレージ"><a class="header" href="#ストレージ">ストレージ</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>StorageManager</strong></td><td>複数のストレージバックエンドを階層管理。put/get要求を各バックエンドに振り分け。</td></tr>
-<tr><td><strong>StorageBackendInterface</strong></td><td>ストレージバックエンドの抽象インターフェース。contains/put/get等。</td></tr>
-<tr><td><strong>LocalCPUBackend</strong></td><td>CPU メモリ上のKVキャッシュストレージ（L1）。hot_cache（OrderedDict）で管理。同期書き込み。</td></tr>
-<tr><td><strong>hot_cache</strong></td><td>LocalCPUBackendの<code>OrderedDict[CacheEngineKey, MemoryObj]</code>。CachePolicyでEviction管理。</td></tr>
-<tr><td><strong>allocator_backend</strong></td><td>MemoryObj確保を担当するバックエンド。通常はLocalCPUBackend。</td></tr>
-<tr><td><strong>LocalDiskBackend</strong></td><td>ディスク上のKVキャッシュストレージ（L2）。</td></tr>
-<tr><td><strong>RemoteBackend</strong></td><td>リモートストレージ（L3）。connector経由でRedis/S3/Valkey等に接続。</td></tr>
-<tr><td><strong>P2PBackend</strong></td><td>インスタンス間のP2P KVキャッシュ転送。</td></tr>
-<tr><td><strong>NIXLBackend</strong></td><td>NVIDIA NIXL経由の高速転送。</td></tr>
-<tr><td><strong>GdsBackend</strong></td><td>GPUDirect Storage経由の転送。</td></tr>
-<tr><td><strong>CachePolicy</strong></td><td>Eviction方針。FIFO/LRU/LFU/MRUから選択可能。</td></tr>
-<tr><td><strong>Serde</strong></td><td>シリアライゼーション/デシリアライゼーション。naive（無圧縮）、CacheGen（圧縮）、KIVI等。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="gpu連携"><a class="header" href="#gpu連携">GPU連携</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>GPUConnectorInterface</strong></td><td>GPU KVキャッシュとCPU MemoryObj間のデータ転送抽象インターフェース。to_gpu/from_gpu。</td></tr>
-<tr><td><strong>VLLMPagedMemGPUConnectorV2</strong></td><td>vLLMのPaged KVキャッシュ向けGPUコネクタ（非レイヤーワイズ）。全レイヤー一括転送。</td></tr>
-<tr><td><strong>VLLMPagedMemLayerwiseGPUConnector</strong></td><td>レイヤー単位でKVキャッシュを転送するコネクタ。ジェネレータパターン使用。主要パス。</td></tr>
-<tr><td><strong>lmc_ops.single_layer_kv_transfer</strong></td><td>CUDAカーネル。vLLMのページドKVキャッシュからslot_mapping経由でデータを抽出/書き戻し。</td></tr>
-<tr><td><strong>slot_mapping</strong></td><td>トークン位置→vLLMページドメモリのflat slot位置へのマッピング。GPU Tensor。</td></tr>
-<tr><td><strong>store_stream</strong></td><td>GPU→CPU転送専用CUDAストリーム。メイン計算ストリームとオーバーラップ可能。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="統合"><a class="header" href="#統合">統合</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>LMCacheConnectorV1Dynamic</strong></td><td>vLLMの<code>KVConnectorBase_V1</code>実装。<code>LMCacheConnectorV1Impl</code>に委譲。</td></tr>
-<tr><td><strong>LMCacheConnectorV1Impl</strong></td><td>vLLM統合の実装本体（<code>vllm_v1_adapter.py</code>）。LoadSpec/SaveSpecでロード・保存を管理。</td></tr>
-<tr><td><strong>LoadSpec</strong></td><td>ロード仕様。vLLMキャッシュ済みトークン数、LMCacheキャッシュ済みトークン数、ロード可否。</td></tr>
-<tr><td><strong>SaveSpec</strong></td><td>保存仕様。<code>skip_leading_tokens</code>（キャッシュ済みプレフィックス長）、<code>can_save</code>（保存可否）。</td></tr>
-<tr><td><strong>ConnectorMetadata</strong></td><td>Scheduler→Worker間で渡されるメタデータ。各リクエストのtoken_ids, slot_mapping, LoadSpec, SaveSpecを含む。</td></tr>
-<tr><td><strong>kv_role</strong></td><td><code>"kv_both"</code>（default）/<code>"kv_producer"</code>/<code>"kv_consumer"</code>。producer時はskip_leading_tokens=0。</td></tr>
-<tr><td><strong>LookupClient</strong></td><td>Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="cacheblend"><a class="header" href="#cacheblend">CacheBlend</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>CacheBlend</strong></td><td>非プレフィックス部分のKVキャッシュも再利用する技術。重要トークンを再計算して品質保持。</td></tr>
-<tr><td><strong>Blender</strong></td><td>CacheBlendのblending計算を実行するコンポーネント。<code>lmcache/v1/compute/blend/</code></td></tr>
-<tr><td><strong>blend_recompute_ratios</strong></td><td>再計算するトークンの割合。</td></tr>
-<tr><td><strong>blend_special_str</strong></td><td>セグメント分割用セパレータ文字列。デフォルト<code>" # # "</code>。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="分散マルチプロセス"><a class="header" href="#分散マルチプロセス">分散・マルチプロセス</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>用語</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><strong>CacheController</strong></td><td>複数LMCacheインスタンス間のキャッシュ状態を中央管理するコントローラ。</td></tr>
-<tr><td><strong>LMCacheWorker</strong></td><td>CacheControllerと通信するワーカー。Heartbeat/Register/P2P Lookup。</td></tr>
-<tr><td><strong>MultiProcess Server</strong></td><td>ZMQ IPCベースの別プロセスLMCacheサーバー。SessionManager, GPUCacheContext管理。</td></tr>
-<tr><td><strong>BlendServer</strong></td><td>CacheBlend用MPサーバー。MPCacheEngine継承。</td></tr>
-<tr><td><strong>OffloadServer</strong></td><td>KVキャッシュオフロード用ZMQサーバー。</td></tr>
-<tr><td><strong>Disaggregated Prefill (PD)</strong></td><td>Prefill/Decode分離アーキテクチャ。NIXL経由でPD間転送。</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="設定キー主要"><a class="header" href="#設定キー主要">設定キー（主要）</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>設定名</th><th>デフォルト</th><th>説明</th></tr>
-</thead>
-<tbody>
-<tr><td><code>chunk_size</code></td><td>256</td><td>チャンクのトークン数</td></tr>
-<tr><td><code>local_cpu</code></td><td>true</td><td>CPU バックエンド有効化</td></tr>
-<tr><td><code>max_local_cpu_size</code></td><td>5.0 (GB)</td><td>CPUストレージ上限</td></tr>
-<tr><td><code>local_disk</code></td><td>None</td><td>ディスクパス（Noneで無効）</td></tr>
-<tr><td><code>remote_url</code></td><td>None</td><td>リモートストレージURL</td></tr>
-<tr><td><code>remote_serde</code></td><td>“naive”</td><td>リモート用Serde</td></tr>
-<tr><td><code>use_layerwise</code></td><td>false</td><td>レイヤー単位転送</td></tr>
-<tr><td><code>enable_blending</code></td><td>false</td><td>CacheBlend有効化</td></tr>
-<tr><td><code>enable_p2p</code></td><td>false</td><td>P2P転送有効化</td></tr>
-<tr><td><code>enable_pd</code></td><td>false</td><td>Disaggregated Prefill</td></tr>
-<tr><td><code>enable_controller</code></td><td>false</td><td>CacheController有効化</td></tr>
-<tr><td><code>save_decode_cache</code></td><td>false</td><td>Decodeフェーズのキャッシュも保存</td></tr>
+<tr><td>CacheEngineKey</td><td><code>(model_name, world_size, worker_id, chunk_hash, kv_dtype, request_configs)</code></td><td>チャンク単位のキー（レイヤー横断）</td></tr>
+<tr><td>LayerCacheEngineKey</td><td>CacheEngineKey + layer_id</td><td>レイヤー単位のキー</td></tr>
+<tr><td>MemoryObj</td><td>pinned CPU tensor wrapper</td><td>ref_count管理、MemoryObjMetadata付き</td></tr>
+<tr><td>MemoryFormat.KV_T2D</td><td><code>[num_tokens, 2, hidden_dim]</code></td><td>レイヤーワイズ形式（token-major）</td></tr>
+<tr><td>MemoryFormat.KV_MLA_FMT</td><td><code>[num_tokens, hidden_dim]</code></td><td>MLA形式（K/V統合）</td></tr>
+<tr><td>store_mask</td><td><code>torch.Tensor[bool]</code></td><td>False=キャッシュ済みprefix、True=新規トークン</td></tr>
+<tr><td>slot_mapping</td><td><code>torch.Tensor[long]</code></td><td>トークン位置→vLLMページドメモリのflat slot</td></tr>
+<tr><td>hot_cache</td><td><code>OrderedDict[CacheEngineKey, MemoryObj]</code></td><td>L1 CPUキャッシュ（Evictionポリシー付き）</td></tr>
 </tbody>
 </table>
 </div>
@@ -327,10 +339,13 @@
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../lmcache/components/vllm-integration/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../lmcache/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
+                            <a rel="next prefetch" href="../../lmcache/architecture/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -338,10 +353,13 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../lmcache/components/vllm-integration/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../lmcache/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
+                    <a rel="next prefetch" href="../../lmcache/architecture/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
             </nav>
 
         </div>
@@ -359,17 +377,17 @@
         </script>
 
 
-        <script src="../elasticlunr-ef4e11c1.min.js"></script>
-        <script src="../mark-09e88c2c.min.js"></script>
-        <script src="../searcher-c2a407aa.js"></script>
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
 
-        <script src="../clipboard-1626706a.min.js"></script>
-        <script src="../highlight-abc7f01d.js"></script>
-        <script src="../book-a0b12cfe.js"></script>
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="../mermaid-eefea253.min.js"></script>
-        <script src="../mermaid-init-ccf746f1.js"></script>
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
 
 
 
