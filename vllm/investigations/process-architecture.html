@@ -1,0 +1,612 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>プロセスアーキテクチャ（TP&#x3D;2構成） - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="プロセスアーキテクチャtp2構成"><a class="header" href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p>vLLMをGPU2枚・TP=2で起動した場合のプロセス構成、コンポーネント配置、プロセス間通信メカニズムを調査した。</p>
+<h2 id="1-プロセス構成合計4プロセス"><a class="header" href="#1-プロセス構成合計4プロセス">1. プロセス構成（合計4プロセス）</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>プロセス名</th><th>生成元</th><th>含まれるコンポーネント</th></tr>
+</thead>
+<tbody>
+<tr><td>Frontend（メインプロセス）</td><td>ユーザー起動</td><td>AsyncLLM, InputProcessor, EngineCoreClient, OutputProcessor</td></tr>
+<tr><td>EngineCore (<code>EngineCore_DP0</code>)</td><td>Frontend (<code>mp.Process</code>)</td><td>EngineCore, Scheduler, KVCacheManager, MultiprocExecutor</td></tr>
+<tr><td>VllmWorker-0</td><td>EngineCore (<code>mp.Process</code>)</td><td>Worker, GPUModelRunner（GPU 0）</td></tr>
+<tr><td>VllmWorker-1</td><td>EngineCore (<code>mp.Process</code>)</td><td>Worker, GPUModelRunner（GPU 1）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:493-507</code> (CoreEngineProcManager)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:147-160</code> (WorkerProc起動)</p>
+<h3 id="コンポーネントとプロセスの対応図"><a class="header" href="#コンポーネントとプロセスの対応図">コンポーネントとプロセスの対応図</a></h3>
+<pre><code>┌─ Frontend Process ─────────────────────────────────────┐
+│  AsyncLLM ─→ InputProcessor                            │
+│  EngineCoreClient (ZMQ ROUTER/PULL)                    │
+│  OutputProcessor ←─ Detokenizer                        │
+└──────────────────────────┬─────────────────────────────┘
+                           │ ZMQ (msgpack)
+                           ▼
+┌─ EngineCore Process ─────────────────────────────────────┐
+│  EngineCore.step()                                       │
+│  ├─ Scheduler ─→ KVCacheManager                         │
+│  └─ MultiprocExecutor                                    │
+│       ├─ rpc_broadcast_mq (SharedMemory → 全Worker)      │
+│       └─ worker_response_mq × 2 (各Worker → Executor)   │
+└──────────┬──────────────────────────────┬────────────────┘
+           │ SharedMemory MQ              │ SharedMemory MQ
+           ▼                              ▼
+┌─ Worker-0 Process ──┐  ┌─ Worker-1 Process ──┐
+│  Worker              │  │  Worker              │
+│  GPUModelRunner      │  │  GPUModelRunner      │
+│  (GPU 0, TP rank 0)  │  │  (GPU 1, TP rank 1)  │
+└──────────┬───────────┘  └──────────┬───────────┘
+           │         NCCL            │
+           └─────────────────────────┘
+             (NVLink / PCIe 直接通信)
+</code></pre>
+<p><strong>注意点</strong>:</p>
+<ul>
+<li>Scheduler、KVCacheManagerは<strong>EngineCoreプロセス内</strong>で動作し、独立プロセスではない</li>
+<li>OutputProcessorは<strong>Frontendプロセス内</strong>で動作する（バックエンドではない）</li>
+<li>MultiprocExecutorはEngineCoreプロセス内に存在し、Workerプロセスへの指令管理を行う</li>
+</ul>
+<h2 id="2-プロセス間通信メカニズム"><a class="header" href="#2-プロセス間通信メカニズム">2. プロセス間通信メカニズム</a></h2>
+<h3 id="21-frontend--enginecore-zmq-over-tcp-loopback"><a class="header" href="#21-frontend--enginecore-zmq-over-tcp-loopback">2.1 Frontend ↔ EngineCore: ZMQ over TCP loopback</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>プロトコル</td><td>ZMQ over TCP (<code>127.0.0.1:&lt;random_port&gt;</code>)</td></tr>
+<tr><td>ソケット型</td><td>Frontend: ROUTER(送信) + PULL(受信), EngineCore: DEALER(受信)</td></tr>
+<tr><td>シリアライゼーション</td><td>msgpack（<code>msgspec.Struct(array_like)</code> 対応）</td></tr>
+<tr><td>スレッドモデル</td><td>バックグラウンドスレッドでシリアライゼーション/デシリアライゼーション</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:510-515</code> (ZMQソケット設定)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:877-950</code> (EngineCoreProc._perform_handshake)</p>
+<h3 id="22-enginecore--workers-sharedmemory-messagequeue"><a class="header" href="#22-enginecore--workers-sharedmemory-messagequeue">2.2 EngineCore ↔ Workers: SharedMemory MessageQueue</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>プロトコル</td><td>共有メモリ（ShmRingBuffer） + ZMQ PUB/SUB（オーバーフロー時）</td></tr>
+<tr><td>キュー</td><td>rpc_broadcast_mq（1対多）+ worker_response_mq（各Worker→Executor）</td></tr>
+<tr><td>シリアライゼーション</td><td>pickle（protocol 5, out-of-band buffers対応）</td></tr>
+<tr><td>同期方式</td><td>ロックフリー。メモリフェンス（<code>threading.Lock</code> acquire/release, ~20ns）のみ</td></tr>
+<tr><td>バッファサイズ</td><td>デフォルト24MiB/チャンク × 10チャンク</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:127</code> (ShmRingBuffer)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272</code> (MessageQueue)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:131-136</code> (rpc_broadcast_mq生成)</p>
+<h4 id="shmringbuffer-メモリレイアウト"><a class="header" href="#shmringbuffer-メモリレイアウト">ShmRingBuffer メモリレイアウト</a></h4>
+<pre><code>┌─────────────────────────────────┬──────────────────────────────────────┐
+│ data: chunk0 | chunk1 | ... | chunkN │ metadata: [written|r0|r1|...|rN] × N │
+│ max_chunks × max_chunk_bytes (24MiB) │ max_chunks × (1 + n_reader) bytes    │
+└─────────────────────────────────┴──────────────────────────────────────┘
+</code></pre>
+<p>メタデータの状態遷移:</p>
+<ul>
+<li><code>0???...???</code>: 未書き込み → 書き込み可</li>
+<li><code>1000...000</code>: 書き込み直後 → 全reader読み取り可</li>
+<li><code>1???...???</code>: 一部readerが読み取り済み</li>
+<li><code>1111...111</code>: 全reader読み取り済み → 書き込み可（再利用）</li>
+</ul>
+<p><strong>オーバーフロー処理</strong>: データが24MiBを超える場合、ZMQ PUB/SUBソケット（IPC）経由で転送する。ローカルではXPUB/SUBソケット、リモート（マルチノード時）ではTCPソケットを使用。</p>
+<h4 id="messagequeue-の詳細設計-deep-verified"><a class="header" href="#messagequeue-の詳細設計-deep-verified">MessageQueue の詳細設計 [DEEP] [VERIFIED]</a></h4>
+<p>MessageQueueは<code>ShmRingBuffer</code>をラップし、pickle protocol 5のout-of-bandバッファ対応のシリアライゼーション層を提供する。</p>
+<p><strong>ロール分離（Writer / Local Reader / Remote Reader）</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>判定条件</th><th>通信手段</th></tr>
+</thead>
+<tbody>
+<tr><td>Writer</td><td>コンストラクタで生成した側</td><td>ShmRingBuffer + ZMQ XPUB</td></tr>
+<tr><td>Local Reader</td><td><code>rank in handle.local_reader_ranks</code></td><td>ShmRingBuffer + ZMQ SUB</td></tr>
+<tr><td>Remote Reader</td><td>上記以外</td><td>ZMQ SUB のみ</td></tr>
+</tbody>
+</table>
+</div>
+<p>Writer側のコンストラクタでShmRingBufferとZMQソケット（XPUB）を両方作成する。Local Readerは共有メモリ経由で受信し、オーバーフロー時のみZMQ SUBにフォールバック。Remote Readerは常にZMQ SUBのみで受信する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:272-354</code> (MessageQueue.<strong>init</strong> / create_from_handle)</p>
+<p><strong>enqueue() のデータフォーマット</strong>:</p>
+<pre><code>ShmRingBuffer チャンク内のバイトレイアウト:
++------+-------------------+--------------------+--------------------+-----+
+| [0]  | [1:3]             | [3:7] [7:7+L0]     | [7+L0:11+L0] ...  | ... |
+| flag | buf_count (2byte) | len0+main_pickle   | len1+oob_buffer1   | ... |
++------+-------------------+--------------------+--------------------+-----+
+  flag: 0=通常, 1=オーバーフロー（ZMQ経由で後続送信）
+</code></pre>
+<ul>
+<li><strong>pickle protocol 5 + out-of-band buffers</strong>: <code>buffer_callback</code>でサイズ判定。1MiB未満のバッファはインライン化（main pickle内に含む）、1MiB以上はoob bufferとして別管理</li>
+<li><strong>オーバーフロー判定</strong>: <code>total_bytes + len(main_pickle) &gt;= max_chunk_bytes</code>（デフォルト24MiB）の場合、ShmRingBufferにはflag=1のみ書き込み、実データはZMQ <code>send_multipart</code>で送信</li>
+<li>Remote Readerへは常に<code>send_multipart</code>で送信（ShmRingBufferにアクセスできないため）</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:571-612</code> (enqueue)</p>
+<p><strong>dequeue() のフロー</strong>:</p>
+<ol>
+<li><code>acquire_read()</code>でShmRingBufferからチャンクを取得</li>
+<li>flag=0（通常）: チャンクからbuf_count→各バッファ長→バッファを順次読み出し、<code>pickle.loads(main, buffers=oob_list)</code>でデシリアライズ</li>
+<li>flag=1（オーバーフロー）: <code>acquire_read()</code>のコンテキストを<strong>抜けてから</strong>（readフラグ設定後）、ZMQ SUBソケット経由で<code>recv_multipart</code></li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:614-640</code> (dequeue)</p>
+<p><strong>acquire_write() / acquire_read() の同期プロトコル</strong>:</p>
+<p>Writer:</p>
+<ol>
+<li>メモリフェンスで最新のメタデータを読む</li>
+<li><code>written_flag=0</code>（未書き込み）または全readerが読み済み（<code>read_count == n_reader</code>）のチャンクを探す</li>
+<li><code>written_flag</code>を0にリセット → データ書き込み → 全readerフラグを0にリセット → <strong>メモリフェンス</strong> → <code>written_flag</code>を1に → <strong>メモリフェンス</strong></li>
+<li>フラグ設定順序が重要: 先にreaderフラグをリセット（case 1維持）→最後にwritten=1（case 2へ遷移）。逆順だとcase 3を経由し、readerが不整合なデータを読む危険</li>
+</ol>
+<p>Reader:</p>
+<ol>
+<li>メモリフェンスで最新のメタデータを読む</li>
+<li><code>written_flag=1</code>かつ自分の<code>read_flag=0</code>のチャンクを探す</li>
+<li>データ読み取り → 自分の<code>read_flag</code>を1に → <strong>メモリフェンス</strong></li>
+</ol>
+<p><strong>SpinTimer / SpinSleepTimer</strong>: Readerのスピン待ち戦略。デフォルトは<code>sched_yield()</code>（CPU譲渡）。<code>VLLM_SLEEP_WHEN_IDLE=1</code>時は3秒間アクティビティがないと100msスリープに移行し、CPU消費を削減する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:438-504</code> (acquire_write)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:506-569</code> (acquire_read)</p>
+<p><strong>wait_until_ready() ハンドシェイク</strong>:</p>
+<p>Writer→各ReaderへZMQ <code>XPUB/SUB</code>経由でREADYメッセージを交換する集合操作。ShmRingBuffer自体にはハンドシェイクがないため、ZMQの<code>XPUB_VERBOSE</code>（全サブスクリプションメッセージ受信）を利用してReader接続完了を確認する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:405-436</code> (wait_until_ready)</p>
+<h4 id="collective_rpc-の動作フロー"><a class="header" href="#collective_rpc-の動作フロー">collective_rpc の動作フロー</a></h4>
+<pre><code>MultiprocExecutor.collective_rpc("execute_model", args=(scheduler_output,))
+  │
+  ├─ rpc_broadcast_mq.enqueue((method, args, kwargs, output_rank))
+  │   → pickle → ShmRingBuffer書き込み → メモリフェンス
+  │
+  ├─ Worker-0: rpc_broadcast_mq.dequeue() → Worker.execute_model()
+  │   → worker_response_mq.enqueue((SUCCESS, output))
+  │
+  ├─ Worker-1: rpc_broadcast_mq.dequeue() → Worker.execute_model()
+  │   → worker_response_mq.enqueue((SUCCESS, output))
+  │
+  └─ Executor: response_mqs[0].dequeue() → output[0] を返却
+      （output_rank=0 の場合、rank 0 の結果のみ返す）
+</code></pre>
+<h3 id="24-worker--enginecore-結果返却パス-deep-verified"><a class="header" href="#24-worker--enginecore-結果返却パス-deep-verified">2.4 Worker → EngineCore 結果返却パス [DEEP] [VERIFIED]</a></h3>
+<h4 id="response_mq-の構成"><a class="header" href="#response_mq-の構成">response_mq の構成</a></h4>
+<p>各Workerが<strong>自分専用のwriter側MessageQueue</strong>（<code>worker_response_mq</code>）を持ち、EngineCore側のMultiprocExecutorがそのreaderになる。rpc_broadcast_mq（1→多ブロードキャスト）とは逆方向の<strong>多→1通信</strong>だが、各MQは1 writer : 1 readerの構造。</p>
+<pre><code>┌─ EngineCore (MultiprocExecutor) ─────────────────────────┐
+│                                                           │
+│  response_mqs[0] ◄── reader ─── worker_response_mq (W0)  │
+│  response_mqs[1] ◄── reader ─── worker_response_mq (W1)  │
+│                                                           │
+│  ※ 各MQは独立したShmRingBuffer (n_reader=1, n_local=1)    │
+└───────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:508-509</code> (Worker側: <code>MessageQueue(1, 1)</code>)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:172-185</code> (Executor側: response_mqs構築)</p>
+<h4 id="response_mq-のハンドシェイク"><a class="header" href="#response_mq-のハンドシェイク">response_mq のハンドシェイク</a></h4>
+<ol>
+<li>Worker側: <code>__init__</code>内で<code>MessageQueue(1, 1)</code>を生成（writer兼ShmRingBuffer所有者）</li>
+<li>Worker側: READYメッセージと共に<code>worker_response_mq.export_handle()</code>をPipe経由でExecutor側に送信</li>
+<li>Executor側: <code>wait_for_ready()</code>内でPipeからhandleを受信し、<code>MessageQueue.create_from_handle(handle, 0)</code>でreader側MQを構築</li>
+<li>双方: <code>wait_until_ready()</code>でZMQ XPUB/SUBハンドシェイク完了</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:757-770</code> (READY送信+ハンドシェイク)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:628-646</code> (wait_for_response_handle_ready)</p>
+<h4 id="結果返却の詳細フロー"><a class="header" href="#結果返却の詳細フロー">結果返却の詳細フロー</a></h4>
+<pre><code>Worker.worker_busy_loop()
+  │
+  ├─ rpc_broadcast_mq.dequeue()  ← (method, args, kwargs, output_rank) を受信
+  │
+  ├─ func = getattr(self.worker, method)  ← "execute_model" 等
+  │
+  ├─ output = func(*args, **kwargs)  ← Worker.execute_model() 実行
+  │
+  ├─ if output_rank is None or self.rank == output_rank:
+  │     ├─ [sync路] enqueue_output(output)
+  │     │     ├─ isinstance(AsyncModelRunnerOutput) → .get_output()  ← GPU→CPU転送待ち
+  │     │     ├─ isinstance(Exception) → (FAILURE, str(e))
+  │     │     └─ else → (SUCCESS, output)
+  │     │     └─ worker_response_mq.enqueue(result)
+  │     │
+  │     └─ [async路] async_output_queue.put(output)
+  │           └─ async_output_busy_loop (別スレッド)
+  │                 └─ enqueue_output(output)  ← 同上
+  │
+  └─ (output_rank != self.rank の場合は何も返さない)
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:814-843</code> (enqueue_output / handle_output / async_output_busy_loop)</p>
+<h4 id="output_rank-による結果フィルタリング"><a class="header" href="#output_rank-による結果フィルタリング">output_rank による結果フィルタリング</a></h4>
+<p><code>collective_rpc</code>の呼び出し時に<code>output_rank</code>（<code>unique_reply_rank</code>パラメータ）を指定できる:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>output_rank</th><th>Worker側の動作</th><th>Executor側の動作</th></tr>
+</thead>
+<tbody>
+<tr><td><code>None</code></td><td><strong>全Workerが</strong>結果をenqueue</td><td><strong>全response_mqsから</strong>dequeue → リスト返却</td></tr>
+<tr><td><code>0</code></td><td><strong>rank 0のみ</strong>enqueue</td><td><strong>response_mqs[0]のみ</strong>dequeue → 単一値返却</td></tr>
+<tr><td><code>N</code></td><td><strong>rank Nのみ</strong>enqueue</td><td><strong>response_mqs[N]のみ</strong>dequeue → 単一値返却</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>execute_model()</code>は<code>unique_reply_rank=self.output_rank</code>（通常rank 0）で呼ばれるため、<strong>rank 0のWorkerのみが結果を返し</strong>、他のWorkerは結果を破棄する。これはTPモデルでは全Workerが同一の出力を計算するため、1つだけ返せば十分なため。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:270-275</code> (execute_model → unique_reply_rank)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:339-341</code> (response_mqs フィルタリング)</p>
+<h4 id="非同期スケジューリングasync_scheduling"><a class="header" href="#非同期スケジューリングasync_scheduling">非同期スケジューリング（async_scheduling）</a></h4>
+<p><code>scheduler_config.async_scheduling=True</code>の場合、結果返却が非同期化される:</p>
+<ol>
+<li><code>worker_busy_loop</code>内の<code>handle_output()</code>が<code>async_output_queue</code>（<code>queue.Queue</code>）に出力を投入</li>
+<li>別スレッド<code>async_output_busy_loop</code>（デーモンスレッド <code>WorkerAsyncOutputCopy</code>）がキューから取り出し</li>
+<li><code>AsyncModelRunnerOutput.get_output()</code>でGPU→CPU非同期コピー完了を待機</li>
+<li><code>worker_response_mq.enqueue()</code>で結果をEngineCore側に送信</li>
+</ol>
+<p>これにより、worker_busy_loopスレッドは<strong>GPU→CPUコピー完了を待たずに次のRPCを受信</strong>できる。GPU計算と結果転送をパイプライン化する仕組み。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:560-568</code> (async_output_copy_thread起動)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:200-209</code> (AsyncModelRunnerOutput)</p>
+<h4 id="non_blockfuturewrapper"><a class="header" href="#non_blockfuturewrapper">non_block（FutureWrapper）</a></h4>
+<p>Executor側の<code>collective_rpc(non_block=True)</code>では、response_mqからの結果取得を<strong>遅延評価</strong>する:</p>
+<ol>
+<li><code>get_response</code>クロージャを<code>FutureWrapper</code>に包んで即座に返す</li>
+<li>次回の<code>collective_rpc</code>呼び出し時に、pending futuresを先にdrainする（<code>futures_queue</code>から順次pop→<code>wait_for_response</code>）</li>
+<li>実際にresponse_mqから<code>dequeue()</code>するのはdrain時</li>
+</ol>
+<p>これにより、Executor側も結果待ちなしで次のRPCブロードキャストを発行でき、EngineCore.step()内のスケジューリングとWorkerの計算をオーバーラップできる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:365-375</code> (non_block / FutureWrapper)</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:303-375</code> (collective_rpc)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:845-871</code> (worker_busy_loop)</p>
+<h3 id="23-worker--worker-torchdistributed--nccl"><a class="header" href="#23-worker--worker-torchdistributed--nccl">2.3 Worker ↔ Worker: torch.distributed + NCCL</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>値</th></tr>
+</thead>
+<tbody>
+<tr><td>初期化</td><td><code>torch.distributed.init_process_group(backend="nccl")</code></td></tr>
+<tr><td>Rendezvous</td><td>TCP（<code>tcp://127.0.0.1:&lt;random_port&gt;</code>）</td></tr>
+<tr><td>通信</td><td>NCCL（NVLink / PCIe によるGPU間直接通信）</td></tr>
+<tr><td>用途</td><td>Tensor Parallelの<code>all_reduce()</code>, <code>all_gather()</code>, <code>broadcast()</code></td></tr>
+<tr><td>タイミング</td><td>モデル forward pass 内部でレイヤーごとに実行</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:263-269</code> (init_worker_distributed_environment)</p>
+<p>NCCLの初期化は<code>Worker.init_device()</code>内で、メモリプロファイリング<strong>前</strong>に行われる。これによりNCCLバッファが確保された後の利用可能メモリが正確に計測される。</p>
+<h2 id="3-起動シーケンス"><a class="header" href="#3-起動シーケンス">3. 起動シーケンス</a></h2>
+<pre><code>1.  ユーザーが AsyncLLM を生成
+2.  AsyncLLM → EngineCoreClient.make_async_mp_client()
+3.    └─ mp.Process(target=EngineCoreProc.run_engine_core) 起動
+4.        └─ EngineCore.__init__() 内で MultiprocExecutor 生成
+5.            ├─ distributed_init_method = "tcp://127.0.0.1:&lt;port&gt;" 確保
+6.            ├─ rpc_broadcast_mq (ShmRingBuffer, n_reader=2) 作成
+7.            └─ for rank in [0, 1]:
+8.                mp.Process(target=WorkerProc.worker_main) 起動
+9.                  ├─ Worker.init_device():
+10.                 │   └─ torch.distributed.init_process_group(backend="nccl")
+11.                 ├─ Worker.load_model(): モデルロード
+12.                 ├─ _init_message_queues():
+13.                 │   ├─ rpc_broadcast_mq = create_from_handle(input_shm_handle, rank)
+14.                 │   └─ worker_response_mq = MessageQueue(1, 1)  ← 各Worker独自
+15.                 ├─ READY メッセージ + response_mq handle 送信（Pipe経由）
+16.                 └─ wait_until_ready() → worker_busy_loop() でRPC待機開始
+17.       └─ wait_for_ready():
+18.            ├─ Pipeからhandle受信 → response_mqs[rank] 構築
+19.            ├─ rpc_broadcast_mq.wait_until_ready()
+20.            └─ 各response_mq.wait_until_ready()
+21. Frontend ↔ EngineCore ZMQハンドシェイク完了
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:696</code> (WorkerProc.worker_main)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/executor/multiproc_executor.py:752-770</code> (READY送信)</p>
+<h2 id="4-通信方式の設計判断"><a class="header" href="#4-通信方式の設計判断">4. 通信方式の設計判断</a></h2>
+<h3 id="なぜ-frontend--enginecore-は-zmq-なのか"><a class="header" href="#なぜ-frontend--enginecore-は-zmq-なのか">なぜ Frontend ↔ EngineCore は ZMQ なのか</a></h3>
+<ol>
+<li><strong>疎結合</strong>: Data Parallelism構成では別ノードに配置される可能性がある。ZMQはネットワーク透過</li>
+<li><strong>asyncio統合</strong>: Frontendはasyncioイベントループ上で動作し、ZMQのasyncioポーラーと相性がよい</li>
+<li><strong>バックグラウンドスレッドでの直列化</strong>: msgpackシリアライゼーションをバックグラウンドスレッドで行い、GPU計算とオーバーラップ可能</li>
+<li><strong>メッセージ順序保証</strong>: ROUTER/DEALERソケットで確定的なメッセージ順序を保証</li>
+</ol>
+<h3 id="なぜ-enginecore--workers-は-sharedmemory-mq-なのかzmqではない理由"><a class="header" href="#なぜ-enginecore--workers-は-sharedmemory-mq-なのかzmqではない理由">なぜ EngineCore ↔ Workers は SharedMemory MQ なのか（ZMQではない理由）</a></h3>
+<ol>
+<li><strong>低レイテンシ</strong>: 同一ノード内通信に特化。ZMQはネットワークソケット抽象であり、カーネル空間でのバッファコピーとシステムコールのオーバーヘッドがある</li>
+<li><strong>ゼロコピー可能</strong>: 共有メモリ上でpickleデータを直接読み書きでき、プロセス間のデータコピーが不要</li>
+<li><strong>ロックフリー設計</strong>: リングバッファ + メタデータフラグ + メモリフェンス（~20ns）で同期。ロック競合なし</li>
+<li><strong>collective_rpc最適化</strong>: 1対多ブロードキャスト（rpc_broadcast_mq）パターンにリングバッファが最適</li>
+</ol>
+<h3 id="なぜ-worker--worker-は-nccl-なのか"><a class="header" href="#なぜ-worker--worker-は-nccl-なのか">なぜ Worker ↔ Worker は NCCL なのか</a></h3>
+<ol>
+<li><strong>GPU間テンソル通信専用</strong>: NCCLはGPUメモリ間の集合通信（all-reduce等）に特化した高性能ライブラリ</li>
+<li><strong>NVLink活用</strong>: GPU間直接通信でCPU介在なし。NVLink（最大900GB/s）やPCIe（最大64GB/s）を直接利用</li>
+<li><strong>PyTorch統合</strong>: モデルコード内の<code>torch.distributed</code>呼び出しと直接統合</li>
+<li><strong>Pythonオブジェクト不可</strong>: NCCLはテンソル転送専用であり、Pythonオブジェクト（SchedulerOutput等）の転送には使えない</li>
+</ol>
+<h3 id="通信方式比較"><a class="header" href="#通信方式比較">通信方式比較</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>通信路</th><th>方式</th><th>レイテンシ</th><th>帯域幅</th><th>転送対象</th><th>ネットワーク透過</th></tr>
+</thead>
+<tbody>
+<tr><td>Frontend ↔ EngineCore</td><td>ZMQ (TCP)</td><td>~µs</td><td>中</td><td>Pythonオブジェクト (msgpack)</td><td>Yes</td></tr>
+<tr><td>EngineCore ↔ Workers</td><td>SharedMemory MQ</td><td>~20ns同期</td><td>高</td><td>Pythonオブジェクト (pickle)</td><td>No（同一ノード限定）</td></tr>
+<tr><td>Worker ↔ Worker</td><td>NCCL</td><td>~µs</td><td>最高</td><td>GPUテンソルのみ</td><td>Yes（multi-node NCCL対応）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="5-tp1単一gpuとの比較"><a class="header" href="#5-tp1単一gpuとの比較">5. TP=1（単一GPU）との比較</a></h2>
+<p>TP=1の場合、<code>UniProcExecutor</code>が選択される:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>項目</th><th>TP=1</th><th>TP=2</th></tr>
+</thead>
+<tbody>
+<tr><td>Executor</td><td>UniProcExecutor</td><td>MultiprocExecutor</td></tr>
+<tr><td>Workerプロセス</td><td>なし（EngineCoreプロセス内）</td><td>2つの子プロセス</td></tr>
+<tr><td>Worker通信</td><td>関数呼び出し（同一プロセス）</td><td>SharedMemory MQ</td></tr>
+<tr><td>NCCL</td><td>不要</td><td>必要（Worker間）</td></tr>
+<tr><td>合計プロセス数</td><td>2（Frontend + EngineCore）</td><td>4（Frontend + EngineCore + Worker×2）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/uniproc_executor.py:26</code> (UniProcExecutor)</p>
+<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td><td><code>AsyncLLM</code> — Frontendプロセスのエントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td><code>EngineCoreClient</code> — ZMQ通信, CoreEngineProcManager</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td><code>EngineCore</code>, <code>EngineCoreProc</code> — EngineCoreプロセスのエントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> — collective_rpc(), execute_model()</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code>, <code>WorkerProc</code> — Worker起動, MessageQueue管理, worker_busy_loop</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> — 単一GPU用</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker</code> — init_device(), torch.distributed初期化</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td><code>ShmRingBuffer</code>, <code>MessageQueue</code> — 共有メモリ通信基盤</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../vllm/investigations/lmcache-integration.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../vllm/glossary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../vllm/investigations/lmcache-integration.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../vllm/glossary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

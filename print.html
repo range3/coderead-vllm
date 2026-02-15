@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>コードリーディング: vLLM</title>
+        <title>コードリーディング: vLLM &amp; LMCache</title>
         <meta name="robots" content="noindex">
 
 
@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4f025b6b.js";
+            window.path_to_searchindex_js = "searchindex-b4930b74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7bdfdf84.js"></script>
+        <script src="toc-1736b030.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -139,7 +139,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">コードリーディング: vLLM</h1>
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -176,7 +176,31 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="はじめに"><a class="header" href="#はじめに">はじめに</a></h1>
+                        <h1 id="コードリーディング-vllm--lmcache"><a class="header" href="#コードリーディング-vllm--lmcache">コードリーディング: vLLM &amp; LMCache</a></h1>
+<p>LLM推論サービングに関連するOSSのコードリーディング結果を構造化して蓄積するプロジェクト。</p>
+<h2 id="対象oss"><a class="header" href="#対象oss">対象OSS</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>OSS</th><th>ソースコード</th><th>概要</th><th>Phase</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="vllm/README.html">vLLM</a></td><td><code>target/vllm/</code></td><td>LLM推論サービングエンジン</td><td>Phase 2</td></tr>
+<tr><td><a href="lmcache/README.html">LMCache</a></td><td><code>target/LMCache/</code></td><td>KVキャッシュ保存・共有・再利用ライブラリ</td><td>Phase 0a</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="プロジェクト横断"><a class="header" href="#プロジェクト横断">プロジェクト横断</a></h2>
+<ul>
+<li><a href="cross-project/README.html">横断調査</a> — 複数OSSにまたがる調査報告</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="vllm"><a class="header" href="#vllm">vLLM</a></h1>
+<p>LLM推論サービングエンジン <a href="https://github.com/vllm-project/vllm">vLLM</a> のコードリーディング。</p>
+<ul>
+<li><strong>ソースコード</strong>: <code>target/vllm/</code></li>
+<li><strong>現在のPhase</strong>: Phase 2（コンポーネント別深堀り）</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="テキスト推論データフロー"><a class="header" href="#テキスト推論データフロー">テキスト推論データフロー</a></h1>
 <blockquote>
@@ -8468,6 +8492,19 @@ class DisaggSpec:
 <p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109</code></p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ファイル索引"><a class="header" href="#ファイル索引">ファイル索引</a></h1>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="lmcache-1"><a class="header" href="#lmcache-1">LMCache</a></h1>
+<p>KVキャッシュの保存・共有・再利用ライブラリ <a href="https://github.com/LMCache/LMCache">LMCache</a> のコードリーディング。</p>
+<ul>
+<li><strong>ソースコード</strong>: <code>target/LMCache/</code></li>
+<li><strong>現在のPhase</strong>: Phase 0a（オリエンテーション）</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="用語集-1"><a class="header" href="#用語集-1">用語集</a></h1>
+<blockquote>
+<p>LMCache 固有の用語を記録する。</p>
+</blockquote>
+<p>（Phase 0a で追加予定）</p>
 
                     </main>
 

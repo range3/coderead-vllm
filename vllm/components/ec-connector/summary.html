@@ -1,0 +1,589 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>ECConnector（Encoder Cache Connector） - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ecconnectorencoder-cache-connector"><a class="header" href="#ecconnectorencoder-cache-connector">ECConnector（Encoder Cache Connector）</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM] | <strong>確信度</strong>: [VERIFIED] | <strong>最終更新</strong>: 2026-02-14</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p>ECConnectorは、マルチモーダルモデルのエンコーダ出力を<strong>vLLMインスタンス間</strong>または<strong>外部ストレージ</strong>と転送するためのプラグインフレームワークである。KV Transfer（デコーダKVキャッシュ用）とは完全に独立した系統で、エンコーダキャッシュに特化している。</p>
+<p>主なユースケースは**Encoder-Prefill-Decode分離（EPD）**で、エンコーダ専用インスタンスが画像処理を行い、その結果をデコーダインスタンスに転送する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/</code> (パッケージ全体)</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<h3 id="ファイル構成"><a class="header" href="#ファイル構成">ファイル構成</a></h3>
+<pre><code>vllm/distributed/ec_transfer/
+├── __init__.py                          # get_ec_transfer(), has_ec_transfer() 公開API
+├── ec_transfer_state.py                 # グローバルシングルトン管理
+└── ec_connector/
+    ├── __init__.py
+    ├── base.py                          # ECConnectorBase 抽象基底クラス
+    ├── factory.py                       # ECConnectorFactory レジストリ + 動的ロード
+    └── example_connector.py             # ECExampleConnector 参照実装（safetensors）
+
+vllm/v1/worker/
+└── ec_connector_model_runner_mixin.py   # GPUModelRunner統合Mixin
+
+vllm/config/
+└── ec_transfer.py                       # ECTransferConfig 設定クラス
+</code></pre>
+<h3 id="2ロール分離アーキテクチャ"><a class="header" href="#2ロール分離アーキテクチャ">2ロール分離アーキテクチャ</a></h3>
+<p>ECConnectorは<strong>Scheduler側</strong>と<strong>Worker側</strong>に分離され、同じクラスが両方のロールを担う：</p>
+<pre class="mermaid">graph TB
+    subgraph "Scheduler Process (ECConnectorRole.SCHEDULER)"
+        SC[ECConnector Scheduler側]
+        SCH[Scheduler]
+        SCH --&gt;|has_cache_item| SC
+        SCH --&gt;|update_state_after_alloc| SC
+        SCH --&gt;|build_connector_meta| SC
+    end
+
+    subgraph "Worker Process (ECConnectorRole.WORKER)"
+        WC[ECConnector Worker側]
+        GMR[GPUModelRunner]
+        GMR --&gt;|bind_connector_metadata| WC
+        GMR --&gt;|start_load_caches| WC
+        GMR --&gt;|save_caches| WC
+        GMR --&gt;|get_finished| WC
+    end
+
+    SC --&gt;|ECConnectorMetadata&lt;br/&gt;SchedulerOutput経由| WC
+</pre>
+
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>生成場所</th><th>主な責務</th></tr>
+</thead>
+<tbody>
+<tr><td>SCHEDULER</td><td><code>Scheduler.__init__()</code> via <code>ECConnectorFactory</code></td><td>キャッシュ存在チェック、メタデータ構築</td></tr>
+<tr><td>WORKER</td><td><code>gpu_worker.py</code> の <code>ensure_ec_transfer_initialized()</code></td><td>キャッシュのロード/セーブ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:135-138</code> (Scheduler側生成)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_transfer_state.py:26-43</code> (Worker側生成)</p>
+<h2 id="ecconnectorbase-抽象基底クラス"><a class="header" href="#ecconnectorbase-抽象基底クラス">ECConnectorBase 抽象基底クラス</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/base.py:59-253</code></p>
+<h3 id="プロパティ"><a class="header" href="#プロパティ">プロパティ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>プロパティ</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>role</code></td><td><code>ECConnectorRole</code></td><td>SCHEDULER or WORKER</td></tr>
+<tr><td><code>is_producer</code></td><td><code>bool</code></td><td>エンコーダキャッシュを生成する側か</td></tr>
+<tr><td><code>is_consumer</code></td><td><code>bool</code></td><td>エンコーダキャッシュを消費する側か</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="抽象メソッド実装必須"><a class="header" href="#抽象メソッド実装必須">抽象メソッド（実装必須）</a></h3>
+<h4 id="worker側3メソッド"><a class="header" href="#worker側3メソッド">Worker側（3メソッド）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start_load_caches</code></td><td><code>(encoder_cache: dict[str, Tensor], **kwargs) → None</code></td><td>メタデータに基づきキャッシュをロード</td></tr>
+<tr><td><code>save_caches</code></td><td><code>(encoder_cache: dict[str, Tensor], mm_hash: str, **kwargs) → None</code></td><td>エンコーダ出力を外部に保存</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="scheduler側3メソッド"><a class="header" href="#scheduler側3メソッド">Scheduler側（3メソッド）</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>シグネチャ</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>has_cache_item</code></td><td><code>(identifier: str) → bool</code></td><td>外部にキャッシュが存在するか判定</td></tr>
+<tr><td><code>update_state_after_alloc</code></td><td><code>(request: Request, index: int) → None</code></td><td>割当後の内部状態更新</td></tr>
+<tr><td><code>build_connector_meta</code></td><td><code>(scheduler_output: SchedulerOutput) → ECConnectorMetadata</code></td><td>Worker転送用メタデータ構築</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="具象メソッドオーバーライド任意"><a class="header" href="#具象メソッドオーバーライド任意">具象メソッド（オーバーライド任意）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>デフォルト動作</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bind_connector_metadata</code></td><td>メタデータ保持</td><td>Worker側: 毎step実行前に呼ばれる</td></tr>
+<tr><td><code>clear_connector_metadata</code></td><td>Noneに設定</td><td>Worker側: 毎step実行後に呼ばれる</td></tr>
+<tr><td><code>register_caches</code></td><td>no-op</td><td>将来のP2P機能用</td></tr>
+<tr><td><code>get_finished</code></td><td><code>(None, None)</code></td><td>非同期転送完了通知</td></tr>
+<tr><td><code>update_connector_output</code></td><td>no-op</td><td>Worker出力からScheduler状態を更新</td></tr>
+<tr><td><code>request_finished</code></td><td><code>(False, None)</code></td><td>リクエスト完了時のフック</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ectransferconfig-設定"><a class="header" href="#ectransferconfig-設定">ECTransferConfig 設定</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/ec_transfer.py:16-108</code></p>
+<h3 id="ecロール"><a class="header" href="#ecロール">ECロール</a></h3>
+<pre><code class="language-python">ECRole = Literal["ec_producer", "ec_consumer", "ec_both"]
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ロール</th><th>説明</th><th><code>is_producer</code></th><th><code>is_consumer</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>ec_producer</code></td><td>エンコーダ計算+キャッシュ保存</td><td>True</td><td>False</td></tr>
+<tr><td><code>ec_consumer</code></td><td>キャッシュ読み込み+デコーダ実行</td><td>False</td><td>True</td></tr>
+<tr><td><code>ec_both</code></td><td>両方の機能</td><td>True</td><td>True</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="主要設定パラメータ"><a class="header" href="#主要設定パラメータ">主要設定パラメータ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ec_connector</code></td><td>None</td><td>コネクタ名（例: “ECExampleConnector”）</td></tr>
+<tr><td><code>ec_role</code></td><td>None</td><td>ECロール</td></tr>
+<tr><td><code>ec_connector_module_path</code></td><td>None</td><td>カスタムコネクタのPythonモジュールパス</td></tr>
+<tr><td><code>ec_connector_extra_config</code></td><td><code>{}</code></td><td>コネクタ固有の追加設定</td></tr>
+<tr><td><code>ec_buffer_device</code></td><td>“cuda”</td><td>バッファデバイス</td></tr>
+<tr><td><code>ec_buffer_size</code></td><td>1e9</td><td>バッファサイズ（バイト）</td></tr>
+<tr><td><code>ec_ip</code> / <code>ec_port</code></td><td>127.0.0.1:14579</td><td>P2P接続用</td></tr>
+<tr><td><code>ec_rank</code> / <code>ec_parallel_size</code></td><td>None / 1</td><td>分散接続設定</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ecconnectorfactory"><a class="header" href="#ecconnectorfactory">ECConnectorFactory</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/factory.py:20-85</code></p>
+<h3 id="コネクタ登録方式"><a class="header" href="#コネクタ登録方式">コネクタ登録方式</a></h3>
+<p>2つの登録方法がある：</p>
+<ol>
+<li><strong>静的登録</strong>: <code>ECConnectorFactory.register_connector()</code> でモジュール遅延ロード登録</li>
+<li><strong>動的ロード</strong>: <code>ec_connector_module_path</code> で任意のPythonモジュールからロード</li>
+</ol>
+<pre><code class="language-python"># 静的登録（factory.py末尾）
+ECConnectorFactory.register_connector(
+    "ECExampleConnector",
+    "vllm.distributed.ec_transfer.ec_connector.example_connector",
+    "ECExampleConnector",
+)
+
+# 動的ロード（ec_connector_module_pathが設定されている場合）
+connector_module = importlib.import_module(connector_module_path)
+connector_cls = getattr(connector_module, connector_name)
+</code></pre>
+<h3 id="現在登録済みコネクタ"><a class="header" href="#現在登録済みコネクタ">現在登録済みコネクタ</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>名前</th><th>実装</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ECExampleConnector</code></td><td><code>example_connector.py</code></td><td>参照実装（safetensorsディスク保存）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ecexampleconnector-参照実装"><a class="header" href="#ecexampleconnector-参照実装">ECExampleConnector 参照実装</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:45-199</code></p>
+<p>safetensorsフォーマットでディスクにエンコーダキャッシュを保存/読み込みする参照実装。</p>
+<h3 id="メタデータ"><a class="header" href="#メタデータ">メタデータ</a></h3>
+<pre><code class="language-python">@dataclass
+class MMMeta:
+    mm_hash: str      # マルチモーダルデータのハッシュ
+    num_token: int     # エンコーダトークン数
+
+@dataclass
+class ECExampleConnectorMetadata(ECConnectorMetadata):
+    mm_datas: list[MMMeta]  # ロードすべきエントリ一覧
+</code></pre>
+<h3 id="ストレージ構造"><a class="header" href="#ストレージ構造">ストレージ構造</a></h3>
+<pre><code>{shared_storage_path}/
+└── {mm_hash}/
+    └── encoder_cache.safetensors    # {"ec_cache": Tensor} 形式
+</code></pre>
+<h3 id="動作フロー"><a class="header" href="#動作フロー">動作フロー</a></h3>
+<h4 id="保存producer側"><a class="header" href="#保存producer側">保存（Producer側）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:98-118</code></p>
+<ol>
+<li>GPUModelRunnerが <code>_execute_mm_encoder()</code> 完了後に <code>maybe_save_ec_to_connector()</code> を呼ぶ</li>
+<li><code>save_caches()</code>: テンソルを <code>.detach().cpu()</code> してsafetensorsで保存</li>
+</ol>
+<h4 id="読み込みconsumer側"><a class="header" href="#読み込みconsumer側">読み込み（Consumer側）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_connector/example_connector.py:63-96</code></p>
+<ol>
+<li>Scheduler側: <code>has_cache_item()</code> でファイル存在確認 (<code>os.path.exists</code>)</li>
+<li>Scheduler側: <code>build_connector_meta()</code> でロード対象リストを構築</li>
+<li>Worker側: <code>start_load_caches()</code> でsafetensorsからGPUにロード</li>
+</ol>
+<h4 id="存在確認"><a class="header" href="#存在確認">存在確認</a></h4>
+<p><code>has_cache_item()</code> は <code>os.path.exists()</code> でsafetensorsファイルの存在をチェック。</p>
+<h2 id="schedulerとの統合"><a class="header" href="#schedulerとの統合">Schedulerとの統合</a></h2>
+<h3 id="_schedule_encoder_inputs-内の分岐"><a class="header" href="#_schedule_encoder_inputs-内の分岐">_schedule_encoder_inputs() 内の分岐</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1212-1218</code></p>
+<pre><code class="language-python">if self.ec_connector is not None and self.ec_connector.has_cache_item(identifier):
+    # 外部キャッシュにヒット → エンコーダ計算不要、compute_budget消費なし
+    mm_hashes_to_schedule.add(item_identifier)
+    external_load_encoder_input.append(i)
+    num_embeds_to_schedule += num_encoder_embeds
+    continue
+</code></pre>
+<p>ECConnectorにキャッシュがある場合：</p>
+<ul>
+<li><code>encoder_compute_budget</code> は<strong>消費しない</strong>（エンコーダ計算不要のため）</li>
+<li><code>external_load_encoder_input</code> リストに追加</li>
+<li><code>encoder_cache_manager.allocate()</code> は実行される（GPU側に空きが必要）</li>
+</ul>
+<h3 id="割当後の状態更新"><a class="header" href="#割当後の状態更新">割当後の状態更新</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:523-527</code></p>
+<pre><code class="language-python">if external_load_encoder_input:
+    for i in external_load_encoder_input:
+        self.encoder_cache_manager.allocate(request, i)
+        if self.ec_connector is not None:
+            self.ec_connector.update_state_after_alloc(request, i)
+</code></pre>
+<h3 id="メタデータ構築"><a class="header" href="#メタデータ構築">メタデータ構築</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:899-904</code></p>
+<p><code>build_connector_meta()</code> がSchedulerOutputに <code>ec_connector_metadata</code> を設定。Worker側はこのメタデータを使ってロード対象を特定する。</p>
+<h2 id="gpumodelrunnerとの統合"><a class="header" href="#gpumodelrunnerとの統合">GPUModelRunnerとの統合</a></h2>
+<h3 id="ecconnectormodelrunnermixin"><a class="header" href="#ecconnectormodelrunnermixin">ECConnectorModelRunnerMixin</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/ec_connector_model_runner_mixin.py:25-87</code></p>
+<p>GPUModelRunnerに3つのstatic methodを提供：</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>maybe_save_ec_to_connector</code></td><td>エンコーダ出力保存（Producer時）</td></tr>
+<tr><td><code>get_finished_ec_transfers</code></td><td>非同期転送完了確認</td></tr>
+<tr><td><code>maybe_get_ec_connector_output</code></td><td>コンテキストマネージャでライフサイクル管理</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="コンテキストマネージャのライフサイクル"><a class="header" href="#コンテキストマネージャのライフサイクル">コンテキストマネージャのライフサイクル</a></h3>
+<pre><code class="language-python">with self.maybe_get_ec_connector_output(scheduler_output, encoder_cache) as output:
+    # 1. bind_connector_metadata() → メタデータ設定
+    # 2. Consumer時: start_load_caches() → 外部からロード
+    # 3. yield → エンコーダ実行、gather処理
+    # 4. get_finished() → 非同期完了確認
+    # 5. clear_connector_metadata() → クリーンアップ
+</code></pre>
+<h3 id="producer専用モード"><a class="header" href="#producer専用モード">Producer専用モード</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3343-3349</code></p>
+<p>Producer専用インスタンスは、エンコーダ実行後にデコーダ実行をスキップし、空のModelRunnerOutputを返す：</p>
+<pre><code class="language-python">if has_ec_transfer() and get_ec_transfer().is_producer:
+    with self.maybe_get_ec_connector_output(...) as ec_connector_output:
+        self._execute_mm_encoder(scheduler_output)
+        return make_empty_encoder_model_runner_output(scheduler_output)
+</code></pre>
+<p>また、Producer専用インスタンスはKVキャッシュを確保しない：</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:6160-6161</code></p>
+<pre><code class="language-python">if has_ec_transfer() and get_ec_transfer().is_producer:
+    return {}  # KVCacheSpec空 → KVキャッシュ確保なし
+</code></pre>
+<h2 id="ecconnectoroutput"><a class="header" href="#ecconnectoroutput">ECConnectorOutput</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:151-154</code></p>
+<pre><code class="language-python">@dataclass
+class ECConnectorOutput:
+    finished_sending: set[str] | None = None
+    finished_recving: set[str] | None = None
+</code></pre>
+<p>ModelRunnerOutputに含まれてScheduler側に返されるが、<strong>現時点ではScheduler側で未消費</strong>（<code>ec_connector_output</code>を読み取るコードがSchedulerにない）。非同期転送完了フィードバックは将来実装予定。</p>
+<h2 id="グローバルシングルトン管理"><a class="header" href="#グローバルシングルトン管理">グローバルシングルトン管理</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/ec_transfer/ec_transfer_state.py:14-43</code></p>
+<pre><code class="language-python">_EC_CONNECTOR_AGENT: ECConnectorBase | None = None
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>関数</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>has_ec_transfer()</code></td><td>ECConnectorが初期化済みか</td></tr>
+<tr><td><code>get_ec_transfer()</code></td><td>シングルトン取得（未初期化ならassert）</td></tr>
+<tr><td><code>ensure_ec_transfer_initialized(config)</code></td><td>Workerロールで初期化（冪等）</td></tr>
+</tbody>
+</table>
+</div>
+<p>Worker側のシングルトン初期化は <code>gpu_worker.py</code> で <code>ensure_ec_transfer_initialized()</code> を呼ぶことで行われる。Scheduler側は <code>ECConnectorFactory.create_connector()</code> で直接生成し、<code>self.ec_connector</code> に保持する（シングルトンではない）。</p>
+<h2 id="カスタムecconnector実装ガイド"><a class="header" href="#カスタムecconnector実装ガイド">カスタムECConnector実装ガイド</a></h2>
+<h3 id="最小実装"><a class="header" href="#最小実装">最小実装</a></h3>
+<ol>
+<li><code>ECConnectorBase</code> を継承</li>
+<li>5つの抽象メソッドを実装</li>
+<li>ECTransferConfigの<code>ec_connector</code>にクラス名、<code>ec_connector_module_path</code>にモジュールパスを指定</li>
+</ol>
+<h3 id="実装の要点"><a class="header" href="#実装の要点">実装の要点</a></h3>
+<ul>
+<li><code>has_cache_item()</code> はSchedulerのホットパスで呼ばれるため<strong>高速</strong>であるべき</li>
+<li><code>start_load_caches()</code> は <code>encoder_cache</code> dict に直接テンソルを追加する</li>
+<li><code>save_caches()</code> は <code>encoder_cache[mm_hash]</code> からGPUテンソルを取得して保存する</li>
+<li><code>build_connector_meta()</code> は内部状態をリセットすること</li>
+</ul>
+<h3 id="起動コマンド例"><a class="header" href="#起動コマンド例">起動コマンド例</a></h3>
+<pre><code class="language-bash"># Producer（エンコーダ専用インスタンス）
+vllm serve model_name \
+    --ec-connector ECExampleConnector \
+    --ec-role ec_producer \
+    --ec-connector-extra-config '{"shared_storage_path": "/shared/cache"}'
+
+# Consumer（デコーダインスタンス）
+vllm serve model_name \
+    --ec-connector ECExampleConnector \
+    --ec-role ec_consumer \
+    --ec-connector-extra-config '{"shared_storage_path": "/shared/cache"}'
+</code></pre>
+<h2 id="上流下流依存関係"><a class="header" href="#上流下流依存関係">上流・下流依存関係</a></h2>
+<h3 id="上流"><a class="header" href="#上流">上流</a></h3>
+<ul>
+<li><strong>ECTransferConfig</strong>: <code>ec_connector</code>, <code>ec_role</code> 等の設定</li>
+<li><strong>Scheduler</strong>: キャッシュ存在確認、状態更新、メタデータ構築の呼び出し</li>
+<li><strong>GPUModelRunner</strong>: エンコーダ実行結果の保存、ロード済みキャッシュの利用</li>
+</ul>
+<h3 id="下流"><a class="header" href="#下流">下流</a></h3>
+<ul>
+<li><strong>外部ストレージ</strong>: safetensors（例）、共有メモリ、ネットワーク等（実装依存）</li>
+</ul>
+<h2 id="開発状況未実装機能"><a class="header" href="#開発状況未実装機能">開発状況・未実装機能</a></h2>
+<ol>
+<li><strong>ECConnectorOutput未消費</strong>: Worker→Scheduler方向の非同期転送完了フィードバックが未実装</li>
+<li><strong>request_finished未統合</strong>: Schedulerから<code>ec_connector.request_finished()</code>が呼ばれていない</li>
+<li><strong>register_caches未実装</strong>: P2P直接転送のためのキャッシュ登録（TODO）</li>
+<li><strong>エンコーダキャッシュ事前割り当て未対応</strong>: <code>encoder_cache</code> が <code>dict</code> のため、固定バッファへの移行が必要</li>
+<li><strong>登録済みコネクタが1つのみ</strong>: ECExampleConnector（デバッグ用）のみ。SHMConnector等は外部PR待ち</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../vllm/architecture/overview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../vllm/components/encoder-cache/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../vllm/architecture/overview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../vllm/components/encoder-cache/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../../mark-09e88c2c.min.js"></script>
+        <script src="../../../searcher-c2a407aa.js"></script>
+
+        <script src="../../../clipboard-1626706a.min.js"></script>
+        <script src="../../../highlight-abc7f01d.js"></script>
+        <script src="../../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../../mermaid-eefea253.min.js"></script>
+        <script src="../../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

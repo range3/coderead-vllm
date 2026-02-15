@@ -1,0 +1,567 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>BlockPool 詳細 - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="blockpool-詳細"><a class="header" href="#blockpool-詳細">BlockPool 詳細</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p><code>BlockPool</code> はKVキャッシュの物理ブロックを管理するクラスである。ブロックの割り当て・解放・プレフィックスキャッシュ索引を一元管理し、LRU Eviction によるメモリ再利用を実現する。3つの内部データ構造（<code>FreeKVCacheBlockQueue</code>、<code>BlockHashToBlockMap</code>、<code>KVCacheBlock</code>）で構成される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:128</code></p>
+<h2 id="kvcacheblock-deep-verified"><a class="header" href="#kvcacheblock-deep-verified">KVCacheBlock [DEEP] [VERIFIED]</a></h2>
+<p>KVキャッシュブロック1つのメタデータを保持する dataclass。物理メモリ自体は GPU 上にあり、このオブジェクトは CPU 側のメタデータのみを管理する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:107</code></p>
+<h3 id="フィールド"><a class="header" href="#フィールド">フィールド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>block_id</code></td><td><code>int</code></td><td>0 〜 <code>num_gpu_blocks - 1</code> の一意識別子</td></tr>
+<tr><td><code>ref_cnt</code></td><td><code>int</code></td><td>参照カウント。0なら空きキュー内（Eviction候補）</td></tr>
+<tr><td><code>_block_hash</code></td><td><code>BlockHashWithGroupId | None</code></td><td>プレフィックスキャッシュ用ハッシュキー。fullブロックでキャッシュ登録済みの場合のみ設定</td></tr>
+<tr><td><code>prev_free_block</code></td><td><code>KVCacheBlock | None</code></td><td>空きキューの前ノードポインタ</td></tr>
+<tr><td><code>next_free_block</code></td><td><code>KVCacheBlock | None</code></td><td>空きキューの次ノードポインタ</td></tr>
+<tr><td><code>is_null</code></td><td><code>bool</code></td><td>null_block フラグ。True の場合は解放・Eviction 対象外</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="block_hash-プロパティ"><a class="header" href="#block_hash-プロパティ">block_hash プロパティ</a></h3>
+<pre><code class="language-python">@block_hash.setter
+def block_hash(self, block_hash: BlockHashWithGroupId):
+    assert self.block_hash is None  # 二重設定を禁止
+    self._block_hash = block_hash
+
+def reset_hash(self):
+    self._block_hash = None  # Eviction時にリセット
+</code></pre>
+<p><strong>制約</strong>: setter は <code>assert self.block_hash is None</code> で二重設定を防止する。ハッシュのリセットは <code>reset_hash()</code> のみで行う。これによりブロックのライフサイクルが「未設定 → 設定 → リセット → 再設定」の順序で制御される。</p>
+<h3 id="ライフサイクル"><a class="header" href="#ライフサイクル">ライフサイクル</a></h3>
+<pre><code>1. 生成: BlockPool.__init__() で全ブロック生成（ref_cnt=0）
+2. 割り当て: get_new_blocks() → ref_cnt=1
+3. キャッシュ登録: cache_full_blocks() → block_hash 設定
+4. 再利用（キャッシュヒット）: touch() → ref_cnt++
+5. 解放: free_blocks() → ref_cnt-- → 0なら空きキューへ
+6. Eviction: _maybe_evict_cached_block() → hash リセット → 再割り当て
+</code></pre>
+<h2 id="freekvcacheblockqueue-deep-verified"><a class="header" href="#freekvcacheblockqueue-deep-verified">FreeKVCacheBlockQueue [DEEP] [VERIFIED]</a></h2>
+<p>空きブロックを LRU 順序で管理する<strong>双方向リンクリスト</strong>。Python 組み込みの <code>deque</code> ではなく独自実装を採用している。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></p>
+<h3 id="なぜ独自実装か"><a class="header" href="#なぜ独自実装か">なぜ独自実装か</a></h3>
+<p><code>deque</code> では中間要素の削除が O(n) であるのに対し、この実装では O(1) で削除できる。<code>touch()</code> でキャッシュヒットしたブロックを空きキューの中間から即座に除去する必要があるため、O(1) の <code>remove()</code> が不可欠である。</p>
+<p>また、Python オブジェクトのアロケーションを行わず、<code>KVCacheBlock</code> の <code>prev_free_block</code>/<code>next_free_block</code> ポインタを直接操作するため、GC 負荷が低い。</p>
+<h3 id="センチネルノード"><a class="header" href="#センチネルノード">センチネルノード</a></h3>
+<pre><code>fake_head ⇄ block_0 ⇄ block_1 ⇄ ... ⇄ block_n ⇄ fake_tail
+</code></pre>
+<ul>
+<li><code>fake_free_list_head</code>: <code>block_id=-1</code> のダミーノード。先頭の前に配置</li>
+<li><code>fake_free_list_tail</code>: <code>block_id=-1</code> のダミーノード。末尾の後に配置</li>
+<li><strong>目的</strong>: null チェックの分岐を減らし、コードを簡素化</li>
+</ul>
+<h3 id="操作一覧"><a class="header" href="#操作一覧">操作一覧</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>計算量</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>popleft()</code></td><td>L208</td><td>O(1)</td><td>先頭ブロックを取り出し</td></tr>
+<tr><td><code>popleft_n(n)</code></td><td>L245</td><td>O(n)</td><td>先頭から n 個を一括取り出し</td></tr>
+<tr><td><code>remove(block)</code></td><td>L278</td><td>O(1)</td><td>中間のブロックを除去（touch 用）</td></tr>
+<tr><td><code>append(block)</code></td><td>L298</td><td>O(1)</td><td>末尾にブロックを追加</td></tr>
+<tr><td><code>append_n(blocks)</code></td><td>L321</td><td>O(n)</td><td>末尾に複数ブロックを一括追加</td></tr>
+<tr><td><code>get_all_free_blocks()</code></td><td>L346</td><td>O(m)</td><td>全空きブロック取得（テスト用）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="lru-順序の維持"><a class="header" href="#lru-順序の維持">LRU 順序の維持</a></h3>
+<ul>
+<li><strong>初期状態</strong>: <code>block_id</code> 順（0, 1, 2, …）</li>
+<li><strong>再挿入時</strong>: <code>free_blocks()</code> でブロックが返却される際に<strong>逆順</strong>で追加される
+<ul>
+<li>理由: リクエストのブロックチェーンの末尾（最新トークン）は先に evict されるべき。先頭（古いプレフィックス）は他のリクエストと共有される可能性が高いため後回し</li>
+<li>逆順操作は <code>SingleTypeKVCacheManager.free()</code> 側で実行される（BlockPool 外）</li>
+</ul>
+</li>
+</ul>
+<h2 id="blockhashtoblockmap-deep-verified"><a class="header" href="#blockhashtoblockmap-deep-verified">BlockHashToBlockMap [DEEP] [VERIFIED]</a></h2>
+<p>プレフィックスキャッシュのハッシュ→ブロック対応表。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:32</code></p>
+<h3 id="データ構造"><a class="header" href="#データ構造">データ構造</a></h3>
+<pre><code class="language-python">_cache: dict[BlockHashWithGroupId, KVCacheBlock | dict[int, KVCacheBlock]]
+</code></pre>
+<p><strong>Union 型の最適化</strong>: 大半のハッシュキーには 1 ブロックしか対応しないため、単一ブロックは直接格納し、2つ以上の場合のみ内部 dict に昇格する。これにより内部 dict の GC コストを削減。</p>
+<h3 id="重複排除なし設計"><a class="header" href="#重複排除なし設計">重複排除なし設計</a></h3>
+<p>同一ハッシュのブロックが複数存在しても<strong>重複排除しない</strong>。理由: ブロック ID をリクエストに割り当てた後は追加のみ（append-only）を保証するため。重複排除するとブロック ID が変わり、ブロックテーブルの安定性が崩れる。</p>
+<h3 id="操作"><a class="header" href="#操作">操作</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>get_one_block(key)</code></td><td>L60</td><td>ハッシュキーに対応する任意の1ブロックを返す。複数あれば先頭</td></tr>
+<tr><td><code>insert(key, block)</code></td><td>L73</td><td>ブロックをキャッシュに追加。1→dict 昇格を自動処理</td></tr>
+<tr><td><code>pop(key, block_id)</code></td><td>L91</td><td>特定の block_id を除去。残りがあれば dict を復元</td></tr>
+<tr><td><code>__len__()</code></td><td>L121</td><td>ハッシュキー数（ブロック数ではない）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="insert-の分岐"><a class="header" href="#insert-の分岐">insert の分岐</a></h3>
+<pre><code>key なし       → _cache[key] = block          (単一格納)
+key に 1 block → _cache[key] = {id: blk, ...}  (dict 昇格)
+key に dict    → dict[block.block_id] = block   (dict 追加)
+</code></pre>
+<h2 id="null_block-deep-verified"><a class="header" href="#null_block-deep-verified">null_block [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:174</code></p>
+<h3 id="特性"><a class="header" href="#特性">特性</a></h3>
+<ul>
+<li><strong>block_id = 0</strong>: 初期化時に空きキューから最初に popleft される</li>
+<li><strong>is_null = True</strong>: 解放・Eviction の対象外</li>
+<li><strong>ref_cnt 未管理</strong>: <code>touch()</code> や <code>free_blocks()</code> で特別にスキップされる</li>
+</ul>
+<h3 id="用途"><a class="header" href="#用途">用途</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>用途</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td>Sliding Window Attention</td><td>ウィンドウ外のブロック位置を埋める。物理メモリを消費しない</td></tr>
+<tr><td>Mamba (align モード)</td><td>スキップされたブロック位置のパディング</td></tr>
+<tr><td>ブロックテーブルの長さ統一</td><td>Attention カーネルにはブロックテーブルの連続性が必要。null_block で長さを揃える</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="ガード条件"><a class="header" href="#ガード条件">ガード条件</a></h3>
+<pre><code class="language-python"># touch() (L383)
+if block.ref_cnt == 0 and not block.is_null:
+    self.free_block_queue.remove(block)
+
+# free_blocks() (L401-402)
+[block for block in blocks_list if block.ref_cnt == 0 and not block.is_null]
+
+# cache_full_blocks() (L260-261)
+if blk.is_null:
+    continue  # null ブロックはキャッシュしない
+</code></pre>
+<h2 id="ブロック割り当てフロー-deep-verified"><a class="header" href="#ブロック割り当てフロー-deep-verified">ブロック割り当てフロー [DEEP] [VERIFIED]</a></h2>
+<h3 id="get_new_blocks"><a class="header" href="#get_new_blocks">get_new_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:300</code></p>
+<pre><code>get_new_blocks(num_blocks)
+  │
+  ├─ 空きブロック数チェック → 不足なら ValueError
+  │
+  ├─ free_block_queue.popleft_n(num_blocks)
+  │  └─ LRU 先頭（最古）から取り出し
+  │
+  ├─ enable_caching の場合:
+  │  ├─ _maybe_evict_cached_block(block)  ← ハッシュクリア
+  │  ├─ assert block.ref_cnt == 0
+  │  ├─ block.ref_cnt += 1
+  │  └─ metrics_collector.on_block_allocated(block)  ← サンプリング
+  │
+  └─ enable_caching でない場合:
+     ├─ assert block.ref_cnt == 0
+     ├─ block.ref_cnt += 1
+     └─ metrics_collector.on_block_allocated(block)
+</code></pre>
+<p><strong>注意</strong>: この関数はキャッシュ検索を行わない。キャッシュヒットの確認は <code>get_cached_block()</code> で別途行う。</p>
+<h3 id="get_cached_block"><a class="header" href="#get_cached_block">get_cached_block()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:182</code></p>
+<pre><code>get_cached_block(block_hash, kv_cache_group_ids)
+  │
+  ├─ 各 group_id について:
+  │  ├─ make_block_hash_with_group_id(block_hash, group_id)
+  │  ├─ cached_block_hash_to_block.get_one_block(hash_with_id)
+  │  └─ 1つでも miss → None を返す（全グループ一致が必須）
+  │
+  └─ 全ヒット → list[KVCacheBlock] を返す
+</code></pre>
+<p><strong>All-or-nothing セマンティクス</strong>: 複数の KV キャッシュグループがある場合、全グループでヒットしなければキャッシュミスとして扱う。</p>
+<h2 id="ブロック解放フロー-deep-verified"><a class="header" href="#ブロック解放フロー-deep-verified">ブロック解放フロー [DEEP] [VERIFIED]</a></h2>
+<h3 id="free_blocks"><a class="header" href="#free_blocks">free_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:389</code></p>
+<pre><code class="language-python">def free_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -&gt; None:
+    blocks_list = list(ordered_blocks)           # イテレータを実体化
+    for block in blocks_list:
+        block.ref_cnt -= 1                       # 参照カウント減少
+    self.free_block_queue.append_n(
+        [block for block in blocks_list
+         if block.ref_cnt == 0 and not block.is_null]  # 0 到達 &amp; 非 null のみ
+    )
+</code></pre>
+<p><strong>逆順解放の理由</strong>: 呼び出し元（<code>SingleTypeKVCacheManager.free()</code>）がブロックを逆順にして渡す。チェーン末尾（最新トークン）がキューの先頭側に来るため、次回の <code>get_new_blocks()</code> で最初に evict される。先頭ブロック（プレフィックス）は末尾側に来るため、プレフィックスキャッシュとして長く生き残る。</p>
+<h3 id="touch"><a class="header" href="#touch">touch()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:372</code></p>
+<p>プレフィックスキャッシュヒット時に呼ばれ、ブロックの再利用を記録する。</p>
+<pre><code>touch(blocks)
+  │
+  ├─ ref_cnt == 0 かつ非 null の場合:
+  │  └─ free_block_queue.remove(block)  ← 空きキューから除去
+  │
+  ├─ ref_cnt += 1
+  │
+  └─ metrics_collector.on_block_accessed(block)
+</code></pre>
+<h2 id="eviction-メカニズム-deep-verified"><a class="header" href="#eviction-メカニズム-deep-verified">Eviction メカニズム [DEEP] [VERIFIED]</a></h2>
+<h3 id="_maybe_evict_cached_block"><a class="header" href="#_maybe_evict_cached_block">_maybe_evict_cached_block()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:332</code></p>
+<p>新規ブロック割り当て時に、そのブロックがプレフィックスキャッシュに登録されている場合にキャッシュから除去する。</p>
+<pre><code>_maybe_evict_cached_block(block)
+  │
+  ├─ metrics_collector.on_block_evicted(block)  ← 先にメトリクス記録
+  │
+  ├─ block.block_hash is None → return False（キャッシュ未登録）
+  │
+  ├─ cached_block_hash_to_block.pop(hash, block_id)
+  │  └─ None → return False（マップに不在）
+  │
+  ├─ block.reset_hash()  ← ハッシュをクリア
+  │
+  ├─ enable_kv_cache_events の場合:
+  │  └─ kv_event_queue.append(BlockRemoved(...))
+  │
+  └─ return True
+</code></pre>
+<p><strong>タイミング</strong>: <code>get_new_blocks()</code> 内で <code>ref_cnt</code> をインクリメントする<strong>前</strong>に呼ばれる。</p>
+<h3 id="evict_blocks"><a class="header" href="#evict_blocks">evict_blocks()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:405</code></p>
+<p>外部（KV コネクタ）から特定の block_id 群を明示的に evict する。<code>_maybe_evict_cached_block()</code> を各ブロックに対して呼ぶ。ブロックは空きキューからは除去しない（ハッシュの除去のみ）。</p>
+<h3 id="reset_prefix_cache"><a class="header" href="#reset_prefix_cache">reset_prefix_cache()</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:424</code></p>
+<p>全プレフィックスキャッシュのリセット。RLHF でモデル重み更新後にキャッシュを無効化する用途。</p>
+<p><strong>前提条件</strong>: 使用中のブロックが null_block のみ（<code>num_used_blocks == 1</code>）。条件を満たさない場合は <code>False</code> を返して失敗。</p>
+<pre><code>reset_prefix_cache()
+  ├─ 使用中ブロック数 != 1 → return False
+  ├─ cached_block_hash_to_block を新規インスタンスで置換
+  ├─ 全ブロックの hash をリセット
+  ├─ metrics_collector.reset()
+  ├─ kv_event_queue.append(AllBlocksCleared())
+  └─ return True
+</code></pre>
+<h2 id="kv-cache-events-deep-verified"><a class="header" href="#kv-cache-events-deep-verified">KV Cache Events [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:177-178, 480-490</code></p>
+<p>KV Transfer（Disaggregated Prefill）連携のためのイベントシステム。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>イベント型</th><th>発行タイミング</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>BlockStored</code></td><td><code>cache_full_blocks()</code></td><td>新規ブロックがキャッシュ登録された</td></tr>
+<tr><td><code>BlockRemoved</code></td><td><code>_maybe_evict_cached_block()</code></td><td>ブロックがキャッシュから除去された</td></tr>
+<tr><td><code>AllBlocksCleared</code></td><td><code>reset_prefix_cache()</code></td><td>全キャッシュがリセットされた</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-python">def take_events(self) -&gt; list[KVCacheEvent]:
+    """アトミックにイベントキューを排出"""
+    events = self.kv_event_queue
+    self.kv_event_queue = []  # 新規リストで置換（参照スワップ）
+    return events
+</code></pre>
+<h2 id="キャッシュ使用率-verified"><a class="header" href="#キャッシュ使用率-verified">キャッシュ使用率 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:467</code></p>
+<pre><code class="language-python">def get_usage(self) -&gt; float:
+    total_gpu_blocks = self.num_gpu_blocks - 1  # null_block を除外
+    return 1.0 - (self.get_num_free_blocks() / total_gpu_blocks)
+</code></pre>
+<p>null_block は常に「使用中」だが、使用率の計算からは除外される。</p>
+<h2 id="メトリクス収集-deep-verified"><a class="header" href="#メトリクス収集-deep-verified">メトリクス収集 [DEEP] [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_metrics.py:46</code></p>
+<p><code>KVCacheMetricsCollector</code> はサンプリングベースのブロック滞留メトリクスを収集する。</p>
+<h3 id="blockmetricsstate"><a class="header" href="#blockmetricsstate">BlockMetricsState</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_metrics.py:16</code></p>
+<p>個別ブロックのライフサイクル指標:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>birth_time_ns</code></td><td>割り当て時刻（<code>time.monotonic_ns()</code>）</td></tr>
+<tr><td><code>last_access_ns</code></td><td>最終アクセス時刻</td></tr>
+<tr><td><code>access_history</code></td><td>アクセス履歴（最大4件、<code>deque(maxlen=4)</code>）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="サンプリング"><a class="header" href="#サンプリング">サンプリング</a></h3>
+<pre><code class="language-python">sample_rate: float = 0.01  # デフォルト1%
+def should_sample_block(self) -&gt; bool:
+    return random.random() &lt; self.sample_rate
+</code></pre>
+<p>全ブロックを追跡するとオーバーヘッドが大きいため、割り当て時に確率的にサンプリングする。サンプリングされたブロックのみ <code>BlockMetricsState</code> が生成される。</p>
+<h3 id="イベントフック"><a class="header" href="#イベントフック">イベントフック</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フック</th><th>タイミング</th><th>処理</th></tr>
+</thead>
+<tbody>
+<tr><td><code>on_block_allocated(block)</code></td><td><code>get_new_blocks()</code></td><td>サンプル判定、<code>BlockMetricsState</code> 生成</td></tr>
+<tr><td><code>on_block_accessed(block)</code></td><td><code>touch()</code></td><td><code>record_access()</code> 呼び出し</td></tr>
+<tr><td><code>on_block_evicted(block)</code></td><td><code>_maybe_evict_cached_block()</code></td><td><code>KVCacheEvictionEvent</code> を生成・蓄積</td></tr>
+</tbody>
+</table>
+</div>
+<p>Eviction 時に生成される <code>KVCacheEvictionEvent</code> には <code>lifetime_seconds</code>、<code>idle_seconds</code>、<code>reuse_gaps_seconds</code> が含まれ、<code>drain_events()</code> で一括取得できる。</p>
+<h2 id="blockpool-初期化-verified"><a class="header" href="#blockpool-初期化-verified">BlockPool 初期化 [VERIFIED]</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:147</code></p>
+<pre><code class="language-python">def __init__(self, num_gpu_blocks, enable_caching, hash_block_size,
+             enable_kv_cache_events=False, metrics_collector=None):
+    self.blocks = [KVCacheBlock(idx) for idx in range(num_gpu_blocks)]
+    self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
+    self.cached_block_hash_to_block = BlockHashToBlockMap()
+    self.null_block = self.free_block_queue.popleft()  # block_id=0
+    self.null_block.is_null = True
+</code></pre>
+<ul>
+<li><code>hash_block_size</code>: ハッシュ計算に使うブロックサイズ。通常は実際のブロックサイズと一致するが、Hybrid モデル（異なるブロックサイズの KV キャッシュグループ）では異なる場合がある</li>
+<li><code>enable_kv_cache_events</code>: KV Transfer 連携用のイベント発行を有効化</li>
+<li><code>metrics_collector</code>: サンプリングベースの滞留メトリクス収集（オプション）</li>
+</ul>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="summary.html">KVCacheManager サマリー</a></li>
+<li><a href="prefix-cache.html">プレフィックスキャッシュ詳細</a></li>
+<li><a href="attention-type-managers.html">アテンションタイプ別 Manager</a></li>
+<li><a href="../scheduler/summary.html">Scheduler</a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../vllm/components/kv-cache-manager/attention-type-managers.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../vllm/components/kv-cache-manager/prefix-cache.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../vllm/components/kv-cache-manager/attention-type-managers.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../vllm/components/kv-cache-manager/prefix-cache.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../../mark-09e88c2c.min.js"></script>
+        <script src="../../../searcher-c2a407aa.js"></script>
+
+        <script src="../../../clipboard-1626706a.min.js"></script>
+        <script src="../../../highlight-abc7f01d.js"></script>
+        <script src="../../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../../mermaid-eefea253.min.js"></script>
+        <script src="../../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

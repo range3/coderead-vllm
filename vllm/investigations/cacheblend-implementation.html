@@ -1,0 +1,486 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>CacheBlend 実装調査報告 [MEDIUM] [VERIFIED] - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cacheblend-実装調査報告-medium-verified"><a class="header" href="#cacheblend-実装調査報告-medium-verified">CacheBlend 実装調査報告 [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-15
+<strong>対象ソース</strong>: <code>target/LMCache/lmcache/v1/compute/blend/</code>, <code>target/LMCache/lmcache/v1/compute/models/</code>, <code>target/LMCache/lmcache/v1/compute/attention/</code>, <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py</code>, <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py</code></p>
+</blockquote>
+<h2 id="調査目的"><a class="header" href="#調査目的">調査目的</a></h2>
+<p>CacheBlendの実装が論文の主張（RAGチャンク間のクロスアテンション、選択的KV再計算、レイヤー別KV選択、KVロード/再計算パイプライン）をどの程度実現しているか、またvLLM本体へのパッチなしにKV Transferプラグインだけで動作するかを明らかにする。</p>
+<h2 id="結論"><a class="header" href="#結論">結論</a></h2>
+<p><strong>CacheBlendはvLLM本体への ad-hoc パッチが必要</strong>。KV Transferプラグインの枠組みだけでは完結しない。理由は、CacheBlendがvLLMのモデルオブジェクト（Transformerレイヤー群）に直接アクセスして独自のforward計算を行うため。</p>
+<h2 id="論文機能-vs-実装状況"><a class="header" href="#論文機能-vs-実装状況">論文機能 vs 実装状況</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>論文の主張</th><th>実装状態</th><th>備考</th></tr>
+</thead>
+<tbody>
+<tr><td>RAGチャンク間のKV再利用</td><td><strong>実装済み</strong></td><td>セパレータトークンで段落分割、段落単位でKV保存・ルックアップ</td></tr>
+<tr><td>重要token同定（選択的KV再計算）</td><td><strong>実装済み</strong></td><td>topk by K差分のL2ノルム。<code>check_layers</code>で指定レイヤーで判定</td></tr>
+<tr><td>レイヤー別KV選択</td><td><strong>部分実装</strong></td><td><code>check_layers</code>で判定レイヤーを指定可能だが、判定結果は以降の全レイヤーに一律適用</td></tr>
+<tr><td>KVロード/再計算パイプライン</td><td><strong>実装済み</strong></td><td>ジェネレータでレイヤー別にロード→RoPE補正→paged memory書込みをオーバーラップ</td></tr>
+<tr><td>レイヤーごとの異なるrecomp_ratio</td><td><strong>未実装 (TODO)</strong></td><td><code>recomp_ratios[0]</code>のハードコード。TODOコメントあり</td></tr>
+<tr><td>閾値ベースのblending</td><td><strong>未実装 (TODO)</strong></td><td><code>blend_thresholds</code>設定は存在するが未使用</td></tr>
+<tr><td>TP/PP対応</td><td><strong>未実装 (TODO)</strong></td><td><code>base.py</code>冒頭にTODOコメント</td></tr>
+<tr><td>マルチモーダル対応</td><td><strong>未実装 (TODO)</strong></td><td>同上</td></tr>
+<tr><td>プレフィックスキャッシュとの互換</td><td><strong>未実装 (TODO)</strong></td><td><code>vllm_v1_adapter.py:803</code>にTODOコメント</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<h3 id="全体構成"><a class="header" href="#全体構成">全体構成</a></h3>
+<pre class="mermaid">graph TD
+    subgraph vLLM_Worker["vLLM Worker (パッチ必要)"]
+        GMR[GPUModelRunner] --&gt;|"model参照を登録"| VMT[VLLMModelTracker]
+    end
+
+    subgraph LMCache_Blend["LMCache CacheBlend"]
+        VMT --&gt;|"get_model()"| LMB[LMCBlender]
+        LMB --&gt;|"layerwise_model"| LMM[LMCBaseModel&lt;br/&gt;独自forward実行]
+        LMM --&gt;|"process_qkv()"| LMB
+        LMB --&gt;|"get_kv(layer_id)"| GPU_BUF[VLLMBufferLayerwiseGPUConnector&lt;br/&gt;中間バッファ]
+        GPU_BUF --&gt;|"batched_to_gpu()"| KVC[vLLM KVCache&lt;br/&gt;paged memory]
+    end
+
+    subgraph LMCache_Storage["LMCache Storage"]
+        CE[LMCacheEngine] --&gt;|"retrieve_layer()"| GPU_BUF
+        CE --&gt;|"チャンク取得"| SM[StorageManager&lt;br/&gt;CPU/Disk/Remote]
+    end
+
+    LMB --&gt;|"blend()"| CE
+</pre>
+
+<h3 id="cacheblendの実行フロー"><a class="header" href="#cacheblendの実行フロー">CacheBlendの実行フロー</a></h3>
+<p><code>LMCacheConnectorV1Impl.start_load_kv()</code> 内で <code>self.blender.blend()</code> が呼ばれる:</p>
+<ol>
+<li><strong>セパレータ分割</strong>: 入力トークン列をRAGチャンク区切り（<code>" # # "</code> など）で段落に分割</li>
+<li><strong>外部KVロード</strong>: 段落単位でLMCacheストレージからKVキャッシュを取得 → 中間GPUバッファに配置</li>
+<li><strong>RoPE位置補正</strong>: 保存時の位置エンコーディングを新しい位置に変換（FusedRope カスタムCUDAカーネル）</li>
+<li><strong>独自forward実行</strong>: vLLMモデルのレイヤー群を使って入力を再計算</li>
+<li><strong>重要token同定</strong>: <code>check_layers</code>レイヤーで新旧Kの差分L2ノルムを計算、topk個を選択</li>
+<li><strong>選択的アテンション再計算</strong>: 選択されたtokenのみでattentionを再計算（FlashAttn or FlashInfer sparse）</li>
+<li><strong>KVマージ</strong>: 古いKV（外部ストレージ由来）に重要tokenのKVのみ上書き</li>
+<li><strong>paged memory書込み</strong>: 最終KVをvLLMのpaged memoryに書き込み</li>
+</ol>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/compute/blend/blender.py:59-120</code></p>
+<h3 id="重要token同定アルゴリズム"><a class="header" href="#重要token同定アルゴリズム">重要token同定アルゴリズム</a></h3>
+<pre><code class="language-python"># blender.py:88-110 (process_qkv)
+if layer_id in self.common_metadata.check_layers:
+    # 新しいK（再計算）と古いK（ストレージ由来）のL2距離
+    diff_k = torch.sum(
+        (k.to(torch.float32) - old_k.to(torch.float32)) ** 2, dim=[1]
+    )
+    # recomp_ratio割合のtop-kを選択
+    topk_num = int(total_len * self.common_metadata.recomp_ratios[0])
+    top_indices = torch.topk(diff_k, k=topk_num).indices
+    top_indices, _ = torch.sort(top_indices)
+
+    # 選択されたtokenのみQ, K, Vを抽出
+    k, v = k[top_indices], v[top_indices]
+    q = q[top_indices]
+    # 古いKVの該当位置に新しいKVを書き込み
+    old_k[self.metadata.imp_indices] = k
+    old_v[self.metadata.imp_indices] = v
+</code></pre>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/compute/blend/blender.py:88-120</code></p>
+<h3 id="独自モデルforwardlmcbasemodelcompute_layer"><a class="header" href="#独自モデルforwardlmcbasemodelcompute_layer">独自モデルforward（LMCBaseModel.compute_layer）</a></h3>
+<p>CacheBlendはvLLMのnormalなforward pathを使わず、<strong>vLLMのモデルオブジェクトのレイヤーを直接操作する独自のforward</strong>を実行する:</p>
+<pre><code class="language-python"># base.py:66-141 (compute_layer, ジェネレータ)
+@torch.compile
+def compute_layer(self, input_ids):
+    hidden_states = self.vllm_model.get_input_embeddings(input_ids)
+    for idx, layer in enumerate(self.vllm_model.model.layers[...]):
+        # input_layernorm
+        hidden_states, residual = layer.input_layernorm(hidden_states, residual)
+        # QKV projection
+        qkv, _ = layer.self_attn.qkv_proj(hidden_states)
+        q, k, v = qkv.split([q_size, kv_size, kv_size], dim=-1)
+        # モデル固有QKV処理（Qwen3のq_norm/k_norm等）
+        q, k, v = self._process_qkv(q, k, v, layer)
+        # ★ blenderによる重要token選択・KVマージ
+        q, k, v, residual, attn_output, attn_metadata = self.blender.process_qkv(...)
+        # 独自attentionバックエンド（flash_attn_varlen_func）
+        attn_output = self.lmc_attn_layers[idx].forward_contiguous(q, k, v, ...)
+        # output projection + MLP
+        hidden_states, _ = layer.self_attn.o_proj(attn_output)
+        hidden_states, residual = layer.post_attention_layernorm(hidden_states, residual)
+        hidden_states = layer.mlp(hidden_states)
+        yield  # レイヤーごとにジェネレータで制御を返す
+</code></pre>
+<p><strong>重要</strong>: これはvLLMの通常のforward pathとは完全に別のコードパス。vLLMのAttention層、CUDAGraph、InputBatch最適化等は一切使われない。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/compute/models/base.py:66-141</code></p>
+<h3 id="対応モデル"><a class="header" href="#対応モデル">対応モデル</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モデル</th><th>クラス</th><th>QKV処理</th></tr>
+</thead>
+<tbody>
+<tr><td>Llama</td><td><code>LMCLlamaModel</code></td><td>なし（そのまま）</td></tr>
+<tr><td>Qwen2</td><td><code>LMCLlamaModel</code>（流用）</td><td>なし（そのまま）</td></tr>
+<tr><td>Qwen3</td><td><code>LMCQwen3Model</code></td><td>q_norm/k_norm 適用</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>3モデルのみ</strong>。新モデル追加には <code>LMCBaseModel</code> の継承と <code>_process_qkv()</code> 実装が必要。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/compute/models/utils.py:14-35</code></p>
+<h3 id="アテンションバックエンド"><a class="header" href="#アテンションバックエンド">アテンションバックエンド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>バックエンド</th><th>クラス</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td>FlashAttention</td><td><code>LMCFlashAttnBackend</code></td><td>密なアテンション計算（デフォルト）</td></tr>
+<tr><td>FlashInfer Sparse</td><td><code>HackBSAWrapper</code> + <code>LMCFlashInferSparseMetadata</code></td><td>スパースブロックアテンション（<code>enable_sparse=True</code>時）</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>enable_sparse=True</code> を指定すると、FlashInferのVariableBlockSparseAttentionWrapperをハックした <code>HackBSAWrapper</code> を使用して、選択されたtokenブロックのみスパースにアテンション計算を行う。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/compute/attention/flash_attn.py</code>, <code>target/LMCache/lmcache/v1/compute/attention/flash_infer_sparse.py</code></p>
+<h2 id="vllm本体パッチの分析"><a class="header" href="#vllm本体パッチの分析">vLLM本体パッチの分析</a></h2>
+<h3 id="必要なパッチexamplesblend_kv_v1readmemd-に明記"><a class="header" href="#必要なパッチexamplesblend_kv_v1readmemd-に明記">必要なパッチ（examples/blend_kv_v1/README.md に明記）</a></h3>
+<pre><code class="language-python"># vllm/v1/worker/gpu_worker.py の load_model() 末尾に追加が必要:
+from lmcache.v1.compute.models.utils import VLLMModelTracker
+from lmcache.integration.vllm.utils import ENGINE_NAME
+
+VLLMModelTracker.register_model(ENGINE_NAME, self.model_runner.model)
+ensure_kv_transfer_initialized(self.vllm_config)
+</code></pre>
+<p>さらに <code>init_worker_distributed_environment()</code> 内の <code>ensure_kv_transfer_initialized()</code> をコメントアウトし、上記の <code>load_model()</code> に移動する必要がある。</p>
+<p><strong>参照</strong>: <code>target/LMCache/examples/blend_kv_v1/README.md</code></p>
+<h3 id="パッチが必要な理由"><a class="header" href="#パッチが必要な理由">パッチが必要な理由</a></h3>
+<ol>
+<li><strong>モデルオブジェクトへの直接アクセス</strong>: <code>VLLMModelTracker</code> にvLLMのモデルオブジェクトを登録する必要がある。CacheBlendはこのオブジェクトの <code>.model.layers[i]</code> に直接アクセスして独自forwardを実行する</li>
+<li><strong>初期化順序の変更</strong>: KV Transfer初期化をモデルロード後に移動する必要がある（モデルオブジェクトが存在しないとblender構築に失敗）</li>
+<li><strong>KVConnectorのAPIでは不十分</strong>: KVConnectorBase_V1の<code>start_load_kv()</code>/<code>wait_for_layer_load()</code>/<code>save_kv_layer()</code>インタフェースは、KVの読み書きのみを想定。CacheBlendが行う「独自forward＋選択的再計算」はスコープ外</li>
+</ol>
+<h3 id="プラグイン境界の問題"><a class="header" href="#プラグイン境界の問題">プラグイン境界の問題</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>KV Transferプラグインの範囲</th><th>CacheBlendが必要とすること</th><th>ギャップ</th></tr>
+</thead>
+<tbody>
+<tr><td>KVキャッシュの読み書き</td><td>モデルのforward計算</td><td>forwardはWorker/GPUModelRunnerの責任</td></tr>
+<tr><td>レイヤー別KVロード/セーブ</td><td>レイヤー内部のQKV取得・attention再計算</td><td>レイヤー内部ロジックへのアクセス不可</td></tr>
+<tr><td>メタデータ受け渡し</td><td>vLLMモデルオブジェクトへの参照</td><td>メタデータでは渡せない</td></tr>
+<tr><td>slot_mapping操作</td><td>独自のattention計算結果のpaged memory書込み</td><td>通常のattention pathをバイパス</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="vllmbufferlayerwisegpuconnector--blending専用gpuコネクタ"><a class="header" href="#vllmbufferlayerwisegpuconnector--blending専用gpuコネクタ">VLLMBufferLayerwiseGPUConnector — Blending専用GPUコネクタ</a></h2>
+<p><code>enable_blending=True</code> 時に選択される専用コネクタ。通常のLayerwiseGPUConnectorとの違い:</p>
+<ol>
+<li><strong>中間GPUバッファ</strong>: ロード結果をpaged memoryではなく連続バッファに保持（<code>get_kv(layer_id)</code>でblenderがアクセス）</li>
+<li><strong>RoPE位置補正</strong>: <code>batched_to_gpu()</code>ジェネレータ内で <code>fused_rotary_emb</code> による位置エンコーディング変換を実行</li>
+<li><strong>ギャップゼロイング</strong>: RAGチャンク間のセパレータ位置をゼロで埋める（<code>current_gap_positions</code>）</li>
+<li><strong>ダブルバッファ</strong>: compute/loadバッファのping-pongでロードと計算をオーバーラップ</li>
+</ol>
+<h3 id="パイプライン動作"><a class="header" href="#パイプライン動作">パイプライン動作</a></h3>
+<pre><code>Layer 0: [ロード: CPU→GPU buf_load]
+         [compute: ─────────────] [RoPE補正: buf_load→buf_compute]
+Layer 1: [ロード: CPU→GPU buf_load]
+         [compute: ─────────────] [RoPE補正: buf_load→buf_compute] [buf→paged: Layer 0]
+Layer 2: [ロード: CPU→GPU buf_load]
+         [compute: ─────────────] [RoPE補正: buf_load→buf_compute] [buf→paged: Layer 1]
+...
+Layer N+1: [buf→paged: Layer N-1]
+Layer N+2: (yield完了)
+</code></pre>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:552-836</code></p>
+<h2 id="blendserverマルチプロセス版"><a class="header" href="#blendserverマルチプロセス版">BlendServer（マルチプロセス版）</a></h2>
+<p><code>blend_server.py</code> は <code>MPCacheEngine</code> を継承した <code>BlendEngine</code> クラスを提供する。ZMQメッセージキューで別プロセスとして動作し、以下の追加APIを持つ:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>API</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cb_register_kv_cache</code></td><td>blendエンジンのKVキャッシュ登録</td></tr>
+<tr><td><code>cb_lookup_pre_computed</code></td><td>セパレータで段落分割→段落単位ルックアップ</td></tr>
+<tr><td><code>cb_store_pre_computed</code></td><td>段落単位の事前計算KV保存（BLEND_HASH_PREFIX付き）</td></tr>
+<tr><td><code>cb_retrieve_pre_computed</code></td><td>段落単位の事前計算KV取得→GPUバッファ書込み</td></tr>
+<tr><td><code>cb_store_final</code></td><td>最終KV保存（通常ハッシュ、通常モードLLMからも利用可能）</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>ParallelPatternMatcher</code>（Cで実装）でセパレータトークンを高速マッチング。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/multiprocess/blend_server.py</code></p>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<h3 id="lmcache側"><a class="header" href="#lmcache側">LMCache側</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>設定</th><th>デフォルト</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td><code>enable_blending</code></td><td><code>False</code></td><td>CacheBlendモード有効化</td></tr>
+<tr><td><code>blend_check_layers</code></td><td><code>None</code></td><td>重要token判定を行うレイヤーIDリスト</td></tr>
+<tr><td><code>blend_recompute_ratios</code></td><td><code>None</code></td><td>再計算するtokenの割合リスト（現在は<code>[0]</code>のみ使用）</td></tr>
+<tr><td><code>blend_thresholds</code></td><td><code>None</code></td><td>閾値ベースblending用（<strong>未実装</strong>）</td></tr>
+<tr><td><code>enable_sparse</code> (extra_config)</td><td><code>False</code></td><td>FlashInfer スパースアテンション使用</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/config.py:101-118</code></p>
+<h3 id="暗黙の前提"><a class="header" href="#暗黙の前提">暗黙の前提</a></h3>
+<ul>
+<li><code>use_layerwise=True</code> が必須（blending有効時に自動選択: <code>VLLMBufferLayerwiseGPUConnector</code>）</li>
+<li><code>save_unfull_chunk=True</code> が自動設定される</li>
+<li><code>SegmentTokenDatabase</code> が使用される（<code>ChunkedTokenDatabase</code>ではなく）</li>
+</ul>
+<h2 id="制約未実装機能"><a class="header" href="#制約未実装機能">制約・未実装機能</a></h2>
+<ol>
+<li><strong>vLLM本体パッチ必須</strong> — プラグインのみでは動作しない</li>
+<li><strong>対応モデル3種のみ</strong> — Llama, Qwen2, Qwen3。新モデルはLMCBaseModel継承が必要</li>
+<li><strong>RoPE制約</strong> — <code>rotary_dim == head_size</code>、<code>rope_scaling=None</code>、<code>partial_rotary_factor=1.0</code> のみ</li>
+<li><strong>プレフィックスキャッシュ非互換</strong> — TODOコメント、blending後のプレフィックスキャッシュスキップ</li>
+<li><strong>TP/PP未対応</strong> — TODOコメント</li>
+<li><strong>マルチモーダル未対応</strong> — TODOコメント</li>
+<li><strong>バッチサイズ1前提</strong> — FlashAttnMetadata初期化で <code>batch_size=1</code> ハードコード</li>
+<li><strong>レイヤー別ratio未実装</strong> — <code>recomp_ratios[0]</code>のみ使用</li>
+<li><strong>CUDAGraph未対応</strong> — 独自forward pathのため<code>torch.compile</code>のみ</li>
+</ol>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="../investigations/lmcache-integration.html">LMCache統合調査報告</a> — LMCache全体のvLLM統合</li>
+<li><a href="../components/kv-transfer/summary.html">KV Transfer summary</a> — KVConnectorBase_V1のAPI</li>
+<li><a href="../components/gpu-model-runner/summary.html">GPUModelRunner summary</a> — 通常のforward path</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../vllm/investigations/cacheblend-github-discussions.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../vllm/investigations/ec-connector-github-discussions.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../vllm/investigations/cacheblend-github-discussions.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../vllm/investigations/ec-connector-github-discussions.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

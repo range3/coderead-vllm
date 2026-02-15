@@ -3,8 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Page not found - コードリーディング: vLLM &amp; LMCache</title>
-        <base href="/">
+        <title>EngineCoreClient サマリー - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -13,34 +12,34 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff">
 
-        <link rel="icon" href="favicon-de23e50b.svg">
-        <link rel="shortcut icon" href="favicon-8114d1fc.png">
-        <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
-        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+        <link rel="icon" href="../../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../../css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+        <link rel="stylesheet" href="../../../fonts/fonts-9644e21d.css">
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
-        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
-        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
-        <link rel="stylesheet" href="theme/custom-9cb14b51.css">
+        <link rel="stylesheet" href="../../../theme/custom-9cb14b51.css">
 
 
         <!-- Provide site root and default themes to javascript -->
         <script>
-            const path_to_root = "";
+            const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b4930b74.js";
+            window.path_to_searchindex_js = "../../../searchindex-b4930b74.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-1736b030.js"></script>
+        <script src="../../../toc-1736b030.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -107,7 +106,7 @@
             <!-- populated by js -->
             <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
             <noscript>
-                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+                <iframe class="sidebar-iframe-outer" src="../../../toc.html"></iframe>
             </noscript>
             <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -142,7 +141,7 @@
                     <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
 
                     <div class="right-buttons">
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../../../print.html" title="Print this book" aria-label="Print this book">
                             <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
                         </a>
 
@@ -176,14 +175,140 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="document-not-found-404"><a class="header" href="#document-not-found-404">Document not found (404)</a></h1>
-<p>This URL is invalid, sorry. Please use the navigation bar or search to continue.</p>
+                        <h1 id="enginecoreclient-サマリー"><a class="header" href="#enginecoreclient-サマリー">EngineCoreClient サマリー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [SHALLOW]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-09</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p><code>EngineCoreClient</code>はフロントエンドプロセス（AsyncLLM / LLM）とバックエンドプロセス（EngineCore）間のプロセス間通信を抽象化するコンポーネントである。ZeroMQソケットとmsgpackシリアライゼーションを使用し、<code>EngineCoreRequest</code>の送信と<code>EngineCoreOutputs</code>の受信を効率的に行う。</p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<pre><code>フロントエンドプロセス            バックエンドプロセス
+┌───────────────────┐            ┌───────────────────┐
+│  AsyncMPClient    │            │  EngineCore       │
+│                   │            │                   │
+│  input_socket     ├──ROUTER──→│  (ZMQ受信)        │
+│  (zmq.ROUTER)     │  msgpack   │                   │
+│                   │            │                   │
+│  output_socket    │←──PULL────┤  (ZMQ送信)        │
+│  (zmq.PULL)       │  msgpack   │                   │
+│                   │            │                   │
+│  outputs_queue    │            │                   │
+│  (asyncio.Queue)  │            │                   │
+└───────────────────┘            └───────────────────┘
+</code></pre>
+<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コンポーネント</th><th>用途</th><th>ファイル</th></tr>
+</thead>
+<tbody>
+<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td><code>target/vllm/vllm/v1/engine/core_client.py:63</code></td></tr>
+<tr><td><code>MPClient</code></td><td>マルチプロセスクライアント基底</td><td><code>target/vllm/vllm/v1/engine/core_client.py:442</code></td></tr>
+<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセスクライアント（AsyncLLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py:822</code></td></tr>
+<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセスクライアント（LLM用）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td></tr>
+<tr><td><code>MsgpackEncoder</code></td><td>リクエストのシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
+<tr><td><code>MsgpackDecoder</code></td><td>レスポンスのデシリアライズ</td><td><code>target/vllm/vllm/v1/serial_utils.py</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="主要メソッド"><a class="header" href="#主要メソッド">主要メソッド</a></h2>
+<h3 id="enginecoreclient-abc"><a class="header" href="#enginecoreclient-abc">EngineCoreClient (ABC)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>make_client()</code></td><td>ファクトリ。設定に応じた適切なサブクラスを返す</td></tr>
+<tr><td><code>make_async_mp_client()</code></td><td>AsyncLLM用ファクトリ。DP構成も考慮</td></tr>
+<tr><td><code>add_request()</code></td><td>EngineCoreRequestを送信</td></tr>
+<tr><td><code>get_output()</code></td><td>EngineCoreOutputsを受信</td></tr>
+<tr><td><code>abort_requests()</code></td><td>リクエストキャンセル</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="asyncmpclient"><a class="header" href="#asyncmpclient">AsyncMPClient</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>行</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_ensure_output_queue_task()</code></td><td>L856</td><td>ZMQ出力受信タスクを起動</td></tr>
+<tr><td><code>get_output_async()</code></td><td>L902</td><td>asyncio.Queueから出力を取得</td></tr>
+<tr><td><code>_send_input()</code></td><td>L913</td><td>EngineCoreRequestをZMQで送信</td></tr>
+<tr><td><code>_send_input_message()</code></td><td>L925</td><td>ZMQ multipart送信（zero-copy対応）</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="ファクトリ選択ロジック"><a class="header" href="#ファクトリ選択ロジック">ファクトリ選択ロジック</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:99</code> (make_async_mp_client)</p>
+<pre><code>make_async_mp_client(vllm_config, executor_class, ...)
+  ├─ data_parallel_size &gt; 1 の場合:
+  │   ├─ external_lb → DPAsyncMPClient
+  │   └─ internal_lb → DPLBAsyncMPClient
+  └─ それ以外 → AsyncMPClient
+</code></pre>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>パラメータ</th><th>デフォルト</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>parallel_config.data_parallel_size</code></td><td>1</td><td>データ並列数。&gt;1でDP系クライアントを使用</td></tr>
+<tr><td><code>parallel_config.data_parallel_external_lb</code></td><td>—</td><td>外部ロードバランサ使用フラグ</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="呼び出しフロー"><a class="header" href="#呼び出しフロー">呼び出しフロー</a></h2>
+<pre><code>[送信パス]
+AsyncLLM.add_request()
+  → engine_core.add_request_async(request)
+    → AsyncMPClient._send_input(REQUEST, request)
+      → MsgpackEncoder.encode(request)
+      → input_socket.send_multipart(msg, copy=False)
+        → ZMQ ROUTER → バックエンドプロセス
+
+[受信パス]
+process_outputs_socket() [バックグラウンドタスク]
+  → output_socket.recv_multipart()
+    → MsgpackDecoder.decode(frames) → EngineCoreOutputs
+    → outputs_queue.put_nowait(outputs)
+
+AsyncLLM._run_output_handler()
+  → engine_core.get_output_async()
+    → outputs_queue.get() → EngineCoreOutputs
+</code></pre>
+<h2 id="設計上の特徴"><a class="header" href="#設計上の特徴">設計上の特徴</a></h2>
+<ul>
+<li><strong>プロセス分離</strong>: EngineCoreが別プロセスで動作するため、GILの影響を受けずスケジューリングとGPU実行を並行可能</li>
+<li><strong>msgpackシリアライゼーション</strong>: <code>msgspec.Struct</code>の<code>array_like</code>形式でコンパクトなバイナリ表現</li>
+<li><strong>zero-copy</strong>: ZMQ <code>copy=False</code> でメモリコピーを最小化。テンソルバッキングバッファの追跡（<code>add_pending_message</code>）</li>
+<li><strong>weakref</strong>: 出力タスクがクライアントへの循環参照を持たないよう<code>weakref</code>を使用</li>
+</ul>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="../entrypoint/summary.html">エントリポイント</a></li>
+<li><a href="../../architecture/data-flow.html">データフロー</a></li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../vllm/components/engine-core/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
 
+                            <a rel="next prefetch" href="../../../vllm/components/entrypoint/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -191,7 +316,13 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../vllm/components/engine-core/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
 
+                    <a rel="next prefetch" href="../../../vllm/components/entrypoint/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
             </nav>
 
         </div>
@@ -209,17 +340,17 @@
         </script>
 
 
-        <script src="elasticlunr-ef4e11c1.min.js"></script>
-        <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="../../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../../mark-09e88c2c.min.js"></script>
+        <script src="../../../searcher-c2a407aa.js"></script>
 
-        <script src="clipboard-1626706a.min.js"></script>
-        <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="../../../clipboard-1626706a.min.js"></script>
+        <script src="../../../highlight-abc7f01d.js"></script>
+        <script src="../../../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
-        <script src="mermaid-eefea253.min.js"></script>
-        <script src="mermaid-init-ccf746f1.js"></script>
+        <script src="../../../mermaid-eefea253.min.js"></script>
+        <script src="../../../mermaid-init-ccf746f1.js"></script>
 
 
 

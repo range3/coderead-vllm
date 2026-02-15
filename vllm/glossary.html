@@ -1,0 +1,373 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>用語集 - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-2459343d.css">
+        <link rel="stylesheet" href="../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="用語集"><a class="header" href="#用語集">用語集</a></h1>
+<!-- 調査中に発見した対象OSS固有の用語をここに蓄積する -->
+<h3 id="pagedattention"><a class="header" href="#pagedattention">PagedAttention</a></h3>
+<p>KVキャッシュをOSの仮想メモリページングに着想を得て、固定サイズのブロック単位で管理する技術。連続したGPUメモリ確保が不要になり、メモリ断片化を大幅に抑制する。SOSP 2023論文で提案。</p>
+<p><strong>参照</strong>: <code>target/vllm/csrc/attention/</code> (カーネル実装)</p>
+<h3 id="continuous-batching"><a class="header" href="#continuous-batching">Continuous Batching</a></h3>
+<p>リクエストの到着・完了に応じてバッチを動的に更新する手法。固定バッチサイズと異なり、GPU稼働率を最大化できる。vLLMのSchedulerが担う。</p>
+<h3 id="prefill"><a class="header" href="#prefill">Prefill</a></h3>
+<p>プロンプト入力トークン全体を処理してKVキャッシュに書き込む最初のフェーズ。計算量が多く、GPUの並列性を活かしやすい。</p>
+<h3 id="decode"><a class="header" href="#decode">Decode</a></h3>
+<p>生成済みコンテキストのKVキャッシュを参照しながら次のトークンを1つずつ逐次生成するフェーズ。メモリバウンドになりやすい。</p>
+<h3 id="chunked-prefill"><a class="header" href="#chunked-prefill">Chunked Prefill</a></h3>
+<p>Prefillフェーズをチャンクに分割してDecodeフェーズと交互実行する手法。長いプロンプトがDecodeのレイテンシを増加させるのを防ぐ。</p>
+<h3 id="enginecore"><a class="header" href="#enginecore">EngineCore</a></h3>
+<p>vLLMの推論ループの内側コンポーネント。別プロセス（<code>EngineCoreProc</code>）として動作し、ZeroMQソケットで上位エンジン層と通信する。Scheduler、KVCacheManager、Executorを統括する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:79</code> (<code>EngineCore</code>)</p>
+<h3 id="kvcachemanager"><a class="header" href="#kvcachemanager">KVCacheManager</a></h3>
+<p>KVキャッシュブロックの割り当て・解放・プレフィックスキャッシュを管理するクラス。BlockPoolを内部で使用する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:94</code> (<code>KVCacheManager</code>)</p>
+<h3 id="kvcacheblock"><a class="header" href="#kvcacheblock">KVCacheBlock</a></h3>
+<p>PagedAttentionで管理するKVキャッシュの最小単位。固定サイズ（block_sizeトークン分）のGPUメモリブロック。</p>
+<h3 id="blockpool"><a class="header" href="#blockpool">BlockPool</a></h3>
+<p>KVCacheBlockの空きブロックをプール管理するクラス。ブロックの割り当て・返却を効率的に行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py</code></p>
+<h3 id="vllmconfig"><a class="header" href="#vllmconfig">VllmConfig</a></h3>
+<p>全設定を集約するトップレベルクラス。<code>ModelConfig</code>、<code>CacheConfig</code>、<code>SchedulerConfig</code>、<code>ParallelConfig</code>等を内包する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/vllm.py</code></p>
+<h3 id="gpumodelrunner"><a class="header" href="#gpumodelrunner">GPUModelRunner</a></h3>
+<p>GPU上でモデルのフォワードパスを実際に実行するクラス。LoRA、KVConnector、ECConnectorのMixinを持つ。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:329</code> (<code>GPUModelRunner</code>)</p>
+<h3 id="executor"><a class="header" href="#executor">Executor</a></h3>
+<p>Worker群を管理する抽象層。シングルプロセス（<code>UniProcExecutor</code>）、マルチプロセス（<code>MultiprocExecutor</code>）、Ray分散（<code>RayDistributedExecutor</code>）の実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py</code></p>
+<h3 id="worker"><a class="header" href="#worker">Worker</a></h3>
+<p>1つのGPU（またはCPU/XPU）デバイスを担当するプロセス。GPUModelRunnerを保持し、Executorから呼び出される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:70</code> (<code>Worker</code>)</p>
+<h3 id="speculative-decoding"><a class="header" href="#speculative-decoding">Speculative Decoding</a></h3>
+<p>ドラフトモデル（小さいモデル）で複数トークンを仮生成し、メインモデルで一括検証することで推論を高速化する手法。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/spec_decode/</code></p>
+<h3 id="lora-low-rank-adaptation"><a class="header" href="#lora-low-rank-adaptation">LoRA (Low-Rank Adaptation)</a></h3>
+<p>少量の追加パラメータでLLMをファインチューニングする手法。vLLMは複数LoRAの動的切替（Multi-LoRA）をランタイムでサポートする。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/lora/</code></p>
+<h3 id="kv-transfer"><a class="header" href="#kv-transfer">KV Transfer</a></h3>
+<p>複数のvLLMインスタンス間またはストレージ間でデコーダKVキャッシュを転送するプラグインフレームワーク。KVConnectorBase_V1抽象基底クラス（7 abstractメソッド）と KVConnectorFactory（10個の登録済みコネクタ）で構成。Scheduler側（外部キャッシュ問い合わせ）とWorker側（レイヤー別非同期ロード/セーブ）の2ロール分離。ECConnector（エンコーダキャッシュ用）とは完全に独立した系統。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code> (KVConnectorBase_V1), <code>docs/src/components/kv-transfer/summary.md</code></p>
+<h3 id="kvconnectorbase_v1"><a class="header" href="#kvconnectorbase_v1">KVConnectorBase_V1</a></h3>
+<p>KV Transferのプラグイン基底クラス。Worker側4メソッド（start_load_kv, wait_for_layer_load, save_kv_layer, wait_for_save）とScheduler側3メソッド（get_num_new_matched_tokens, update_state_after_alloc, build_connector_meta）を定義する。KVConnectorMetadataでScheduler→Worker間の通信を行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/base.py:147</code></p>
+<h3 id="kvconnectorfactory"><a class="header" href="#kvconnectorfactory">KVConnectorFactory</a></h3>
+<p>KVコネクタの登録・発見・生成を行うファクトリクラス。遅延ロードパターン（module_path + class_name）で10個のコネクタを登録。<code>kv_connector_module_path</code>設定で動的ロードも可能。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/factory.py:27</code></p>
+<h3 id="kvtransferconfig"><a class="header" href="#kvtransferconfig">KVTransferConfig</a></h3>
+<p>KV Transferの設定クラス。kv_connector（コネクタ名）、kv_role（producer/consumer/both）、kv_connector_extra_config（コネクタ固有設定）等を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/kv_transfer.py:17</code></p>
+<h3 id="kvconnectormodelrunnermixin"><a class="header" href="#kvconnectormodelrunnermixin">KVConnectorModelRunnerMixin</a></h3>
+<p>GPUModelRunnerにミックスインされるKVコネクタ統合クラス。<code>_get_kv_connector_output()</code>コンテキストマネージャでbind→start_load→yield→wait_for_save→get_finished→clearのライフサイクルを管理する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/kv_connector_model_runner_mixin.py:40</code></p>
+<h3 id="lmcache"><a class="header" href="#lmcache">LMCache</a></h3>
+<p>vLLMと統合可能な外部KVキャッシュライブラリ。チャンク単位（デフォルト256トークン）でKVキャッシュを保存し、3層ストレージ階層（CPU→Disk→Remote）を持つ。15+のリモートコネクタ（Redis, S3, FS等）をサポート。Disaggregated Serving（P/D分離）にも対応。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/lmcache_connector.py:72</code>, <code>docs/src/investigations/lmcache-integration.md</code></p>
+<h3 id="disaggregated-prefill-pd分離"><a class="header" href="#disaggregated-prefill-pd分離">Disaggregated Prefill (P/D分離)</a></h3>
+<p>PrefillフェーズとDecodeフェーズを異なるvLLMインスタンスで実行するアーキテクチャ。Producerインスタンスがプリフィルを実行してKVキャッシュをKV Transfer経由で転送し、ConsumerインスタンスがKVキャッシュをロードしてデコードのみ実行する。</p>
+<h3 id="waiting_for_remote_kvs"><a class="header" href="#waiting_for_remote_kvs">WAITING_FOR_REMOTE_KVS</a></h3>
+<p>KV Transferの非同期ロード中のリクエスト状態。Schedulerがブロックを割り当て後、Worker側のKVロード完了を待つ間この状態に置かれる。Worker側コネクタの<code>get_finished()</code>で受信完了が報告されると、WAITING状態に戻されて次のスケジューリングサイクルでRUNNINGに昇格する。</p>
+<h3 id="kv-cache-events"><a class="header" href="#kv-cache-events">KV Cache Events</a></h3>
+<p>KVキャッシュのブロック保存・削除を外部システムに通知するイベントシステム。BlockStored、BlockRemoved、AllBlocksClearedの3イベント型。KVEventAggregatorで全Worker共通イベントを集約し、EventPublisher（ZMQ等）で配信。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:49-84</code></p>
+<h3 id="cacheenginekey-lmcache"><a class="header" href="#cacheenginekey-lmcache">CacheEngineKey (LMCache)</a></h3>
+<p>LMCacheのチャンクを一意に識別するキー。model_name、world_size、worker_id、chunk_hash（トークン列のプレフィックスハッシュ）、dtype、タグで構成。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/utils.py:330</code></p>
+<h3 id="multimodal-マルチモーダル"><a class="header" href="#multimodal-マルチモーダル">Multimodal (マルチモーダル)</a></h3>
+<p>テキスト以外の入力（画像・動画・音声）を扱うモデル機能。<code>vllm/multimodal/</code> にプロセッサ・レジストリ等が実装されている。Gemma3等のマルチモーダルモデルが対応。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/</code></p>
+<h3 id="unified-compute-model"><a class="header" href="#unified-compute-model">Unified Compute Model</a></h3>
+<p>vLLM v1のSchedulerが採用するスケジューリングアプローチ。PrefillフェーズとDecodeフェーズを明示的に区別せず、各リクエストの<code>num_computed_tokens</code>（計算済みトークン数）が目標に追いつくまでトークンを割り当てる。これにより、Chunked Prefill、Prefix Caching、Speculative Decodingを統一的に扱える。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:322</code> (コメント)</p>
+<h3 id="collective_rpc"><a class="header" href="#collective_rpc">collective_rpc</a></h3>
+<p>Executor層が全Workerに対して同一メソッドを実行するRPCパターン。メソッド名（文字列）または関数を受け取り、全Workerで並列実行後、出力ランクのWorkerの結果を返す。<code>non_block=True</code>でFuture返却も可能。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:180</code> (<code>collective_rpc</code>)</p>
+<h3 id="executemodelstate"><a class="header" href="#executemodelstate">ExecuteModelState</a></h3>
+<p>GPUModelRunnerの2フェーズ実行パターンで使用される一時状態。execute_model()がlogitsやhidden_statesなどのGPUテンソルを保存し、sample_tokens()が復元してサンプリングを行う。NamedTuple。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code> (<code>ExecuteModelState</code>)</p>
+<h3 id="outputprocessor"><a class="header" href="#outputprocessor">OutputProcessor</a></h3>
+<p>フロントエンドプロセスで動作し、EngineCoreOutputをRequestOutputに変換するコンポーネント。インクリメンタルデトークナイズ、停止文字列判定、logprobs処理を行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:73</code> (<code>OutputProcessor</code>)</p>
+<h3 id="incrementaldetokenizer"><a class="header" href="#incrementaldetokenizer">IncrementalDetokenizer</a></h3>
+<p>トークンIDからテキストへのインクリメンタル変換を行うクラス。FastIncrementalDetokenizer（HF DecodeStream）とSlowIncrementalDetokenizer（Python実装）の2種がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/detokenizer.py:30</code> (<code>IncrementalDetokenizer</code>)</p>
+<h3 id="requestoutputkind"><a class="header" href="#requestoutputkind">RequestOutputKind</a></h3>
+<p>出力モードを定義するEnum。CUMULATIVE（毎回全出力）、DELTA（差分のみ、ストリーミング向け）、FINAL_ONLY（完了時のみ）の3値。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/sampling_params.py:108</code> (<code>RequestOutputKind</code>)</p>
+<h3 id="mm_cache-マルチモーダルキャッシュ"><a class="header" href="#mm_cache-マルチモーダルキャッシュ">mm_cache (マルチモーダルキャッシュ)</a></h3>
+<p>マルチモーダル入力（画像エンコーダ出力等）のキャッシュ機構。同一画像の繰り返し処理を避けるため、エンコーダ出力をキャッシュする。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu/mm/encoder_runner.py</code></p>
+<h3 id="freekvcacheblockqueue"><a class="header" href="#freekvcacheblockqueue">FreeKVCacheBlockQueue</a></h3>
+<p>空きKVキャッシュブロックをLRU順序で管理する双方向リンクリスト。Pythonの<code>deque</code>ではなく独自実装を採用し、O(1)の中間要素削除をサポートする。センチネルノード（fake_head/fake_tail）を使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:156</code></p>
+<h3 id="blockhashwithgroupid"><a class="header" href="#blockhashwithgroupid">BlockHashWithGroupId</a></h3>
+<p><code>BlockHash</code>（ブロックのハッシュ値）にKVキャッシュグループID（4バイトBE）を結合したバイト列。Tuple生成を避けてGC負荷を低減する。プレフィックスキャッシュのキーとして使用。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:39</code></p>
+<h3 id="null_block"><a class="header" href="#null_block">null_block</a></h3>
+<p>BlockPoolが保持する特殊なKVCacheBlock（block_id=0, is_null=True）。Sliding Window Attentionのウィンドウ外位置やMambaのスキップ位置を埋めるプレースホルダ。物理メモリを消費せず、解放・Eviction対象外。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/block_pool.py:174</code></p>
+<h3 id="kvcachecoordinator"><a class="header" href="#kvcachecoordinator">KVCacheCoordinator</a></h3>
+<p>複数のKVキャッシュグループ（異なるアテンションタイプのレイヤー群）を統括する抽象クラス。NoPrefixCache、Unitary（単一グループ）、Hybrid（複数グループ）の3実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_coordinator.py:28</code></p>
+<h3 id="singletypekvcachemanager"><a class="header" href="#singletypekvcachemanager">SingleTypeKVCacheManager</a></h3>
+<p>1種類のアテンションタイプのKVキャッシュ管理ロジックを担当する抽象基底クラス。FullAttention、SlidingWindow、ChunkedLocalAttention、Mamba、CrossAttention、SinkFullAttentionの7実装がある。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/single_type_kv_cache_manager.py:24</code></p>
+<h3 id="cascade-attention"><a class="header" href="#cascade-attention">Cascade Attention</a></h3>
+<p>全リクエストで共有される共通プレフィックスの再計算をスキップする最適化。<code>get_num_common_prefix_blocks()</code>で共通ブロック数を判定し、アテンション計算から除外する。</p>
+<h3 id="sliding-window-attention"><a class="header" href="#sliding-window-attention">Sliding Window Attention</a></h3>
+<p>各トークンが直近のN個のトークンにのみアテンションするメカニズム。ウィンドウ外のKVキャッシュブロックは<code>null_block</code>で置換されメモリを節約する。</p>
+<h3 id="attention-sink-streamingllm"><a class="header" href="#attention-sink-streamingllm">Attention Sink (StreamingLLM)</a></h3>
+<p>先頭の少数トークン（sink tokens）のKVキャッシュを常に保持しつつ、中間トークンを捨てて長いシーケンスを処理する手法。<code>SinkFullAttentionManager</code>が実装。</p>
+<h3 id="multimodalfeaturespec"><a class="header" href="#multimodalfeaturespec">MultiModalFeatureSpec</a></h3>
+<p>マルチモーダル入力1つ分のメタデータとテンソルデータを保持するデータクラス。<code>data</code>（処理済みテンソル、キャッシュヒット時はNone）、<code>identifier</code>（エンコーダキャッシュ用ハッシュ）、<code>mm_position</code>（PlaceholderRange）、<code>modality</code>（“image“等）を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:337</code></p>
+<h3 id="placeholderrange"><a class="header" href="#placeholderrange">PlaceholderRange</a></h3>
+<p>プロンプト内のマルチモーダルプレースホルダーの位置情報。<code>offset</code>（開始位置）、<code>length</code>（トークン数）、<code>is_embed</code>（埋め込みマスク）を保持。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/inputs.py:170</code></p>
+<h3 id="multimodalhasher"><a class="header" href="#multimodalhasher">MultiModalHasher</a></h3>
+<p>マルチモーダルデータのコンテンツベースハッシュを計算するクラス。PIL Image、Tensor、ndarray等を決定的にシリアライズし、blake3（デフォルト）でハッシュ化する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50</code></p>
+<h3 id="processorcache-mm"><a class="header" href="#processorcache-mm">ProcessorCache (MM)</a></h3>
+<p>フロントエンド（P0）でHF Processor処理結果をキャッシュする仕組み。4種類の実装（processor_only/lru/shm/none）があり、P0-P1間のキャッシュEviction順序を同期させることでIPCなしにキャッシュ状態を推定できる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<h3 id="encodercachemanager"><a class="header" href="#encodercachemanager">EncoderCacheManager</a></h3>
+<p>バックエンド（P1）でビジョンエンコーダ出力のライフサイクルを管理するクラス。リファレンスカウント方式で複数リクエスト間のキャッシュ共有を実現し、FIFO順の遅延Evictionを行う。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/encoder_cache_manager.py:17</code></p>
+<h3 id="siglipvisionmodel"><a class="header" href="#siglipvisionmodel">SiglipVisionModel</a></h3>
+<p>SIGLIP（Sigmoid Loss for Language Image Pre-training）ベースのViTビジョンエンコーダ。Gemma3のビジョンタワーとして使用される。パッチ埋め込み + 位置埋め込み → Transformer Encoder（双方向Attention）の構造。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/siglip.py:848</code></p>
+<h3 id="pan-and-scan"><a class="header" href="#pan-and-scan">Pan-and-Scan</a></h3>
+<p>アスペクト比が大きい画像を複数のクロップに分割して詳細認識を向上させるGemma3の仕組み。V1では簡略化されたアテンションパターンのため最適でない結果になりうる。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/model_executor/models/gemma3_mm.py:109</code></p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../vllm/investigations/process-architecture.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../vllm/appendix/file-index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../vllm/investigations/process-architecture.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../vllm/appendix/file-index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-c2a407aa.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-eefea253.min.js"></script>
+        <script src="../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,897 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>テキスト推論データフロー - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-b4930b74.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-1736b030.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="テキスト推論データフロー"><a class="header" href="#テキスト推論データフロー">テキスト推論データフロー</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-11 (Phase 2bでマルチモーダル差分追加)</p>
+</blockquote>
+<h2 id="概要"><a class="header" href="#概要">概要</a></h2>
+<p>テキスト推論リクエストは、APIエントリポイントからエンジン層を経てGPUで実行され、生成されたトークンがデトークナイズされてユーザーに返却される。フロー全体は5つの境界データ構造（EngineCoreRequest → SchedulerOutput → ModelRunnerOutput → EngineCoreOutput → RequestOutput）で区切られ、ZMQ IPCによるプロセス分離とasyncioによる非同期パイプラインで高スループットを実現する。</p>
+<h2 id="フロー全体図"><a class="header" href="#フロー全体図">フロー全体図</a></h2>
+<pre class="mermaid">graph TD
+    subgraph フロントエンドプロセス
+        API["API Server / LLM"]
+        AsyncLLM["AsyncLLM&lt;br&gt;generate() / add_request()"]
+        IP["InputProcessor&lt;br&gt;process_inputs()"]
+        OP["OutputProcessor&lt;br&gt;process_outputs()"]
+        Client["EngineCoreClient&lt;br&gt;AsyncMPClient"]
+    end
+
+    subgraph バックエンドプロセス ["EngineCore プロセス"]
+        EC["EngineCore&lt;br&gt;step()"]
+        Sched["Scheduler&lt;br&gt;schedule()"]
+        KV["KVCacheManager&lt;br&gt;allocate_slots()"]
+        Exec["Executor&lt;br&gt;execute_model()"]
+        Worker["Worker"]
+        MR["GPUModelRunner&lt;br&gt;execute_model()"]
+    end
+
+    API --&gt;|"prompt, params"| AsyncLLM
+    AsyncLLM --&gt;|"prompt, params"| IP
+    IP --&gt;|"EngineCoreRequest"| AsyncLLM
+    AsyncLLM --&gt;|"EngineCoreRequest"| Client
+
+    Client --&gt;|"ZMQ ROUTER\nmsgpack"| EC
+    EC --&gt; Sched
+    Sched --&gt;|"allocate_slots()"| KV
+    Sched --&gt;|"SchedulerOutput"| EC
+    EC --&gt;|"SchedulerOutput"| Exec
+    Exec --&gt;|"MessageQueue\n共有メモリ"| Worker
+    Worker --&gt; MR
+    MR --&gt;|"ModelRunnerOutput"| Worker
+    Worker --&gt;|"ModelRunnerOutput"| Exec
+    Exec --&gt;|"ModelRunnerOutput"| EC
+    EC --&gt;|"update_from_output()"| Sched
+    Sched --&gt;|"EngineCoreOutputs"| EC
+
+    EC --&gt;|"ZMQ PUSH\nmsgpack"| Client
+    Client --&gt;|"EngineCoreOutputs"| OP
+    OP --&gt;|"RequestOutput"| AsyncLLM
+    AsyncLLM --&gt;|"RequestOutput"| API
+</pre>
+
+<h2 id="境界データ構造"><a class="header" href="#境界データ構造">境界データ構造</a></h2>
+<p>フローは以下の5つのデータ構造で区切られる。各構造はプロセス間またはコンポーネント間の境界を定義する。</p>
+<h3 id="enginecorerequest"><a class="header" href="#enginecorerequest">EngineCoreRequest</a></h3>
+<p>フロントエンド → バックエンドの境界。ユーザー入力を正規化した内部表現。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:55</code> (EngineCoreRequest)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>内部リクエストID（外部IDに8文字ランダムサフィックス付与）</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>トークナイズ済みプロンプト</td></tr>
+<tr><td><code>mm_features</code></td><td><code>list[MultiModalFeatureSpec] | None</code></td><td>マルチモーダル入力（テキスト推論ではNone）</td></tr>
+<tr><td><code>sampling_params</code></td><td><code>SamplingParams | None</code></td><td>サンプリングパラメータ（clone済み）</td></tr>
+<tr><td><code>eos_token_id</code></td><td><code>int | None</code></td><td>終了トークンID</td></tr>
+<tr><td><code>arrival_time</code></td><td><code>float</code></td><td>リクエスト到着時刻</td></tr>
+<tr><td><code>lora_request</code></td><td><code>LoRARequest | None</code></td><td>LoRAアダプタ情報</td></tr>
+<tr><td><code>priority</code></td><td><code>int</code></td><td>優先度（デフォルト0）</td></tr>
+<tr><td><code>data_parallel_rank</code></td><td><code>int | None</code></td><td>データ並列ランク指定</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>msgspec.Struct</code> を継承し、<code>array_like=True</code> + <code>omit_defaults=True</code> で効率的にmsgpackシリアライズされる。</p>
+<h3 id="scheduleroutput"><a class="header" href="#scheduleroutput">SchedulerOutput</a></h3>
+<p>Scheduler → Executor の境界。各ステップのスケジュール結果を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/output.py:184</code> (SchedulerOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>scheduled_new_reqs</code></td><td><code>list[NewRequestData]</code></td><td>初回スケジュールされたリクエスト（フルデータ）</td></tr>
+<tr><td><code>scheduled_cached_reqs</code></td><td><code>CachedRequestData</code></td><td>既スケジュール済みリクエスト（差分のみ）</td></tr>
+<tr><td><code>num_scheduled_tokens</code></td><td><code>dict[str, int]</code></td><td>リクエストごとのスケジュールトークン数</td></tr>
+<tr><td><code>total_num_scheduled_tokens</code></td><td><code>int</code></td><td>合計スケジュールトークン数</td></tr>
+<tr><td><code>scheduled_spec_decode_tokens</code></td><td><code>dict[str, list[int]]</code></td><td>Speculative Decoding用トークン</td></tr>
+<tr><td><code>scheduled_encoder_inputs</code></td><td><code>dict[str, list[int]]</code></td><td>エンコーダ入力インデックス（マルチモーダル）</td></tr>
+<tr><td><code>num_common_prefix_blocks</code></td><td><code>list[int]</code></td><td>共通プレフィックスブロック数（Cascade Attention用）</td></tr>
+<tr><td><code>finished_req_ids</code></td><td><code>set[str]</code></td><td>このステップで完了したリクエストID</td></tr>
+<tr><td><code>free_encoder_mm_hashes</code></td><td><code>list[str]</code></td><td>解放するエンコーダキャッシュのmm_hash</td></tr>
+<tr><td><code>preempted_req_ids</code></td><td><code>set[str] | None</code></td><td>プリエンプションされたリクエスト</td></tr>
+<tr><td><code>has_structured_output_requests</code></td><td><code>bool</code></td><td>構造化出力リクエストの有無</td></tr>
+<tr><td><code>pending_structured_output_tokens</code></td><td><code>bool</code></td><td>Grammar bitmask準備状態</td></tr>
+<tr><td><code>num_invalid_spec_tokens</code></td><td><code>dict[str, int] | None</code></td><td>無効スペキュレーショントークン数</td></tr>
+<tr><td><code>kv_connector_metadata</code></td><td><code>KVConnectorMetadata | None</code></td><td>KV Transfer メタデータ</td></tr>
+<tr><td><code>ec_connector_metadata</code></td><td><code>ECConnectorMetadata | None</code></td><td>EC Transfer メタデータ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>NewRequestData</strong> は初回スケジュール時のフルデータ（プロンプトトークン、サンプリングパラメータ、ブロックID等）を含む。<strong>CachedRequestData</strong> は既スケジュール済みリクエストの差分（新規ブロックID、新トークンID、計算済みトークン数の更新）のみを含み、プロセス間通信コストを最小化する。</p>
+<h3 id="modelrunneroutput"><a class="header" href="#modelrunneroutput">ModelRunnerOutput</a></h3>
+<p>GPUModelRunner → EngineCore の境界。モデル推論結果を含む。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/outputs.py:160</code> (ModelRunnerOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>req_ids</code></td><td><code>list[str]</code></td><td>バッチ内のリクエストID一覧</td></tr>
+<tr><td><code>req_id_to_index</code></td><td><code>dict[str, int]</code></td><td>リクエストID → バッチインデックス</td></tr>
+<tr><td><code>sampled_token_ids</code></td><td><code>list[list[int]]</code></td><td>サンプリング済みトークンID [num_reqs, num_generated]</td></tr>
+<tr><td><code>logprobs</code></td><td><code>LogprobsLists | None</code></td><td>生成トークンの対数確率</td></tr>
+<tr><td><code>prompt_logprobs_dict</code></td><td><code>dict[str, LogprobsTensors | None]</code></td><td>プロンプトトークンの対数確率</td></tr>
+<tr><td><code>pooler_output</code></td><td><code>list[Tensor | None] | None</code></td><td>プーリング出力（埋め込みモデル用）</td></tr>
+<tr><td><code>kv_connector_output</code></td><td><code>KVConnectorOutput | None</code></td><td>KV Transfer出力</td></tr>
+<tr><td><code>ec_connector_output</code></td><td><code>ECConnectorOutput | None</code></td><td>EC Transfer出力</td></tr>
+<tr><td><code>num_nans_in_logits</code></td><td><code>dict[str, int] | None</code></td><td>logits内のNaN数</td></tr>
+<tr><td><code>cudagraph_stats</code></td><td><code>CUDAGraphStat | None</code></td><td>CUDAGraph実行統計</td></tr>
+</tbody>
+</table>
+</div>
+<p>Worker→Executorへの転送ではPythonリスト形式を使用し、torch.Tensorの高コストなシリアライゼーションを回避する。</p>
+<h3 id="enginecoreoutput"><a class="header" href="#enginecoreoutput">EngineCoreOutput</a></h3>
+<p>バックエンド → フロントエンドの境界。リクエスト単位の推論結果。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:130</code> (EngineCoreOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>対応するリクエストID</td></tr>
+<tr><td><code>new_token_ids</code></td><td><code>list[int]</code></td><td>新たに生成されたトークンID</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>FinishReason | None</code></td><td>完了理由（stop/length/abort/error）</td></tr>
+<tr><td><code>new_logprobs</code></td><td><code>LogprobsLists | None</code></td><td>生成トークンのlogprobs</td></tr>
+<tr><td><code>num_cached_tokens</code></td><td><code>int</code></td><td>プレフィックスキャッシュヒット数</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>EngineCoreOutputs</code>（複数形）がこれを<code>list[EngineCoreOutput]</code>としてバッチ化し、<code>scheduler_stats</code>やタイムスタンプと共にZMQ経由で送信される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/__init__.py:176</code> (EngineCoreOutputs)</p>
+<h3 id="requestoutput"><a class="header" href="#requestoutput">RequestOutput</a></h3>
+<p>OutputProcessor → API の境界。ユーザーに返却される最終出力。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/outputs.py:86</code> (RequestOutput)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>request_id</code></td><td><code>str</code></td><td>外部リクエストID（クライアントが指定したID）</td></tr>
+<tr><td><code>prompt</code></td><td><code>str | None</code></td><td>元のプロンプト文字列</td></tr>
+<tr><td><code>prompt_token_ids</code></td><td><code>list[int] | None</code></td><td>トークナイズ済みプロンプト</td></tr>
+<tr><td><code>prompt_logprobs</code></td><td><code>PromptLogprobs | None</code></td><td>プロンプトトークンの対数確率</td></tr>
+<tr><td><code>outputs</code></td><td><code>list[CompletionOutput]</code></td><td>サンプルごとの出力（n&gt;1で複数）</td></tr>
+<tr><td><code>finished</code></td><td><code>bool</code></td><td>リクエスト完了フラグ</td></tr>
+<tr><td><code>metrics</code></td><td><code>RequestStateStats | None</code></td><td>レイテンシ等の統計情報</td></tr>
+<tr><td><code>num_cached_tokens</code></td><td><code>int | None</code></td><td>プレフィックスキャッシュヒット数</td></tr>
+<tr><td><code>kv_transfer_params</code></td><td><code>dict[str, Any] | None</code></td><td>KV Transfer情報（完了時）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>CompletionOutput</strong> (<code>target/vllm/vllm/outputs.py:23</code>) は各サンプルの出力を表す:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド</th><th>型</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>index</code></td><td><code>int</code></td><td>サンプルインデックス</td></tr>
+<tr><td><code>text</code></td><td><code>str</code></td><td>デトークナイズ済みテキスト</td></tr>
+<tr><td><code>token_ids</code></td><td><code>GenericSequence[int]</code></td><td>生成トークンID列</td></tr>
+<tr><td><code>cumulative_logprob</code></td><td><code>float | None</code></td><td>累積対数確率</td></tr>
+<tr><td><code>logprobs</code></td><td><code>SampleLogprobs | None</code></td><td>各トークンのlogprobs</td></tr>
+<tr><td><code>finish_reason</code></td><td><code>str | None</code></td><td>完了理由（“stop” / “length”）</td></tr>
+<tr><td><code>stop_reason</code></td><td><code>int | str | None</code></td><td>停止トークン/文字列</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>出力モード</strong>（<code>RequestOutputKind</code>、<code>target/vllm/vllm/sampling_params.py:108</code>）:</p>
+<ul>
+<li><code>CUMULATIVE</code>: 毎回全出力を返す（デフォルト）</li>
+<li><code>DELTA</code>: 差分のみ返す（ストリーミング向け）</li>
+<li><code>FINAL_ONLY</code>: 完了時のみ返す</li>
+</ul>
+<h2 id="上流パス-リクエスト受信--enginecore"><a class="header" href="#上流パス-リクエスト受信--enginecore">上流パス: リクエスト受信 → EngineCore</a></h2>
+<h3 id="エントリポイント-llm--asyncllm"><a class="header" href="#エントリポイント-llm--asyncllm">エントリポイント (LLM / AsyncLLM)</a></h3>
+<p>vLLMには同期パス（<code>LLM</code>）と非同期パス（<code>AsyncLLM</code>）の2つのエントリポイントがある。内部的にはどちらも<code>InputProcessor</code>と<code>EngineCoreClient</code>を使用する。</p>
+<h4 id="非同期パス主パス-asyncllm"><a class="header" href="#非同期パス主パス-asyncllm">非同期パス（主パス）: AsyncLLM</a></h4>
+<p>APIサーバー（OpenAI互換API等）が使用する主要パス。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/async_llm.py:71</code> (AsyncLLM)</p>
+<pre><code>AsyncLLM.generate(prompt, sampling_params, request_id)    # L537
+  │
+  ├─ add_request(request_id, prompt, params)               # L286
+  │   ├─ input_processor.process_inputs(prompt, params)    # L364
+  │   │   → EngineCoreRequest を生成
+  │   ├─ input_processor.assign_request_id(request)        # L378
+  │   │   → 内部IDを付与（外部ID + 8文字ランダムサフィックス）
+  │   ├─ output_processor.add_request(request, ...)        # L423
+  │   │   → フロントエンド側でリクエストを登録
+  │   └─ engine_core.add_request_async(request)            # L426
+  │       → ZMQ経由でバックエンドへ送信
+  │
+  └─ while not finished:                                    # L586
+      out = q.get_nowait() or await q.get()                # L589
+      yield out                                             # L596
+</code></pre>
+<p><code>generate()</code>はAsyncGeneratorで、バックグラウンドの<code>output_handler</code>タスクがEngineCoreからの出力を<code>RequestOutputCollector</code>キューにpushし、<code>generate()</code>がそれをyieldする。</p>
+<p><strong>output_handler（バックグラウンドタスク）</strong>:</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/async_llm.py:647</code> (_run_output_handler)</p>
+<pre><code>output_handler():                                           # L662
+  while True:
+    outputs = await engine_core.get_output_async()          # L666
+    for chunk in outputs.outputs:                           # L677
+      output_processor.process_outputs(chunk, ...)          # L681
+      → RequestOutputをキューにpush
+    if reqs_to_abort:
+      await engine_core.abort_requests_async(...)           # L693
+</code></pre>
+<h4 id="同期パス-llm"><a class="header" href="#同期パス-llm">同期パス: LLM</a></h4>
+<p>オフライン推論（バッチ処理）で使用される。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/entrypoints/llm.py:396</code> (generate)</p>
+<pre><code>LLM.generate(prompts, sampling_params)                      # L396
+  → _run_completion(prompts, params)                        # L449
+    → _add_request(prompt, params) × N                      # L1850
+    │  ├─ input_processor.process_inputs(prompt, params)    # L1879
+    │  └─ llm_engine.add_request(request_id, request, ...)  # L1889
+    → _run_engine()                                         # L1900
+       while has_unfinished_requests():                     # L1918
+         step_outputs = llm_engine.step()                   # L1919
+</code></pre>
+<p>同期パスとの主な違い:</p>
+<ul>
+<li><code>LLM</code>は<code>_run_engine()</code>でポーリングループを回す（AsyncGeneratorではない）</li>
+<li><code>llm_engine</code>（=<code>AsyncLLM</code>のラッパー）の<code>step()</code>を直接呼ぶ</li>
+<li>プログレスバー（tqdm）でバッチ処理の進捗を表示</li>
+</ul>
+<h3 id="入力処理-inputprocessor"><a class="header" href="#入力処理-inputprocessor">入力処理 (InputProcessor)</a></h3>
+<p><code>InputProcessor</code>はユーザー入力（テキストプロンプト、パラメータ）を<code>EngineCoreRequest</code>に変換する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:56</code> (InputProcessor)</p>
+<pre><code>InputProcessor.process_inputs(request_id, prompt, params)   # L521
+  ├─ _validate_lora(lora_request)                           # L535
+  ├─ _validate_params(params)                               # L536
+  ├─ data_parallel_rank の範囲チェック                       # L542
+  ├─ arrival_time 設定（未指定なら time.time()）             # L548
+  │
+  ├─ input_preprocessor.preprocess(prompt, ...)             # L581
+  │   → テキストをトークナイズ（tokenizer.encode()）
+  │   → ProcessorInputs を返す
+  │
+  ├─ split_enc_dec_inputs(processed_inputs)                 # L597
+  │   → エンコーダ/デコーダ入力を分離
+  │
+  ├─ SamplingParams の正規化                                # L608-623
+  │   ├─ params.clone()                                     # L612
+  │   ├─ max_tokens 未設定時: max_model_len - seq_len       # L614-618
+  │   ├─ update_from_generation_config()                    # L619
+  │   └─ update_from_tokenizer()                            # L623
+  │
+  └─ EngineCoreRequest を構築して返す                        # L656-671
+</code></pre>
+<p>テキスト推論の場合、マルチモーダル関連処理（L630-654）はスキップされる（<code>mm_features</code>はNone）。</p>
+<h3 id="プロセス間通信-enginecoreclient--zmq-ipc"><a class="header" href="#プロセス間通信-enginecoreclient--zmq-ipc">プロセス間通信 (EngineCoreClient / ZMQ IPC)</a></h3>
+<p><code>EngineCoreClient</code>はフロントエンドプロセスとバックエンドプロセス（EngineCore）間のZMQ IPC通信を担当する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:63</code> (EngineCoreClient)</p>
+<h4 id="クライアント階層"><a class="header" href="#クライアント階層">クライアント階層</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>クラス</th><th>用途</th><th>トランスポート</th></tr>
+</thead>
+<tbody>
+<tr><td><code>EngineCoreClient</code> (ABC)</td><td>抽象インターフェース</td><td>—</td></tr>
+<tr><td><code>InprocClient</code></td><td>インプロセス（デバッグ用）</td><td>直接呼び出し</td></tr>
+<tr><td><code>SyncMPClient</code></td><td>同期マルチプロセス（LLM用）</td><td>ZMQ同期</td></tr>
+<tr><td><code>AsyncMPClient</code></td><td>非同期マルチプロセス（AsyncLLM用）</td><td>ZMQ非同期</td></tr>
+<tr><td><code>DPAsyncMPClient</code></td><td>データ並列（外部LB）</td><td>複数ZMQ</td></tr>
+<tr><td><code>DPLBAsyncMPClient</code></td><td>データ並列（内部LB）</td><td>複数ZMQ</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:442</code> (MPClient)</p>
+<h4 id="zmqソケット構成"><a class="header" href="#zmqソケット構成">ZMQソケット構成</a></h4>
+<pre><code>フロントエンド                 バックエンド
+┌──────────────┐              ┌──────────────┐
+│ AsyncMPClient│              │ EngineCore   │
+│              │              │              │
+│ input_socket ├─── ROUTER ──→│ (受信)       │
+│ (zmq.ROUTER) │    msgpack   │              │
+│              │              │              │
+│ output_socket│←── PULL ─────┤ (送信)       │
+│ (zmq.PULL)   │    msgpack   │              │
+└──────────────┘              └──────────────┘
+</code></pre>
+<ul>
+<li><strong>シリアライゼーション</strong>: <code>MsgpackEncoder</code> / <code>MsgpackDecoder</code>（<code>msgspec</code>ライブラリ）
+<ul>
+<li><code>EngineCoreRequest</code>のシリアライズ → 入力ソケット経由で送信</li>
+<li><code>EngineCoreOutputs</code>のデシリアライズ ← 出力ソケット経由で受信</li>
+</ul>
+</li>
+<li><strong>非同期出力受信</strong>: <code>process_outputs_socket()</code>タスクがZMQソケットをポーリングし、受信したOutputsを<code>asyncio.Queue</code>にpush</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:822</code> (AsyncMPClient)</p>
+<h4 id="enginecore側のリクエスト受信"><a class="header" href="#enginecore側のリクエスト受信">EngineCore側のリクエスト受信</a></h4>
+<p><code>EngineCore.add_request()</code>はリクエストをバリデーションしてSchedulerに登録する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:288</code> (add_request)</p>
+<pre><code>EngineCore.add_request(request)                             # L288
+  ├─ request_id の型チェック                                 # L295
+  ├─ pooling_params のバリデーション                          # L300
+  ├─ kv_transfer_params の互換性チェック                      # L311
+  └─ scheduler.add_request(request)                          # L319
+</code></pre>
+<h4 id="enginecorestep-コアループ概要"><a class="header" href="#enginecorestep-コアループ概要">EngineCore.step() （コアループ概要）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code> (step)</p>
+<pre><code>EngineCore.step()                                            # L389
+  ├─ scheduler.schedule()        → SchedulerOutput           # L404
+  ├─ executor.execute_model()    → Future[ModelRunnerOutput]  # L405
+  ├─ grammar_output 取得                                      # L406
+  ├─ future.result()             → ModelRunnerOutput          # L411
+  ├─ sample_tokens()（非同期スケジューリング時）              # L413
+  └─ scheduler.update_from_output() → EngineCoreOutputs      # L418
+</code></pre>
+<h2 id="コアループ-enginecorestep"><a class="header" href="#コアループ-enginecorestep">コアループ: EngineCore.step()</a></h2>
+<p>EngineCoreの<code>step()</code>メソッドは、各ステップで <strong>schedule → execute → update</strong> のサイクルを実行し、待機中のリクエストから生成トークンを生産する。</p>
+<h3 id="step-実行フロー"><a class="header" href="#step-実行フロー">step() 実行フロー</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:389</code> (step)</p>
+<pre><code>EngineCore.step()                                            # L389
+  │
+  ├─ if _scheduler_paused: return {}, False                  # L397
+  ├─ if not scheduler.has_requests(): return {}, False       # L402
+  │
+  ├─ 1. scheduler_output = scheduler.schedule()              # L404
+  │      → SchedulerOutput
+  │      （RUNNINGリクエストの予算割当 → WAITINGリクエストの受け入れ
+  │        → KVキャッシュブロック確保 → SchedulerOutput構築）
+  │
+  ├─ 2. future = executor.execute_model(                     # L405
+  │         scheduler_output, non_block=True)
+  │      → Future[ModelRunnerOutput | None]
+  │      （非ブロッキング。ワーカープロセスで並行実行）
+  │
+  ├─ 3. grammar_output = scheduler.get_grammar_bitmask(      # L406
+  │         scheduler_output)
+  │      （構造化出力有効時のみ使用）
+  │
+  ├─ 4. model_output = future.result()                       # L411
+  │      → ModelRunnerOutput（ブロッキング待機）
+  │
+  ├─ 5. if model_output is None:                             # L413
+  │        model_output = executor.sample_tokens(grammar_output)
+  │      （非同期スケジューリング時: execute_modelとsamplingが分離）
+  │
+  ├─ 6. _process_aborts_queue()                              # L417
+  │
+  └─ 7. engine_core_outputs = scheduler.update_from_output(  # L418
+  │         scheduler_output, model_output)
+  │      → dict[int, EngineCoreOutputs]
+  │      （生成トークンの追加、完了判定、出力構築）
+  │
+  └─ return (engine_core_outputs,                            # L422
+             total_num_scheduled_tokens &gt; 0)
+</code></pre>
+<h3 id="scheduler-と-kvcachemanager-の相互作用"><a class="header" href="#scheduler-と-kvcachemanager-の相互作用">Scheduler と KVCacheManager の相互作用</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant EC as EngineCore
+    participant S as Scheduler
+    participant KV as KVCacheManager
+    participant Ex as Executor
+
+    EC-&gt;&gt;S: schedule()
+
+    Note over S: Phase 1: RUNNINGリクエスト処理
+    loop 各RUNNINGリクエスト
+        S-&gt;&gt;KV: allocate_slots(request, num_new_tokens)
+        KV--&gt;&gt;S: KVCacheBlocks or None
+        alt 割り当て失敗 (None)
+            S-&gt;&gt;KV: free(低優先度request)
+            Note over S: プリエンプション → 再試行
+        end
+    end
+
+    Note over S: Phase 2: WAITINGリクエスト受け入れ
+    loop 各WAITINGリクエスト
+        S-&gt;&gt;KV: get_computed_blocks(request)
+        KV--&gt;&gt;S: (cached_blocks, num_hits)
+        S-&gt;&gt;KV: allocate_slots(request, num_new_tokens, ...)
+        KV--&gt;&gt;S: KVCacheBlocks or None
+        alt 割り当て失敗 (None)
+            Note over S: break（ループ終了）
+        end
+    end
+
+    Note over S: Phase 3: SchedulerOutput構築
+    S--&gt;&gt;EC: SchedulerOutput
+
+    EC-&gt;&gt;Ex: execute_model(scheduler_output)
+    Ex--&gt;&gt;EC: Future[ModelRunnerOutput]
+    EC-&gt;&gt;EC: future.result()（待機）
+
+    EC-&gt;&gt;S: update_from_output(scheduler_output, model_output)
+    Note over S: トークン追加、完了判定
+    S--&gt;&gt;EC: dict[int, EngineCoreOutputs]
+</pre>
+
+<h3 id="schedulerschedule-の3フェーズ"><a class="header" href="#schedulerschedule-の3フェーズ">Scheduler.schedule() の3フェーズ</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:321</code> (schedule)</p>
+<p><code>schedule()</code> は Unified Compute Model を採用し、Prefill/Decodeを区別せず <code>num_computed_tokens</code> の進捗で統一的にトークンを割り当てる。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フェーズ</th><th>行</th><th>対象</th><th>処理</th></tr>
+</thead>
+<tbody>
+<tr><td>Phase 1</td><td>L350-517</td><td>RUNNINGリクエスト</td><td>トークン予算割当。ブロック不足時はプリエンプション</td></tr>
+<tr><td>Phase 2</td><td>L532-800</td><td>WAITINGリクエスト</td><td>新規受け入れ。プレフィックスキャッシュ検索 + ブロック割当</td></tr>
+<tr><td>Phase 3</td><td>L827-896</td><td>出力構築</td><td>NewRequestData + CachedRequestData → SchedulerOutput</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>トークン予算</strong>: <code>token_budget = max_num_scheduled_tokens</code>（ステップあたり上限）で、各リクエストのスケジュール時に消費される。</p>
+<p>詳細は <a href="../components/scheduler/summary.html">Scheduler サマリー</a> を参照。</p>
+<h3 id="kvcachemanager-のブロック割り当て"><a class="header" href="#kvcachemanager-のブロック割り当て">KVCacheManager のブロック割り当て</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_manager.py:206</code> (allocate_slots)</p>
+<p><code>allocate_slots()</code> は以下のブロック配置に基づいてGPUメモリブロックを確保する:</p>
+<pre><code>|  comp  | new_comp | ext_comp |   new   | lookahead |
+|&lt;------ 既計算トークン ------&gt;|&lt;-- 新規計算対象 --&gt;|
+                               |&lt;- 割り当て対象 -&gt;|
+</code></pre>
+<ul>
+<li>成功時: <code>KVCacheBlocks</code>（割り当てたブロック情報）を返す</li>
+<li>失敗時: <code>None</code> を返す → Schedulerがプリエンプション（RUNNING）またはスキップ（WAITING）</li>
+</ul>
+<p>プレフィックスキャッシュ検索は <code>get_computed_blocks()</code> で行い、過去に計算済みのブロックを再利用する。</p>
+<p>詳細は <a href="../components/kv-cache-manager/summary.html">KVCacheManager サマリー</a> を参照。</p>
+<h3 id="update_from_output--enginecoreoutputs"><a class="header" href="#update_from_output--enginecoreoutputs">update_from_output() → EngineCoreOutputs</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/sched/scheduler.py:1241</code> (update_from_output)</p>
+<p><code>ModelRunnerOutput</code>を受けてSchedulerの状態を更新し、クライアントに返す<code>EngineCoreOutputs</code>を構築する。</p>
+<pre><code>update_from_output(scheduler_output, model_runner_output)
+  for each scheduled request:
+    ├─ Speculative Decodingリジェクション処理
+    │   → 不採用分の num_computed_tokens 巻き戻し
+    ├─ 生成トークンをリクエストに追加
+    ├─ 完了判定（EOS、max_tokens、stop_token）
+    │   → 完了時: kv_cache_manager.free(request) でブロック解放
+    └─ EngineCoreOutput 構築（request_id, new_token_ids, finish_reason, ...）
+  → dict[int, EngineCoreOutputs]（クライアントインデックス別）
+</code></pre>
+<h2 id="下流パス-実行--ユーザー応答"><a class="header" href="#下流パス-実行--ユーザー応答">下流パス: 実行 → ユーザー応答</a></h2>
+<h3 id="実行層-executor--worker--gpumodelrunner"><a class="header" href="#実行層-executor--worker--gpumodelrunner">実行層: Executor → Worker → GPUModelRunner</a></h3>
+<p>EngineCore.step()は<code>executor.execute_model()</code>を<strong>非ブロッキング</strong>で呼び出し、GPUでの推論実行を開始する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/abstract.py:202</code> (execute_model)</p>
+<h4 id="collective_rpc-パターン"><a class="header" href="#collective_rpc-パターン">collective_rpc パターン</a></h4>
+<p>Executorは<code>collective_rpc()</code>パターンで全Workerに同一メソッドを実行させ、出力ランクのWorkerの結果のみを返す。</p>
+<pre><code>EngineCore.step()
+  │
+  ├─ executor.execute_model(scheduler_output, non_block=True)
+  │   └─ collective_rpc("execute_model", args=(scheduler_output,))
+  │       └─ Worker.execute_model(scheduler_output)                # L604
+  │           └─ model_runner.execute_model(scheduler_output)      # L652
+  │               → ExecuteModelState を内部保存、None を返す
+  │
+  ├─ grammar_output = scheduler.get_grammar_bitmask(...)           # 並行処理
+  │
+  ├─ future.result()  → None                                       # 待機
+  │
+  └─ executor.sample_tokens(grammar_output)                         # L222
+      └─ collective_rpc("sample_tokens", args=(grammar_output,))
+          └─ Worker.sample_tokens(grammar_output)                  # L598
+              └─ model_runner.sample_tokens(grammar_output)        # L3621
+                  → ModelRunnerOutput を返す
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/worker/gpu_worker.py:604</code> (Worker.execute_model)</p>
+<h4 id="gpumodelrunner-の2フェーズ実行"><a class="header" href="#gpumodelrunner-の2フェーズ実行">GPUModelRunner の2フェーズ実行</a></h4>
+<p>GPUModelRunnerは <code>execute_model()</code> と <code>sample_tokens()</code> を分離する<strong>2フェーズ実行パターン</strong>を採用する。これにより、モデルフォワード中にgrammar bitmask計算を並行実行できる。</p>
+<p><strong>Phase 1: execute_model()</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3312</code>)</p>
+<pre><code>execute_model(scheduler_output)
+  ├─ _update_states(scheduler_output)          # バッチ状態更新
+  ├─ _prepare_inputs(scheduler_output)         # 入力ID・位置計算
+  ├─ _build_attention_metadata(...)            # Attention メタデータ構築
+  ├─ _model_forward(...)                       # model.forward() 実行
+  │   → hidden_states
+  ├─ compute_logits(hidden_states)             # logits 計算
+  │   → logits
+  └─ ExecuteModelState に保存 → None を返す
+</code></pre>
+<p><strong>Phase 2: sample_tokens()</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:3621</code>)</p>
+<pre><code>sample_tokens(grammar_output)
+  ├─ ExecuteModelState を復元
+  ├─ grammar bitmask 適用（構造化出力時）
+  ├─ _sample(logits) → SamplerOutput
+  ├─ バッチ状態更新（生成トークン反映）
+  └─ ModelRunnerOutput を構築して返す
+</code></pre>
+<p><strong>ExecuteModelState</strong> (<code>target/vllm/vllm/v1/worker/gpu_model_runner.py:313</code>) はGPUテンソル（logits, hidden_states等）を保持するNamedTupleで、2フェーズ間の一時状態転送に使用される。</p>
+<h3 id="出力処理-enginecoreoutput--requestoutput"><a class="header" href="#出力処理-enginecoreoutput--requestoutput">出力処理: EngineCoreOutput → RequestOutput</a></h3>
+<p>ModelRunnerOutputはバックエンドプロセス（EngineCore）で<code>EngineCoreOutput</code>に変換され、ZMQ経由でフロントエンドプロセスの<code>OutputProcessor</code>に送られてデトークナイズされる。</p>
+<pre class="mermaid">sequenceDiagram
+    participant MR as GPUModelRunner
+    participant S as Scheduler
+    participant EC as EngineCore
+    participant ZMQ as ZMQ IPC
+    participant OP as OutputProcessor
+    participant Client as API Client
+
+    MR-&gt;&gt;EC: ModelRunnerOutput
+    EC-&gt;&gt;S: update_from_output()
+    Note over S: トークン追加、完了判定&lt;br&gt;KVキャッシュ解放
+    S-&gt;&gt;EC: dict[int, EngineCoreOutputs]
+
+    EC-&gt;&gt;ZMQ: msgpack シリアライズ
+    ZMQ-&gt;&gt;OP: EngineCoreOutputs
+
+    Note over OP: デトークナイズ&lt;br&gt;停止文字列判定&lt;br&gt;logprobs処理
+    OP-&gt;&gt;Client: RequestOutput (yield)
+</pre>
+
+<h4 id="outputprocessorprocess_outputs"><a class="header" href="#outputprocessorprocess_outputs">OutputProcessor.process_outputs()</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/output_processor.py:582</code> (process_outputs)</p>
+<p>OutputProcessorは<strong>フロントエンドプロセス</strong>で動作し、<code>EngineCoreOutput</code>をユーザー向け<code>RequestOutput</code>に変換する。</p>
+<pre><code>OutputProcessor.process_outputs(engine_core_outputs)       # L582
+  for each engine_core_output:
+    ├─ req_state = request_states[req_id]                  # RequestState取得
+    │
+    ├─ detokenizer.update(new_token_ids, stop_terminated)  # L637
+    │   ├─ トークン→テキスト変換（インクリメンタル）
+    │   └─ 停止文字列チェック → stop_string or None
+    │
+    ├─ logprobs_processor.update_from_output(output)       # L646
+    │
+    ├─ req_state.make_request_output(...)                   # L649
+    │   ├─ _new_completion_output(token_ids, finish_reason, ...)
+    │   │   ├─ detokenizer.get_next_output_text(finished, delta)
+    │   │   └─ CompletionOutput(text, token_ids, logprobs, ...)
+    │   └─ RequestOutput(request_id, outputs, finished, ...)
+    │
+    └─ req_state.queue.put(request_output)                 # L661
+        → AsyncLLM.generate() が yield
+</code></pre>
+<h4 id="detokenizerインクリメンタルデトークナイズ"><a class="header" href="#detokenizerインクリメンタルデトークナイズ">Detokenizer（インクリメンタルデトークナイズ）</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/detokenizer.py:30</code> (IncrementalDetokenizer)</p>
+<p>トークンからテキストへの変換はインクリメンタルに行われ、ストリーミング出力を実現する。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>クラス</th><th>条件</th><th>方式</th></tr>
+</thead>
+<tbody>
+<tr><td><code>FastIncrementalDetokenizer</code></td><td><code>PreTrainedTokenizerFast</code> 使用時</td><td>HF tokenizersの<code>DecodeStream</code>で高速変換</td></tr>
+<tr><td><code>SlowIncrementalDetokenizer</code></td><td>その他のトークナイザ</td><td><code>detokenize_incrementally()</code>でPython変換</td></tr>
+<tr><td><code>IncrementalDetokenizer</code></td><td>トークナイザなし</td><td>No-op（テキスト出力なし）</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>update()</code>メソッドで各トークンをインクリメンタルにデコードし、同時に<code>check_stop_strings()</code>で停止文字列を検出する（<code>target/vllm/vllm/v1/engine/detokenizer.py:316</code>）。</p>
+<h2 id="prefill-vs-decode"><a class="header" href="#prefill-vs-decode">Prefill vs Decode</a></h2>
+<p>vLLM v1は<strong>Unified Compute Model</strong>を採用し、PrefillとDecodeを明示的に区別しない。両者は<code>num_computed_tokens</code>の進捗によって暗黙的に区分される。</p>
+<h3 id="統一管理の仕組み"><a class="header" href="#統一管理の仕組み">統一管理の仕組み</a></h3>
+<p>各リクエストは<code>num_computed_tokens</code>フィールドで計算済みトークン数を追跡する:</p>
+<pre><code>プロンプト: [A, B, C, D, E]    (len=5)
+num_computed_tokens: 0 → 5 → 6 → 7 → ...
+
+Prefillフェーズ: num_computed_tokens &lt; len(prompt_token_ids)
+  → 複数トークンを一度に計算（チャンクプリフィル可能）
+
+Decodeフェーズ: num_computed_tokens &gt;= len(prompt_token_ids)
+  → 1トークンずつ生成
+</code></pre>
+<h3 id="schedulerでの扱い"><a class="header" href="#schedulerでの扱い">Schedulerでの扱い</a></h3>
+<p>Scheduler.schedule()はPrefill/Decodeを区別せず、トークン予算の範囲内で各リクエストに計算トークン数を割り当てる:</p>
+<ul>
+<li><strong>新規リクエスト（WAITING→RUNNING）</strong>: <code>num_tokens = len(prompt_token_ids) - num_computed_tokens</code>（プレフィックスキャッシュヒット分を差し引き）</li>
+<li><strong>継続リクエスト（RUNNING）</strong>: <code>num_tokens = 1</code>（Decode 1トークン）</li>
+<li>予算不足時は部分的なPrefill（チャンクプリフィル）も可能</li>
+</ul>
+<h3 id="gpumodelrunner内での違い"><a class="header" href="#gpumodelrunner内での違い">GPUModelRunner内での違い</a></h3>
+<p>GPUModelRunner.execute_model()は入力準備の段階で暗黙的にPrefill/Decodeを処理する:</p>
+<ul>
+<li><strong>_prepare_inputs()</strong>: <code>num_scheduled_tokens</code>に基づいて入力トークンと位置を計算。Prefillなら複数トークン、Decodeなら1トークン</li>
+<li><strong>_build_attention_metadata()</strong>: Prefillはフルattention、Decodeはキャッシュ済みKVに対するattentionのメタデータを構築</li>
+<li><strong>モデルフォワード</strong>: 入力テンソルのサイズが異なるだけで、同一のforward()を実行</li>
+</ul>
+<p>この統一モデルにより、同一バッチ内にPrefillリクエストとDecodeリクエストを混在させるContinuous Batchingが自然に実現される。</p>
+<h2 id="コンポーネント優先度確定"><a class="header" href="#コンポーネント優先度確定">コンポーネント優先度（確定）</a></h2>
+<p>Phase 2での深堀り順序。ユーザー関心領域とフロー上の重要度に基づく。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>優先度</th><th>コンポーネント</th><th>理由</th><th>現在の深度</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>S</strong></td><td>KVCacheManager</td><td>ユーザー関心1位（メモリ管理/KVキャッシュ）。PagedAttention、ブロック管理、Eviction</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>A</strong></td><td>Scheduler</td><td>KVCacheManagerと密連携、推論パイプライン全体を制御。Continuous Batching</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>A</strong></td><td>GPUModelRunner</td><td>推論実行の中核。6277行の巨大クラス。将来のプラグイン開発に重要</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>B</strong></td><td>EngineCore</td><td>step()サイクル、batch_queueパイプライン。全体の統合ポイント</td><td>[MEDIUM]</td></tr>
+<tr><td><strong>B</strong></td><td>OutputProcessor</td><td>デトークナイズ、停止判定。ストリーミング出力の仕組み</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>AsyncLLM, InputProcessor</td><td>エントリポイント。薄いレイヤー</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>Executor, Worker</td><td>委譲パターン。分散推論時のみ詳細が必要</td><td>[SHALLOW]</td></tr>
+<tr><td><strong>C</strong></td><td>EngineCoreClient</td><td>ZMQ IPC通信層。プロトコルは把握済み</td><td>[SHALLOW]</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="参照ファイル一覧"><a class="header" href="#参照ファイル一覧">参照ファイル一覧</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/entrypoints/llm.py</code></td><td><code>LLM.generate()</code> (L396), <code>_add_request()</code> (L1850)</td><td>同期エントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/async_llm.py</code></td><td><code>AsyncLLM.generate()</code> (L537), <code>add_request()</code> (L286)</td><td>非同期エントリポイント</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>InputProcessor.process_inputs()</code> (L521)</td><td>入力処理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/__init__.py</code></td><td><code>EngineCoreRequest</code> (L55), <code>EngineCoreOutput</code> (L130), <code>EngineCoreOutputs</code> (L176)</td><td>境界データ構造</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td><code>EngineCoreClient</code> (L63), <code>MPClient</code> (L442), <code>AsyncMPClient</code> (L822)</td><td>ZMQ IPC通信</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td><code>EngineCore.add_request()</code> (L288), <code>step()</code> (L389)</td><td>推論ループ本体</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/scheduler.py</code></td><td><code>Scheduler.schedule()</code> (L321), <code>update_from_output()</code> (L1241)</td><td>スケジューリング</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/sched/output.py</code></td><td><code>SchedulerOutput</code> (L184), <code>NewRequestData</code> (L34), <code>CachedRequestData</code> (L114)</td><td>スケジュール出力データ構造</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/kv_cache_manager.py</code></td><td><code>KVCacheManager.allocate_slots()</code> (L206), <code>get_computed_blocks()</code> (L164)</td><td>KVキャッシュ管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/core/block_pool.py</code></td><td><code>BlockPool</code> (L128)</td><td>物理ブロック管理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/request.py</code></td><td><code>Request</code></td><td>リクエスト内部状態</td></tr>
+<tr><td><code>target/vllm/vllm/v1/outputs.py</code></td><td><code>ModelRunnerOutput</code> (L160)</td><td>モデル推論出力</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/abstract.py</code></td><td><code>Executor</code> (ABC), <code>execute_model()</code> (L202), <code>collective_rpc()</code> (L180)</td><td>実行層抽象</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/uniproc_executor.py</code></td><td><code>UniProcExecutor</code> (L26)</td><td>単一プロセス実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/executor/multiproc_executor.py</code></td><td><code>MultiprocExecutor</code> (L93)</td><td>マルチプロセス実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_worker.py</code></td><td><code>Worker.execute_model()</code> (L604), <code>sample_tokens()</code> (L598)</td><td>GPU Worker</td></tr>
+<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td><code>GPUModelRunner.execute_model()</code> (L3312), <code>sample_tokens()</code> (L3621), <code>ExecuteModelState</code> (L313)</td><td>モデル実行</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/output_processor.py</code></td><td><code>OutputProcessor.process_outputs()</code> (L582), <code>RequestState.make_request_output()</code> (L269)</td><td>出力処理</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/detokenizer.py</code></td><td><code>IncrementalDetokenizer</code> (L30), <code>FastIncrementalDetokenizer</code> (L169), <code>check_stop_strings()</code> (L316)</td><td>デトークナイズ</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/logprobs.py</code></td><td><code>LogprobsProcessor</code> (L28)</td><td>logprobs処理</td></tr>
+<tr><td><code>target/vllm/vllm/outputs.py</code></td><td><code>RequestOutput</code> (L86), <code>CompletionOutput</code> (L23)</td><td>最終出力データ構造</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="マルチモーダル推論パスの差分"><a class="header" href="#マルチモーダル推論パスの差分">マルチモーダル推論パスの差分</a></h2>
+<p>テキスト推論フローに対し、画像等のマルチモーダル入力がある場合の主要な差分を以下に示す。詳細は <a href="../components/multimodal/summary.html">マルチモーダル処理パイプライン</a> を参照。</p>
+<h3 id="フロントエンドp0の差分"><a class="header" href="#フロントエンドp0の差分">フロントエンド（P0）の差分</a></h3>
+<ol>
+<li><strong>チャットテンプレート</strong>: プレースホルダー（<code>&lt;start_of_image&gt;</code> 等）がプロンプトに挿入される</li>
+<li><strong>HF Processor実行</strong>: 画像を <code>pixel_values</code> テンソルに変換（リサイズ、正規化、パッチ分割）</li>
+<li><strong>MMハッシュ計算</strong>: <code>MultiModalHasher</code> でコンテンツベースのblake3ハッシュを生成</li>
+<li><strong>ProcessorCache</strong>: HF処理結果をキャッシュ（4種類の実装: processor_only/lru/shm/none）</li>
+<li><strong>EngineCoreRequest</strong>: <code>mm_features: list[MultiModalFeatureSpec]</code> にテンソルデータ・位置情報・ハッシュを格納</li>
+</ol>
+<h3 id="バックエンドp1の差分"><a class="header" href="#バックエンドp1の差分">バックエンド（P1）の差分</a></h3>
+<ol>
+<li><strong>EncoderCacheManager</strong>: エンコーダ出力をリファレンスカウント方式で管理。キャッシュヒットでエンコーダ計算スキップ</li>
+<li><strong>Scheduler</strong>: <code>encoder_compute_budget</code> でステップあたりのエンコーダ計算量を制御</li>
+<li><strong>GPUModelRunner</strong>:
+<ul>
+<li><code>_execute_mm_encoder()</code>: ビジョンエンコーダ実行（<code>model.embed_multimodal()</code>）</li>
+<li><code>_gather_mm_embeddings()</code>: キャッシュからプレースホルダー位置に対応する埋め込みを取得</li>
+<li><code>embed_input_ids()</code>: <code>masked_scatter_</code> でテキスト埋め込みとビジョン埋め込みをマージ</li>
+</ul>
+</li>
+<li><strong>モデルforward</strong>: <code>input_ids</code> ではなく <code>inputs_embeds</code>（マージ済み）が渡される</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../vllm/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../vllm/architecture/overview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../vllm/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../vllm/architecture/overview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
