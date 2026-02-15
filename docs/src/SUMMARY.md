@@ -9,12 +9,12 @@
 
 - [vLLM](vllm/README.md)
 
-## アーキテクチャ
+# vLLM: アーキテクチャ
 
 - [テキスト推論データフロー](vllm/architecture/data-flow.md)
 - [アーキテクチャ概要](vllm/architecture/overview.md)
 
-## コンポーネント
+# vLLM: コンポーネント
 
 - [ECConnector（Encoder Cache Connector）](vllm/components/ec-connector/summary.md)
 - [EncoderCache（エンコーダキャッシュ）](vllm/components/encoder-cache/summary.md)
@@ -38,7 +38,7 @@
 - [OutputProcessor](vllm/components/output-processor/summary.md)
 - [Scheduler サマリー](vllm/components/scheduler/summary.md)
 
-## 調査報告
+# vLLM: 調査報告
 
 - [CacheBlend GitHub 議論調査](vllm/investigations/cacheblend-github-discussions.md)
 - [CacheBlend 実装調査報告 [MEDIUM] [VERIFIED]](vllm/investigations/cacheblend-implementation.md)
@@ -49,7 +49,7 @@
 - [LMCache 統合調査報告 [MEDIUM] [VERIFIED]](vllm/investigations/lmcache-integration.md)
 - [プロセスアーキテクチャ（TP=2構成）](vllm/investigations/process-architecture.md)
 
-## 付録
+# vLLM: 付録
 
 - [用語集](vllm/glossary.md)
 - [ファイル索引](vllm/appendix/file-index.md)
@@ -60,6 +60,6 @@
 
 - [LMCache](lmcache/README.md)
 
-## 付録
+# LMCache: 付録
 
 - [用語集](lmcache/glossary.md)

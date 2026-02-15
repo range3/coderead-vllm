@@ -132,7 +132,7 @@ def generate_oss_section(project: dict) -> list[str]:
             continue
         lines = scan_directory(subdir, DOCS_SRC)
         if lines:
-            parts.append(f"\n## {section_title}\n")
+            parts.append(f"\n# {project['title']}: {section_title}\n")
             parts.append("\n".join(lines))
 
     # 付録
@@ -142,7 +142,7 @@ def generate_oss_section(project: dict) -> list[str]:
         if full_path.exists():
             appendix_items.append(f"- [{label}]({project['dir']}/{rel_path})")
     if appendix_items:
-        parts.append(f"\n## 付録\n")
+        parts.append(f"\n# {project['title']}: 付録\n")
         parts.append("\n".join(appendix_items))
 
     return parts
