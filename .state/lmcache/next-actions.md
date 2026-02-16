@@ -2,14 +2,16 @@
 
 ## 最優先
 
-- [ ] Phase 1 セッション2: 垂直スライス — 「vLLM統合でのKVキャッシュ retrieve パス」
-  - エントリポイント: LMCacheConnectorV1Impl.load_kv_layer() / start_load_kv()
-  - コアパス: LMCacheEngine.retrieve_layer() → StorageManager.batched_get() → LocalCPUBackend → GPUConnector.batched_to_gpu()
-  - 目標: retrieve側の各コンポーネントのインターフェースと接続点を理解
-  - data-flow.mdにretrieveパスを追記
-  - 各コンポーネントsummary.mdのretrieve側を追記
+- [ ] Phase 2: StorageManager + LocalCPUBackend 深堀り（[MEDIUM]→[DEEP]）
+  - Eviction実装の詳細（CachePolicy各戦略のコードパス）
+  - MemoryAllocatorのプール管理
+  - LocalDiskBackendとの階層化動作
+  - 独自ストレージバックエンド実装に必要なインターフェース整理
 
 ## 次の優先
 
-- [ ] Phase 2: StorageManager + LocalCPUBackend 深堀り（Disk階層化含む）
 - [ ] Phase 2: CacheBlend 内部実装深堀り
+  - Blenderの計算ロジック（重要token同定、再計算）
+  - SegmentTokenDatabaseの動作
+  - BlendServerの構造
+- [ ] Phase 2: LookupClient/Server 深堀り（非同期lookup、async_lookup_and_prefetch全体フロー）

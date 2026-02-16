@@ -94,13 +94,67 @@ LocalCPUBackendは**メモリアロケータ**としても機能:
 - `MemoryAllocator`がプール管理（事前確保 or 動的確保）
 - ref_countで共有管理、0になるとプールに返却
 
+## StorageManager（Retrieve方向）
+
+### batched_get()
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484`
+
+```python
+def batched_get(
+    keys: List[CacheEngineKey],
+    location: Optional[str] = None,
+) -> List[Optional[MemoryObj]]
+```
+
+指定locationのバックエンドから`batched_get_blocking(keys)`でMemoryObjを取得。
+**write-back**: リモートバックエンドから取得した場合、`LocalCPUBackend`が存在すれば自動的にL1にコピー。
+
+### layerwise_batched_get()
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/storage_manager.py:519`
+
+```python
+def layerwise_batched_get(
+    keys: List[List[CacheEngineKey]],  # [num_layers][num_chunks]
+    location: Optional[str] = None,
+) -> Generator[Future, None, None]
+```
+
+レイヤー単位で非同期取得。各レイヤーの`batched_get_non_blocking()`をasyncio.create_taskで投入し、Futureをyield。
+デフォルトlocationは`"LocalCPUBackend"`。
+
+### get_block_mapping()
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/storage_manager.py:908`
+
+チャンクリストを受け取り、各チャンクの所在バックエンドを特定。**prefix match方式**: 各バックエンドの`batched_contains()`で先頭からの連続ヒット数を取得し、残りを次のバックエンドに渡す。
+
+### async_lookup_and_prefetch()
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/storage_manager.py:641`
+
+非同期プリフェッチの中核。LookupServerから呼ばれ、全バックエンドに対してprefix match方式で`batched_async_contains()`→`batched_get_non_blocking()`を実行。結果は`EventManager`にFutureとして登録。
+
+## LocalCPUBackend（Retrieve方向）
+
+### batched_get_non_blocking()
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:216`
+
+`cpu_lock`下で`hot_cache[key]`を取得し、`ref_count_up()`してからリストで返す。**同期的に完了**する（CPU上のOrderedDictアクセスのみ）。
+
+### batched_get_blocking()
+
+抽象基底クラス`LMCStorageBackendInterface`のデフォルト実装を継承。個別`get_blocking()`のループ。
+
 ## バックエンド登録
 
 StorageManagerの`storage_backends`は`OrderedDict`で登録順=優先度:
 ```
 LocalCPUBackend (L1) → LocalDiskBackend (L2) → RemoteBackend (L3)
 ```
-`batched_put()`は全バックエンドに配布。`get()`は最初にヒットしたバックエンドから取得。
+`batched_put()`は全バックエンドに配布。`batched_get()`は指定locationから取得（リモート→L1 write-back付き）。`get_block_mapping()`はprefix match順。
 
 ## 上流・下流
 

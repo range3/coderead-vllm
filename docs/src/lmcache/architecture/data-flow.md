@@ -1,10 +1,9 @@
 # データフロー
 
 > **深度**: [MEDIUM] / **確信度**: [VERIFIED]
-> **最終更新**: 2026-02-16（Phase 1 セッション1）
+> **最終更新**: 2026-02-16（Phase 1 セッション2）
 
-本ドキュメントはLMCacheのKVキャッシュ store パスを追跡する。
-retrieve パスはPhase 1 セッション2で追加予定。
+本ドキュメントはLMCacheのKVキャッシュ store / retrieve パスを追跡する。
 
 ## Store パス概要
 
@@ -179,3 +178,254 @@ batched_from_gpu Generator: [初期化] → yield → [L0 DMA]     → yield →
 | store_mask | `torch.Tensor[bool]` | False=キャッシュ済みprefix、True=新規トークン |
 | slot_mapping | `torch.Tensor[long]` | トークン位置→vLLMページドメモリのflat slot |
 | hot_cache | `OrderedDict[CacheEngineKey, MemoryObj]` | L1 CPUキャッシュ（Evictionポリシー付き） |
+
+---
+
+## Retrieve パス概要
+
+KVキャッシュをストレージ（CPU/Disk/Remote）からGPUのvLLMページドメモリに復元するパス。
+**2フェーズ設計**: Scheduler側の**lookup**（ヒット判定+prefetch指示）と、Worker側の**load**（実際のGPU転送）に分離。
+
+### Scheduler→Worker間の情報伝達
+
+```mermaid
+sequenceDiagram
+    participant Sched as V1Impl (Scheduler側)
+    participant LC as LookupClient
+    participant Worker as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+
+    Note over Sched: vLLM Scheduler.schedule() から呼ばれる
+    Sched->>LC: lookup(token_ids, req_id)
+    LC-->>Sched: num_external_hit_tokens
+    Note over Sched: LoadSpec(vllm_cached, lmcache_cached) を生成
+    Sched->>Sched: update_state_after_alloc() → can_load=True
+    Sched->>Sched: build_connector_meta() → ReqMeta(load_spec) を構築
+    Note over Sched: ConnectorMetadata を SchedulerOutput に添付
+
+    Note over Worker: Forward開始時
+    Worker->>Engine: start_load_kv(forward_context)
+    Note over Engine: Bulk or Layerwise retrieve 実行
+```
+
+### LookupClient の動作
+
+**参照**: `target/LMCache/lmcache/v1/lookup_client/lmcache_lookup_client.py:28`
+
+`LMCacheLookupClient`はvLLMのSchedulerプロセスで動作する。LMCacheEngine（Worker側）とは**ZMQ IPC**（REQ/REP）で通信。
+
+**処理フロー**:
+1. `process_tokens()`でトークン列をチャンクハッシュに分割
+2. ハッシュ列をmsgpackシリアライズし、ZMQで`LookupServer`に送信
+3. `LookupServer`（Worker側）が`StorageManager.contains()`で存在チェック
+4. ヒットトークン数を返却
+
+**キャッシュ**: 同一リクエストの2回目以降のlookupは`reqs_status`辞書から即座に返す。
+
+### Retrieve パスの2モード
+
+| モード | 条件 | エントリポイント | 特徴 |
+|---|---|---|---|
+| **Bulk** | `use_layerwise=False`（デフォルト） | `LMCacheEngine.retrieve()` | 全レイヤー一括取得→一括GPU転送 |
+| **Layerwise** | `use_layerwise=True` | `LMCacheEngine.retrieve_layer()` | レイヤー単位Generator、パイプライン可能 |
+
+### Bulk Retrieve パス
+
+```mermaid
+sequenceDiagram
+    participant Adapter as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+    participant TDB as TokenDatabase
+    participant SM as StorageManager
+    participant CPU as LocalCPUBackend
+    participant GPU as GPUConnector (V2)
+
+    Adapter->>Engine: retrieve(tokens, mask, kvcaches, slot_mapping, ...)
+    activate Engine
+
+    Engine->>TDB: process_tokens(tokens, mask)
+    TDB-->>Engine: [(start, end, CacheEngineKey), ...]
+
+    alt async_loading == True
+        Note over Engine: event_managerからprefetch済みMemoryObjを取得
+        Engine->>Engine: _async_process_tokens_internal()
+    else sync loading
+        Engine->>SM: get_block_mapping(chunk_infos)
+        SM-->>Engine: {backend_name: [(key, start, end)]}
+        Engine->>SM: batched_get(keys, location)
+        SM->>CPU: batched_get_blocking(keys)
+        CPU-->>SM: List[MemoryObj]（ref_count_up済み）
+        SM-->>Engine: List[MemoryObj]
+    end
+
+    Engine->>GPU: batched_to_gpu(memory_objs, starts, ends, slot_mapping=...)
+    Note over GPU: load_stream上で全チャンクをGPU転送
+    GPU->>GPU: lmc_ops.multi_layer_kv_transfer(memobj→paged KV)
+    GPU-->>Engine: 完了
+
+    Note over Engine: memory_obj.ref_count_down() で解放
+    Engine-->>Adapter: ret_mask (bool tensor)
+    deactivate Engine
+```
+
+#### _process_tokens_internal() の詳細
+
+**参照**: `target/LMCache/lmcache/v1/cache_engine.py:1527`
+
+1. `process_tokens()`でチャンク分割・ハッシュ計算
+2. `StorageManager.get_block_mapping()`でチャンクの**所在バックエンド**を特定
+   - 各バックエンドの`batched_contains()`をprefix match方式で呼び出し
+   - チャンクを所在バックエンドごとにグルーピング
+3. バックエンドごとに`batched_get()`で`MemoryObj`を取得
+4. 取得失敗時は`last_failed_block_start`以降の`ret_mask`をFalseに戻し、チャンクリストを切り詰め
+
+#### _async_process_tokens_internal() の詳細
+
+**参照**: `target/LMCache/lmcache/v1/cache_engine.py:1463`
+
+非同期プリフェッチ済みの結果を`event_manager`から取得するパス。
+
+1. `event_manager.pop_event(EventType.LOADING, req_id)`でprefetch結果の`Future`を取得
+2. `future.result()`で`list[list[tuple[CacheEngineKey, MemoryObj]]]`（tier×chunk）を取得
+3. `process_tokens()`で再度チャンク分割し、`memory_obj_map`からマッチングしてチャンクリストを構築
+4. 未使用の`MemoryObj`は`ref_count_down()`で即座に解放
+
+#### StorageManager.batched_get() のwrite-back
+
+**参照**: `target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484`
+
+リモートバックエンド（Disk/Remote）からデータを取得した場合、**自動的にLocalCPUBackendにwrite-back**する。
+- `LocalCPUBackend`以外から取得 && `LocalCPUBackend`が存在 && 全MemoryObjがnon-None → `batched_submit_put_task()`でL1にコピー
+
+### Layerwise Retrieve パス
+
+```mermaid
+sequenceDiagram
+    participant Adapter as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+    participant TDB as TokenDatabase
+    participant SM as StorageManager
+    participant GPU as GPUConnector (Layerwise)
+
+    Note over Adapter: start_load_kv() 内
+    Adapter->>Engine: retrieve_layer(tokens, mask, kvcaches, slot_mapping, sync)
+    activate Engine
+    Engine->>TDB: process_tokens(tokens, mask)
+    TDB-->>Engine: [(start, end, CacheEngineKey), ...]
+    Note over Engine: contains(layer0_key) でヒット判定 + location統一チェック
+
+    Engine->>SM: layerwise_batched_get(keys_layer_major, location)
+    Note over SM: Layer 0 の get_non_blocking を asyncio.create_task() で投入
+    Engine->>GPU: batched_to_gpu(starts, ends, ...) → mem_obj_consumer Generator 生成
+    GPU-->>Engine: mem_obj_consumer primed (yield)
+
+    Engine-->>Adapter: yield torch.sum(ret_mask) — Layer 0 のヒット数
+    deactivate Engine
+
+    Note over Adapter: next(retriever) で Layer 0 データ受領
+    Adapter->>Engine: next(retriever)
+    activate Engine
+    Note over Engine: Layer 0 の task.result() を取得
+    Engine->>GPU: mem_obj_consumer.send(mem_objs_layer0)
+    Note over GPU: CPU→GPUバッファ copy（load_stream）
+    SM-->>Engine: Layer 1 の task yield
+    Engine-->>Adapter: yield None
+    deactivate Engine
+
+    Note over Adapter: wait_for_layer_load(layer_name) で同期
+    Adapter->>Engine: next(retriever)
+    activate Engine
+    Note over Engine: Layer N-1 処理...
+    Engine-->>Adapter: yield ret_mask（最終レイヤー後）
+    deactivate Engine
+```
+
+#### retrieve_layer() の Generator 構造
+
+**参照**: `target/LMCache/lmcache/v1/cache_engine.py:851`
+
+`num_layers + 3`回yieldする（ヒットあり時）:
+1. **yield 0**: `torch.sum(ret_mask)` — ヒットトークン数（sglang統合向け）
+2. **yield 1 ~ N-1**: `None` — 各レイヤーのGPU転送進行中
+3. **yield N**: `None` — 最終レイヤー処理中
+4. **yield N+1**: `next(mem_obj_consumer)` で同期
+5. **yield N+2**: `ret_mask` — 最終結果
+
+各レイヤーで:
+- `next(get_generator)`で`StorageManager`から非同期取得した`Future`を受け取る
+- `task.result()`で`List[MemoryObj]`を取得（ブロッキング）
+- `mem_obj_consumer.send(mem_objs_layer)`でGPUコネクタにデータを渡す
+- `MemoryObj.ref_count_down()`は全レイヤー完了後にバッチで実行
+
+#### Layerwise GPUConnector.batched_to_gpu() のパイプライン
+
+**参照**: `target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:683`
+
+`VLLMBufferLayerwiseGPUConnector`は`num_layers + 2`回のイテレーションで**3段パイプライン**を実行:
+
+| イテレーション i | 操作1: paged書き込み | 操作2: RoPE補正+gap zeroing | 操作3: CPU→GPU load |
+|---|---|---|---|
+| i = 0 | — | — | `yield`で`mem_objs_layer0`受領、load_stream上でcopy |
+| i = 1 | — | Layer 0のRoPE補正 | `yield`で`mem_objs_layer1`受領、load_stream上でcopy |
+| i = 2 | Layer 0をpagedメモリに書き込み | Layer 1のRoPE補正 | `yield`で`mem_objs_layer2`受領 |
+| ... | Layer i-2 | Layer i-1 | Layer i |
+| i = N | Layer N-2 | Layer N-1 | `yield`（同期用、データなし） |
+| i = N+1 | Layer N-1 | — | — |
+
+**ダブルバッファ**: `compute_gpu_buffer_obj`と`load_gpu_buffer_obj`をping-pongして、RoPE計算とDMAをオーバーラップ。
+
+**RoPE位置補正**: `cache_positions=True`の場合、保存時の位置と現在の位置の差分で`fused_rotary_emb()`を適用。保存時位置は`MemoryObjMetadata.cached_positions`から取得。
+
+**gap zeroing**: チャンク間のギャップ位置（連続しないstart/endの隙間）をゼロ埋め。
+
+### 非同期プリフェッチの全体フロー
+
+```mermaid
+sequenceDiagram
+    participant Sched as V1Impl (Scheduler)
+    participant LC as LookupClient
+    participant LS as LookupServer (Worker)
+    participant SM as StorageManager
+    participant EM as EventManager
+    participant Worker as V1Impl (Worker)
+    participant Engine as LMCacheEngine
+
+    Note over Sched: get_num_new_matched_tokens() 内
+    Sched->>LC: lookup(token_ids, req_id)
+    LC->>LS: ZMQ REQ (hashes + offsets + req_id)
+    LS->>SM: async_lookup_and_prefetch(lookup_id, keys, ...)
+    Note over SM: 各バックエンドに batched_async_contains → batched_get_non_blocking
+    SM->>EM: add_event(LOADING, lookup_id, all_done_task)
+    LS-->>LC: num_hit_tokens
+    LC-->>Sched: num_external_hit_tokens
+
+    Note over Sched: build_connector_meta() で LoadSpec を ConnectorMetadata に格納
+
+    Note over Worker: start_load_kv() 内
+    Worker->>Engine: retrieve(tokens, mask, ..., req_id=req_id)
+    Engine->>EM: pop_event(LOADING, req_id)
+    Note over Engine: future.result() で prefetch 済み MemoryObj を取得
+    Engine->>Engine: _async_process_tokens_internal()
+    Engine->>GPU: batched_to_gpu(memory_objs, ...)
+```
+
+**ポイント**:
+- Scheduler側のlookupがprefetchを**トリガー**し、Worker側のretrieveがprefetch結果を**消費**する
+- `EventManager`が両者を`lookup_id`（=req_id）で紐付け
+- prefetchは`asyncio.create_task()`で非同期実行され、Worker側のretrieveまでに完了していればブロッキングなし
+
+### token_mask と ret_mask の意味
+
+| マスク | 用途 | 値の意味 |
+|---|---|---|
+| `token_mask` | adapter側で構築 | `False`=vLLMがキャッシュ済み（チャンク境界まで切り詰め）、`True`=LMCacheから要ロード |
+| `ret_mask` | Engine内部で構築 | `True`=実際にLMCacheから取得成功、`False`=未取得 |
+| `mask`（Engine引数） | token_maskと同じ | `process_tokens()`のFalseプレフィックス=スキップ対象 |
+
+`token_mask`のFalse区間は`vllm_cached_tokens`をchunk_sizeの倍数に切り下げた範囲。これにより、vLLMとLMCacheのキャッシュ境界がチャンク単位で整合する（オーバーラップ領域はLMCacheが上書き）。
+
+### エラーハンドリング
+
+- **部分的取得失敗**: `ret_mask.sum() < expected`の場合、`record_failed_blocks()`で失敗ブロックIDを計算し、`_invalid_block_ids`に蓄積。vLLMのSchedulerが次stepで`get_block_ids_with_load_errors()`で回収し、再計算を指示
+- **StorageManager.batched_get()**: `memory_obj=None`が返された場合、`last_failed_block_start`以降を切り捨て（prefix matchの性質上、途中の欠損以降は全て無効）
+- **健全性チェック**: `is_healthy()==False`の場合、retrieve自体をスキップ（ゼロマスクを返す）

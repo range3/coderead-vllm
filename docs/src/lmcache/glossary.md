@@ -55,6 +55,10 @@
 | **lmc_ops.single_layer_kv_transfer** | CUDAカーネル。vLLMのページドKVキャッシュからslot_mapping経由でデータを抽出/書き戻し。 |
 | **slot_mapping** | トークン位置→vLLMページドメモリのflat slot位置へのマッピング。GPU Tensor。 |
 | **store_stream** | GPU→CPU転送専用CUDAストリーム。メイン計算ストリームとオーバーラップ可能。 |
+| **load_stream** | CPU→GPU転送専用CUDAストリーム。retrieve時にメイン計算とオーバーラップ。 |
+| **lmc_ops.multi_layer_kv_transfer** | CUDAカーネル。全レイヤー一括でMemoryObj→paged KVキャッシュに転送（Bulk retrieve用）。 |
+| **fused_rotary_emb** | RoPE位置補正関数。Layerwise retrieve時に保存時と現在のposition差分を補正。 |
+| **VLLMBufferLayerwiseGPUConnector** | CacheBlend対応のLayerwiseコネクタ。ダブルバッファ+RoPE補正+gap zeroing。 |
 
 ## 統合
 
@@ -66,7 +70,13 @@
 | **SaveSpec** | 保存仕様。`skip_leading_tokens`（キャッシュ済みプレフィックス長）、`can_save`（保存可否）。 |
 | **ConnectorMetadata** | Scheduler→Worker間で渡されるメタデータ。各リクエストのtoken_ids, slot_mapping, LoadSpec, SaveSpecを含む。 |
 | **kv_role** | `"kv_both"`（default）/`"kv_producer"`/`"kv_consumer"`。producer時はskip_leading_tokens=0。 |
-| **LookupClient** | Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。 |
+| **LookupClient** | Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。`lmcache_lookup_client.py` |
+| **LookupServer** | Worker側でLookupClientからのZMQ REQ/REPを受け付け、StorageManager.async_lookup_and_prefetchを実行。 |
+| **EventManager** | 非同期イベント（LOADING等）のFutureを管理。lookup_idでprefetch結果とretrieve消費を紐付け。 |
+| **token_mask** | retrieve時のマスク。False=vLLMがキャッシュ済み（chunk_sizeの倍数に切り下げ）、True=LMCacheからロード対象。 |
+| **ret_mask** | retrieve結果のマスク。True=LMCacheから実際に取得成功、False=未取得。Engine内部で構築。 |
+| **write-back** | StorageManager.batched_get()がリモートバックエンドから取得した場合、自動的にLocalCPUBackendにコピーする動作。 |
+| **get_block_mapping** | チャンクの所在バックエンドをprefix match方式で特定するStorageManagerメソッド。 |
 
 ## CacheBlend
 

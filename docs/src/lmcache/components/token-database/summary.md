@@ -77,8 +77,16 @@ CacheEngineKey(
 
 `save_only_first_rank`はMLA（Multi-head Latent Attention）使用時に有効。world_sizeを1に固定することで、異なるTP並列度でもキーが一致する。
 
+## Retrieve時の利用
+
+Retrieveパスでも同じ`process_tokens()`が使用される:
+- **Bulk retrieve**: `_process_tokens_internal()`と`_async_process_tokens_internal()`の両方で呼ばれ、チャンクキーを生成
+- **Layerwise retrieve**: `retrieve_layer()`内で呼ばれ、layer 0のキーで`StorageManager.contains()`判定
+- **LookupClient**: Schedulerプロセス内でも独自の`ChunkedTokenDatabase`インスタンスを持ち、`process_tokens(make_key=False)`でハッシュのみ計算してZMQ経由でLookupServerに送信
+- **非同期prefetch**: `async_process_tokens_internal()`ではハッシュ再計算が発生する（TODO: スキップ最適化の余地あり）
+
 ## 上流・下流
 
-- **上流**: LMCacheEngine（store_layer/store/retrieve等で呼び出し）
+- **上流**: LMCacheEngine（store_layer/store/retrieve等で呼び出し）、LookupClient（lookup時）
 - **下流**: なし（純粋な変換コンポーネント）
 - **依存**: vLLMのハッシュ関数ライブラリ
