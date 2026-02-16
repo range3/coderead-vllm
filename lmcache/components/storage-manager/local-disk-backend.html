@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>マルチモーダル処理パイプライン サマリー - コードリーディング: vLLM &amp; LMCache</title>
+        <title>LocalDiskBackend — L2ディスクバックエンド - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -175,140 +175,174 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
+                        <h1 id="localdiskbackend--l2ディスクバックエンド"><a class="header" href="#localdiskbackend--l2ディスクバックエンド">LocalDiskBackend — L2ディスクバックエンド</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM]
-<strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
-<h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
-<pre class="mermaid">graph TD
-    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate 適用&lt;br&gt;プレースホルダー挿入"]
-    B --&gt; C["InputPreprocessor&lt;br&gt;トークナイズ + HF Processor"]
-
-    C --&gt; D{"ProcessorCache&lt;br&gt;ヒット?"}
-    D --&gt;|HIT| E["キャッシュから取得&lt;br&gt;(HF処理スキップ)"]
-    D --&gt;|MISS| F["HF Processor 実行&lt;br&gt;pixel_values テンソル生成"]
-    E --&gt; G["MultiModalFeatureSpec 構築"]
-    F --&gt; G
-
-    G --&gt; H["EngineCoreRequest&lt;br&gt;ZMQ IPC 送信"]
-
-    H --&gt; I["Scheduler"]
-    I --&gt; J{"EncoderCacheManager&lt;br&gt;ヒット?"}
-    J --&gt;|HIT| K["エンコーダ計算スキップ"]
-    J --&gt;|MISS| L["encoder_compute_budget&lt;br&gt;から割り当て"]
-
-    K --&gt; M["GPUModelRunner"]
-    L --&gt; M
-
-    M --&gt; N["_execute_mm_encoder()&lt;br&gt;model.embed_multimodal()"]
-    N --&gt; O["encoder_cache に格納"]
-    O --&gt; P["_gather_mm_embeddings()&lt;br&gt;キャッシュからスライス"]
-    P --&gt; Q["embed_input_ids()&lt;br&gt;text + vision マージ&lt;br&gt;(masked_scatter_)"]
-    Q --&gt; R["model.forward()&lt;br&gt;統合推論"]
-</pre>
-
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>コンポーネント</th><th>場所</th><th>役割</th></tr>
-</thead>
-<tbody>
-<tr><td><code>MULTIMODAL_REGISTRY</code></td><td><code>vllm/multimodal/registry.py</code></td><td>モデルごとのプロセッサ/情報を登録・取得</td></tr>
-<tr><td><code>BaseMultiModalProcessor</code></td><td><code>vllm/multimodal/processing/processor.py</code></td><td>HFプロセッサ実行、プロンプト更新管理</td></tr>
-<tr><td><code>MultiModalHasher</code></td><td><code>vllm/multimodal/hasher.py</code></td><td>コンテンツベースハッシュ（blake3）</td></tr>
-<tr><td><code>ProcessorCache</code> (4種)</td><td><code>vllm/multimodal/cache.py</code></td><td>P0側のHF処理結果キャッシュ</td></tr>
-<tr><td><code>EncoderCacheManager</code></td><td><code>vllm/v1/core/encoder_cache_manager.py</code></td><td>P1側のエンコーダ出力の論理管理</td></tr>
-<tr><td><code>encoder_cache</code></td><td><code>vllm/v1/worker/gpu_model_runner.py:439</code></td><td>GPU上のエンコーダ出力テンソルキャッシュ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="キャッシュの3層構造"><a class="header" href="#キャッシュの3層構造">キャッシュの3層構造</a></h2>
-<pre><code>P0（フロントエンド）               P1（Scheduler）              P1（GPU）
-┌──────────────────┐           ┌─────────────────┐        ┌──────────────┐
-│ ProcessorCache   │           │ EncoderCache    │        │ encoder_cache│
-│ LRU, サイズベース │           │ Manager         │        │ dict[str,    │
-│                  │           │ RefCount + FIFO │        │  Tensor]     │
-│ 何をキャッシュ:   │           │                 │        │              │
-│ HF処理済みテンソル │           │ 何を管理:       │        │ 何をキャッシュ:│
-│ + prompt_updates │           │ 容量・参照カウント│       │ エンコーダ出力│
-│                  │           │ Evictionリスト   │        │ (GPUテンソル) │
-└──────────────────┘           └─────────────────┘        └──────────────┘
-  ヒット時:                      ヒット時:                   ヒット時:
-  HF処理スキップ                 エンコーダ計算スキップ        テンソル再利用
-  IPC転送量削減                  予算節約                    再計算不要
+<p>ローカルディスクにKVキャッシュを永続化するL2バックエンド。
+CPU上のMemoryObjをバイト列としてファイルに書き出し/読み出しする。
+メモリ確保は<code>local_cpu_backend</code>に委譲（自身はAllocatorBackendInterfaceではない）。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py</code></p>
+<h2 id="アーキテクチャ"><a class="header" href="#アーキテクチャ">アーキテクチャ</a></h2>
+<pre><code>StorageManager
+  ├── LocalCPUBackend (L1)  ← hot_cache + MemoryAllocator
+  ├── LocalDiskBackend (L2) ← ファイル永続化 + local_cpu_backendからメモリ借用
+  └── RemoteBackend (L3)    ← ネットワーク永続化
 </code></pre>
-<h2 id="テキスト推論との主な差分"><a class="header" href="#テキスト推論との主な差分">テキスト推論との主な差分</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>処理段階</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
-</thead>
-<tbody>
-<tr><td>入力前処理</td><td>tokenize のみ</td><td>tokenize + HF Processor + ハッシュ + キャッシュ</td></tr>
-<tr><td>プロンプト</td><td>テキストトークンのみ</td><td>テキスト + プレースホルダートークン（<code>&lt;start_of_image&gt;</code> 等）</td></tr>
-<tr><td>EngineCoreRequest</td><td><code>mm_features = None</code></td><td><code>mm_features = [MultiModalFeatureSpec, ...]</code></td></tr>
-<tr><td>Scheduler</td><td>KVキャッシュ予算のみ</td><td>+ エンコーダ計算予算管理</td></tr>
-<tr><td>GPUModelRunner</td><td>input_ids → model.forward()</td><td>encoder実行 → embed_input_ids(masked_scatter_) → inputs_embeds → model.forward()</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="gemma3-固有の特徴"><a class="header" href="#gemma3-固有の特徴">Gemma3 固有の特徴</a></h2>
+<p>LocalDiskBackendは<code>StorageBackendInterface</code>を直接実装（<code>AllocatorBackendInterface</code>ではない）。
+<code>get_allocator_backend()</code> → <code>self.local_cpu_backend</code>を返す。</p>
+<h2 id="store方向"><a class="header" href="#store方向">Store方向</a></h2>
+<h3 id="submit_put_task"><a class="header" href="#submit_put_task">submit_put_task()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:291</code></p>
+<ol>
+<li>重複チェック: <code>exists_in_put_tasks(key)</code> → スキップ</li>
+<li><code>disk_worker.insert_put_task(key)</code> — 進行中タスクリストに登録</li>
+<li><strong>ディスク容量Eviction</strong>: <code>disk_lock</code>下で <code>current_cache_size + required_size &gt; max_cache_size</code> の間、
+<code>cache_policy.get_evict_candidates()</code> → <code>batched_remove()</code> + <code>os.remove(path)</code></li>
+<li><code>memory_obj.ref_count_up()</code> — 非同期書き込み中の保護</li>
+<li><code>asyncio.run_coroutine_threadsafe()</code> で <code>async_save_bytes_to_disk()</code> を投入</li>
+</ol>
+<h3 id="async_save_bytes_to_disk"><a class="header" href="#async_save_bytes_to_disk">async_save_bytes_to_disk()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:479</code></p>
+<p><code>AsyncPQThreadPoolExecutor</code>上で実行（max_workers=4のスレッドプール）。</p>
+<ol>
+<li><code>memory_obj.byte_array</code> → <code>write_file(buffer, path)</code></li>
+<li><code>memory_obj.ref_count_down()</code> — 参照解放</li>
+<li><code>insert_key(key, size, shape, dtype, fmt)</code> — <code>self.dict</code>にDiskCacheMetadata登録</li>
+<li><code>disk_worker.remove_put_task(key)</code></li>
+<li><code>on_complete_callback(key)</code> 実行（ロック外）</li>
+</ol>
+<h3 id="write_file"><a class="header" href="#write_file">write_file()</a></h3>
 <ul>
-<li><strong>ビジョンエンコーダ</strong>: SiglipVisionModel（SIGLIP ViT、双方向Attention）</li>
-<li><strong>プロジェクタ</strong>: AvgPool2d → GemmaRMSNorm → Linear（vision → text空間）</li>
-<li><strong>プレースホルダー</strong>: <code>&lt;start_of_image&gt;</code> → <code>image_token × 256</code> に展開</li>
-<li><strong>Pan-and-Scan</strong>: アスペクト比が大きい画像を複数クロップ（V1では簡略化されたアテンション）</li>
-<li><strong>改行トークン結合</strong>: <code>\n</code> + <code>\n\n</code> → <code>\n\n\n</code> 等の特殊処理</li>
+<li><strong>通常</strong>: <code>open(path, "wb").write(buffer)</code></li>
+<li><strong>O_DIRECT</strong>: サイズがディスクブロックサイズの倍数の場合、<code>os.O_DIRECT</code>フラグで直接I/O</li>
 </ul>
-<h2 id="詳細ドキュメント"><a class="header" href="#詳細ドキュメント">詳細ドキュメント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>ドキュメント</th><th>内容</th></tr>
-</thead>
-<tbody>
-<tr><td><a href="mm-processing.html">mm-processing.md</a></td><td>フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ</td></tr>
-<tr><td><a href="mm-engine-gpu.html">mm-engine-gpu.md</a></td><td>バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ</td></tr>
-<tr><td><a href="gemma3-vision.html">gemma3-vision.md</a></td><td>Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
+<h3 id="diskcachemetadata"><a class="header" href="#diskcachemetadata">DiskCacheMetadata</a></h3>
+<pre><code class="language-python">DiskCacheMetadata(path, size, shape, dtype, cached_positions, fmt, pin_count)
+</code></pre>
+<p>MemoryObjとは異なり、ディスク上のファイルパスとメタデータのみ保持。</p>
+<h2 id="retrieve方向"><a class="header" href="#retrieve方向">Retrieve方向</a></h2>
+<h3 id="get_blocking"><a class="header" href="#get_blocking">get_blocking()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:380</code></p>
+<ol>
+<li><code>disk_lock</code>下で<code>self.dict[key]</code>からpath/shape/dtype/fmt取得</li>
+<li><code>cache_policy.update_on_hit(key, self.dict)</code> — アクセス順更新</li>
+<li><code>local_cpu_backend.allocate(shape, dtype, fmt)</code> — <strong>CPUメモリに確保</strong></li>
+<li><code>read_file(key, buffer, path)</code> — ファイルからバッファに読み込み</li>
+<li><code>metadata.cached_positions</code>をDiskCacheMetadataから復元</li>
+</ol>
+<h3 id="batched_get_non_blocking--非同期プリフェッチ"><a class="header" href="#batched_get_non_blocking--非同期プリフェッチ">batched_get_non_blocking() — 非同期プリフェッチ</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:410</code></p>
+<ol>
+<li>各キーについて:
 <ul>
-<li><strong>上流</strong>: <a href="../entrypoint/summary.html">エントリポイント</a> → <a href="../input-processor/summary.html">InputProcessor</a></li>
-<li><strong>下流</strong>: <a href="../scheduler/summary.html">Scheduler</a> → <a href="../gpu-model-runner/summary.html">GPUModelRunner</a> → モデル層</li>
+<li><code>local_cpu_backend.allocate()</code> でCPUメモリ確保</li>
+<li><code>self.dict[key].pin()</code> — 読み込み中のEviction防止</li>
+<li><code>cache_policy.update_on_hit()</code> — アクセス順更新</li>
 </ul>
-<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
+</li>
+<li><code>disk_worker.submit_task("prefetch", batched_async_load_bytes_from_disk, ...)</code>
+<ul>
+<li>priority=0（最高優先度）でスレッドプールに投入</li>
+</ul>
+</li>
+</ol>
+<h3 id="batched_async_load_bytes_from_disk"><a class="header" href="#batched_async_load_bytes_from_disk">batched_async_load_bytes_from_disk()</a></h3>
+<p>各ファイルを<code>read_file()</code>で読み込み後、<code>self.dict[key].unpin()</code>。</p>
+<h3 id="read_file"><a class="header" href="#read_file">read_file()</a></h3>
+<ul>
+<li><strong>通常</strong>: <code>open(path, "rb").readinto(buffer)</code></li>
+<li><strong>O_DIRECT</strong>: ブロック整列時のみ <code>os.O_DIRECT | os.O_RDONLY</code></li>
+<li>FileNotFoundError時: 警告ログ + dictからキー除去</li>
+</ul>
+<h2 id="localdiskworker--優先度付きスレッドプール"><a class="header" href="#localdiskworker--優先度付きスレッドプール">LocalDiskWorker — 優先度付きスレッドプール</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:37</code></p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>ファイル</th><th>概要</th></tr>
+<tr><th>タスク種別</th><th>優先度</th><th>説明</th></tr>
 </thead>
 <tbody>
-<tr><td><code>target/vllm/vllm/multimodal/</code></td><td>マルチモーダル処理の基盤（レジストリ、ハッシュ、キャッシュ、パース）</td></tr>
-<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td>フロントエンドでのMM処理統合</td></tr>
-<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td>バックエンドのエンコーダキャッシュ管理</td></tr>
-<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td>GPU上でのエンコーダ実行と埋め込みマージ</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td>Gemma3のマルチモーダル実装</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td>SiglipVisionModel（ビジョンエンコーダ）</td></tr>
+<tr><td>prefetch</td><td>0 (最高)</td><td>ディスク→CPUメモリ読み込み</td></tr>
+<tr><td>delete</td><td>1</td><td>ファイル削除</td></tr>
+<tr><td>put</td><td>2 (最低)</td><td>CPUメモリ→ディスク書き込み</td></tr>
 </tbody>
 </table>
 </div>
+<p><code>AsyncPQThreadPoolExecutor</code>（Priority Queue付き非同期スレッドプール）で管理。
+prefetchが最優先なのは、retrieve（推論の待ち時間に直結）をstoreより優先するため。</p>
+<h2 id="容量管理"><a class="header" href="#容量管理">容量管理</a></h2>
+<ul>
+<li><code>max_cache_size</code>: <code>config.max_local_disk_size * 1024^3</code>（バイト単位）</li>
+<li><code>current_cache_size</code>: 現在のディスク使用量（書き込み時に加算、削除時に減算）</li>
+<li>Eviction: store時にmax超過なら<code>cache_policy.get_evict_candidates()</code> → <code>os.remove()</code></li>
+</ul>
+<p><strong>注意</strong>: ディスクフラグメンテーションは未考慮（TODO）。</p>
+<h2 id="独自ストレージバックエンド実装ガイド"><a class="header" href="#独自ストレージバックエンド実装ガイド">独自ストレージバックエンド実装ガイド</a></h2>
+<h3 id="storageplugininterface"><a class="header" href="#storageplugininterface">StoragePluginInterface</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/abstract_backend.py:394</code></p>
+<p>独自バックエンドを実装する場合は<code>StoragePluginInterface</code>を継承する:</p>
+<pre><code class="language-python">class MyBackend(StoragePluginInterface):
+    def __init__(self, dst_device, config, metadata, local_cpu_backend, loop):
+        super().__init__(dst_device, config, metadata, local_cpu_backend, loop)
+</code></pre>
+<h3 id="必須メソッドstoragebackendinterface由来"><a class="header" href="#必須メソッドstoragebackendinterface由来">必須メソッド（StorageBackendInterface由来）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td><code>contains(key, pin)</code></td><td>キーの存在確認。pin=Trueで追い出し保護</td></tr>
+<tr><td><code>exists_in_put_tasks(key)</code></td><td>書き込み進行中のキー確認（重複store防止）</td></tr>
+<tr><td><code>batched_submit_put_task(keys, objs, ...)</code></td><td>非同期書き込み投入</td></tr>
+<tr><td><code>get_blocking(key)</code></td><td>同期的なKVデータ取得</td></tr>
+<tr><td><code>pin(key)</code> / <code>unpin(key)</code></td><td>Eviction保護の制御</td></tr>
+<tr><td><code>remove(key, force)</code></td><td>エントリ削除</td></tr>
+<tr><td><code>get_allocator_backend()</code></td><td>メモリ確保先（通常<code>local_cpu_backend</code>を返す）</td></tr>
+<tr><td><code>close()</code></td><td>リソース解放</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="オプショナルメソッド"><a class="header" href="#オプショナルメソッド">オプショナルメソッド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>デフォルト動作</th><th>オーバーライド推奨</th></tr>
+</thead>
+<tbody>
+<tr><td><code>batched_get_blocking(keys)</code></td><td>個別get_blocking()のループ</td><td>バッチ取得が効率的な場合</td></tr>
+<tr><td><code>batched_async_contains(lookup_id, keys, pin)</code></td><td>NotImplementedError</td><td>非同期prefetch対応時</td></tr>
+<tr><td><code>batched_get_non_blocking(lookup_id, keys, ...)</code></td><td>NotImplementedError</td><td>非同期prefetch対応時</td></tr>
+<tr><td><code>batched_contains(keys, pin)</code></td><td>個別contains()のループ（prefix match方式）</td><td>バッチ判定が効率的な場合</td></tr>
+<tr><td><code>touch_cache()</code></td><td>（定義なし）</td><td>LRU等のアクセス順更新が必要な場合</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="メモリ確保パターン"><a class="header" href="#メモリ確保パターン">メモリ確保パターン</a></h3>
+<p>独自バックエンドからデータを取得する場合:</p>
+<ol>
+<li><code>local_cpu_backend.allocate(shape, dtype, fmt)</code> でCPUメモリを確保</li>
+<li>データをMemoryObjの<code>byte_array</code>に書き込み（<code>readinto()</code>等）</li>
+<li><code>metadata.cached_positions</code>等のメタデータを復元</li>
+<li>MemoryObjを返却（呼び出し元がref_count管理）</li>
+</ol>
+<h3 id="on_complete_callback"><a class="header" href="#on_complete_callback">on_complete_callback</a></h3>
+<p><code>batched_submit_put_task()</code>のオプションパラメータ。
+各キーのstore完了時にコールバックを実行（バッチ単位ではなくキー単位）。
+他バックエンドへの連鎖store等に使用可能。実装側でcatch/logすること。</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../../lmcache/components/storage-manager/cache-policy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../../lmcache/components/storage-manager/memory-allocator.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -318,11 +352,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../../lmcache/components/storage-manager/cache-policy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../../lmcache/components/storage-manager/memory-allocator.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

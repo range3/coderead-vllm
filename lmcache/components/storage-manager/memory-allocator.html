@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>マルチモーダル処理パイプライン サマリー - コードリーディング: vLLM &amp; LMCache</title>
+        <title>メモリアロケータ階層 - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -175,140 +175,138 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
+                        <h1 id="メモリアロケータ階層"><a class="header" href="#メモリアロケータ階層">メモリアロケータ階層</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM]
-<strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
-<h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
-<pre class="mermaid">graph TD
-    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate 適用&lt;br&gt;プレースホルダー挿入"]
-    B --&gt; C["InputPreprocessor&lt;br&gt;トークナイズ + HF Processor"]
-
-    C --&gt; D{"ProcessorCache&lt;br&gt;ヒット?"}
-    D --&gt;|HIT| E["キャッシュから取得&lt;br&gt;(HF処理スキップ)"]
-    D --&gt;|MISS| F["HF Processor 実行&lt;br&gt;pixel_values テンソル生成"]
-    E --&gt; G["MultiModalFeatureSpec 構築"]
-    F --&gt; G
-
-    G --&gt; H["EngineCoreRequest&lt;br&gt;ZMQ IPC 送信"]
-
-    H --&gt; I["Scheduler"]
-    I --&gt; J{"EncoderCacheManager&lt;br&gt;ヒット?"}
-    J --&gt;|HIT| K["エンコーダ計算スキップ"]
-    J --&gt;|MISS| L["encoder_compute_budget&lt;br&gt;から割り当て"]
-
-    K --&gt; M["GPUModelRunner"]
-    L --&gt; M
-
-    M --&gt; N["_execute_mm_encoder()&lt;br&gt;model.embed_multimodal()"]
-    N --&gt; O["encoder_cache に格納"]
-    O --&gt; P["_gather_mm_embeddings()&lt;br&gt;キャッシュからスライス"]
-    P --&gt; Q["embed_input_ids()&lt;br&gt;text + vision マージ&lt;br&gt;(masked_scatter_)"]
-    Q --&gt; R["model.forward()&lt;br&gt;統合推論"]
-</pre>
-
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>コンポーネント</th><th>場所</th><th>役割</th></tr>
-</thead>
-<tbody>
-<tr><td><code>MULTIMODAL_REGISTRY</code></td><td><code>vllm/multimodal/registry.py</code></td><td>モデルごとのプロセッサ/情報を登録・取得</td></tr>
-<tr><td><code>BaseMultiModalProcessor</code></td><td><code>vllm/multimodal/processing/processor.py</code></td><td>HFプロセッサ実行、プロンプト更新管理</td></tr>
-<tr><td><code>MultiModalHasher</code></td><td><code>vllm/multimodal/hasher.py</code></td><td>コンテンツベースハッシュ（blake3）</td></tr>
-<tr><td><code>ProcessorCache</code> (4種)</td><td><code>vllm/multimodal/cache.py</code></td><td>P0側のHF処理結果キャッシュ</td></tr>
-<tr><td><code>EncoderCacheManager</code></td><td><code>vllm/v1/core/encoder_cache_manager.py</code></td><td>P1側のエンコーダ出力の論理管理</td></tr>
-<tr><td><code>encoder_cache</code></td><td><code>vllm/v1/worker/gpu_model_runner.py:439</code></td><td>GPU上のエンコーダ出力テンソルキャッシュ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="キャッシュの3層構造"><a class="header" href="#キャッシュの3層構造">キャッシュの3層構造</a></h2>
-<pre><code>P0（フロントエンド）               P1（Scheduler）              P1（GPU）
-┌──────────────────┐           ┌─────────────────┐        ┌──────────────┐
-│ ProcessorCache   │           │ EncoderCache    │        │ encoder_cache│
-│ LRU, サイズベース │           │ Manager         │        │ dict[str,    │
-│                  │           │ RefCount + FIFO │        │  Tensor]     │
-│ 何をキャッシュ:   │           │                 │        │              │
-│ HF処理済みテンソル │           │ 何を管理:       │        │ 何をキャッシュ:│
-│ + prompt_updates │           │ 容量・参照カウント│       │ エンコーダ出力│
-│                  │           │ Evictionリスト   │        │ (GPUテンソル) │
-└──────────────────┘           └─────────────────┘        └──────────────┘
-  ヒット時:                      ヒット時:                   ヒット時:
-  HF処理スキップ                 エンコーダ計算スキップ        テンソル再利用
-  IPC転送量削減                  予算節約                    再計算不要
+<p>LMCacheのメモリ管理は、事前確保された大きなバッファ上で仮想アドレス空間管理を行う
+カスタムアロケータで実現されている。pinned CPUメモリ上に確保することで、
+GPU⇔CPU間のDMA転送を高速化する。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py</code></p>
+<h2 id="アロケータ階層"><a class="header" href="#アロケータ階層">アロケータ階層</a></h2>
+<pre><code>MemoryAllocatorInterface (abstract)
+├── TensorMemoryAllocator         ← explicit free list方式
+├── PagedTensorMemoryAllocator    ← ページ単位の固定サイズスロット
+├── BufferAllocator               ← バイト配列用（GC任せ）
+├── HostMemoryAllocator           ← 非pinned CPU + 内部委譲
+├── PinMemoryAllocator            ← pinned CPU + 内部委譲
+├── MixedMemoryAllocator          ← テンソル用Pin + バイナリ用Buffer
+├── GPUMemoryAllocator            ← GPU VRAM + 内部委譲
+├── CuFileMemoryAllocator         ← GPUDirect Storage対応
+├── PagedCpuGpuMemoryAllocator   ← CPU+GPU両方のページアロケータ（NIXL/P2P用）
+└── AdHocMemoryAllocator          ← テスト用ダミー
 </code></pre>
-<h2 id="テキスト推論との主な差分"><a class="header" href="#テキスト推論との主な差分">テキスト推論との主な差分</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>処理段階</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
-</thead>
-<tbody>
-<tr><td>入力前処理</td><td>tokenize のみ</td><td>tokenize + HF Processor + ハッシュ + キャッシュ</td></tr>
-<tr><td>プロンプト</td><td>テキストトークンのみ</td><td>テキスト + プレースホルダートークン（<code>&lt;start_of_image&gt;</code> 等）</td></tr>
-<tr><td>EngineCoreRequest</td><td><code>mm_features = None</code></td><td><code>mm_features = [MultiModalFeatureSpec, ...]</code></td></tr>
-<tr><td>Scheduler</td><td>KVキャッシュ予算のみ</td><td>+ エンコーダ計算予算管理</td></tr>
-<tr><td>GPUModelRunner</td><td>input_ids → model.forward()</td><td>encoder実行 → embed_input_ids(masked_scatter_) → inputs_embeds → model.forward()</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="gemma3-固有の特徴"><a class="header" href="#gemma3-固有の特徴">Gemma3 固有の特徴</a></h2>
+<h2 id="tensormemoryallocator--explicit-free-list方式"><a class="header" href="#tensormemoryallocator--explicit-free-list方式">TensorMemoryAllocator — explicit free list方式</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1135</code></p>
+<p>事前確保されたフラットテンソル(<code>buffer</code>)上で、AddressManagerが仮想アドレス空間を管理。</p>
+<h3 id="addressmanager"><a class="header" href="#addressmanager">AddressManager</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:903</code></p>
 <ul>
-<li><strong>ビジョンエンコーダ</strong>: SiglipVisionModel（SIGLIP ViT、双方向Attention）</li>
-<li><strong>プロジェクタ</strong>: AvgPool2d → GemmaRMSNorm → Linear（vision → text空間）</li>
-<li><strong>プレースホルダー</strong>: <code>&lt;start_of_image&gt;</code> → <code>image_token × 256</code> に展開</li>
-<li><strong>Pan-and-Scan</strong>: アスペクト比が大きい画像を複数クロップ（V1では簡略化されたアテンション）</li>
-<li><strong>改行トークン結合</strong>: <code>\n</code> + <code>\n\n</code> → <code>\n\n\n</code> 等の特殊処理</li>
+<li><strong>データ構造</strong>: <code>SortedList[FreeBlock]</code>（<code>sortedcontainers</code>ライブラリ）</li>
+<li><strong>FreeBlock</strong>: <code>(start, size)</code> タプル。startでソート</li>
+<li><strong>アライメント</strong>: デフォルト4,096バイト（<code>ALIGN_BYTES</code>）</li>
+<li><strong>確保</strong>: first-fit方式。ソートリストを先頭から走査し最初に十分な空きブロックを選択</li>
+<li><strong>解放</strong>: bisect_leftで挿入位置を特定し、前後のブロックとcoalesce（結合）</li>
+<li><strong>sbrk()</strong>: アドレス空間の動的拡張（LazyAllocator向け）</li>
+<li><strong>スレッドセーフ</strong>: <code>@synchronized("_lock")</code>デコレータで全操作をロック保護</li>
 </ul>
-<h2 id="詳細ドキュメント"><a class="header" href="#詳細ドキュメント">詳細ドキュメント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>ドキュメント</th><th>内容</th></tr>
-</thead>
-<tbody>
-<tr><td><a href="mm-processing.html">mm-processing.md</a></td><td>フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ</td></tr>
-<tr><td><a href="mm-engine-gpu.html">mm-engine-gpu.md</a></td><td>バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ</td></tr>
-<tr><td><a href="gemma3-vision.html">gemma3-vision.md</a></td><td>Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
+<h3 id="allocate-の動作"><a class="header" href="#allocate-の動作">allocate() の動作</a></h3>
+<pre><code class="language-python">aligned_size = (raw_size + 4095) &amp; ~4095  # 4KB境界に切り上げ
+# SortedListからfirst-fitで空きブロックを探索
+# ブロックを分割: [確保分 | 残余→フリーリストに戻す]
+# buffer[start:start+raw_size] をraw_dataとしてTensorMemoryObjを生成
+</code></pre>
+<h3 id="batched_allocate-の最適化"><a class="header" href="#batched_allocate-の最適化">batched_allocate() の最適化</a></h3>
+<p>通常のallocateはブロックごとに個別確保だが、batched_allocateは
+<code>unit_aligned_size * batch_size</code> の<strong>1つの大きなブロック</strong>として確保し、
+<code>torch.chunk()</code>で分割。これによりフラグメンテーションを軽減。</p>
+<h3 id="free--batched_free"><a class="header" href="#free--batched_free">free() / batched_free()</a></h3>
 <ul>
-<li><strong>上流</strong>: <a href="../entrypoint/summary.html">エントリポイント</a> → <a href="../input-processor/summary.html">InputProcessor</a></li>
-<li><strong>下流</strong>: <a href="../scheduler/summary.html">Scheduler</a> → <a href="../gpu-model-runner/summary.html">GPUModelRunner</a> → モデル層</li>
+<li><code>free()</code>: AddressManager.free()でブロックを返却→前後のFreeBlockとcoalesce</li>
+<li><code>batched_free()</code>: メモリブロックをアドレス順にソートし、隣接ブロックを事前にcoalesceしてから
+AddressManager.free()を呼ぶ。フリーリスト操作回数を削減</li>
 </ul>
-<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>ファイル</th><th>概要</th></tr>
-</thead>
-<tbody>
-<tr><td><code>target/vllm/vllm/multimodal/</code></td><td>マルチモーダル処理の基盤（レジストリ、ハッシュ、キャッシュ、パース）</td></tr>
-<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td>フロントエンドでのMM処理統合</td></tr>
-<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td>バックエンドのエンコーダキャッシュ管理</td></tr>
-<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td>GPU上でのエンコーダ実行と埋め込みマージ</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td>Gemma3のマルチモーダル実装</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td>SiglipVisionModel（ビジョンエンコーダ）</td></tr>
-</tbody>
-</table>
-</div>
+<h2 id="pagedtensormemoryallocator--ページスロット方式"><a class="header" href="#pagedtensormemoryallocator--ページスロット方式">PagedTensorMemoryAllocator — ページスロット方式</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1404</code></p>
+<p>固定サイズのスロット（ページ）に分割し、<code>deque[TensorMemoryObj]</code>でフリーリストを管理。</p>
+<ul>
+<li><strong>初期化</strong>: <code>buffer</code>を<code>align_bytes</code>（=1チャンク分のKVデータサイズ）で分割</li>
+<li><strong>allocate()</strong>: <code>free_blocks.popleft()</code> — O(1)</li>
+<li><strong>free()</strong>: <code>free_blocks.append(mem_obj)</code> — O(1)、<code>invalidate()</code>しない（再利用）</li>
+<li><strong>スレッドセーフ</strong>: <code>deque</code>のCPython実装がアトミックなため、ロック不要</li>
+<li><strong>用途</strong>: P2P/PD共有時のNIXL連携（ページ単位のアドレス管理が必要）</li>
+</ul>
+<h2 id="mixedmemoryallocator--通常時のデフォルト"><a class="header" href="#mixedmemoryallocator--通常時のデフォルト">MixedMemoryAllocator — 通常時のデフォルト</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1892</code></p>
+<p>LocalCPUBackendの<code>initialize_allocator()</code>がデフォルトで生成するアロケータ。</p>
+<pre><code>MixedMemoryAllocator
+├── pin_allocator: TensorMemoryAllocator or PagedTensorMemoryAllocator
+│   └── buffer: pinned CPU memory（NUMA-aware確保可能）
+└── buffer_allocator: BufferAllocator
+    └── 個別bytearrayを都度確保
+</code></pre>
+<ul>
+<li><strong>MemoryFormat分岐</strong>: KV_2LTD/KV_T2D/KV_2TD/KV_MLA_FMT → pin_allocator、BINARY_BUFFER → buffer_allocator</li>
+<li><strong>pinned memory確保</strong>: <code>lmc_ops.alloc_pinned_ptr()</code>（CUDAのcudaHostAlloc相当）
+<ul>
+<li>NUMA対応時: <code>lmc_ops.alloc_pinned_numa_ptr(size, numa_id)</code></li>
+</ul>
+</li>
+<li><strong>close()</strong>: <code>lmc_ops.free_pinned_ptr()</code>で明示解放</li>
+</ul>
+<h2 id="memoryobj--メモリオブジェクトの抽象"><a class="header" href="#memoryobj--メモリオブジェクトの抽象">MemoryObj — メモリオブジェクトの抽象</a></h2>
+<h3 id="tensormemoryobj"><a class="header" href="#tensormemoryobj">TensorMemoryObj</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:431</code></p>
+<ul>
+<li><strong>raw_data</strong>: フラットな<code>torch.Tensor</code>（uint8ビュー）。アロケータのバッファスライス</li>
+<li><strong>metadata</strong>: <code>MemoryObjMetadata</code>（shape, dtype, address, phy_size, ref_count, pin_count, fmt, cached_positions）</li>
+<li><strong>group_prefix_sum</strong>: 複数グループ（shapes/dtypes）のバイトオフセットプレフィックスサム</li>
+<li><strong>tensor プロパティ</strong>: <code>raw_data[:logical_size].view(dtype).view(shape)</code> でテンソルビューを返す</li>
+<li><strong>get_tensor(index)</strong>: グループ別テンソルビュー（MLA等の複数形状対応）</li>
+</ul>
+<h3 id="ref_count--pin_count-ライフサイクル"><a class="header" href="#ref_count--pin_count-ライフサイクル">ref_count / pin_count ライフサイクル</a></h3>
+<pre><code>確保時: ref_count=1, pin_count=0
+  ↓
+hot_cacheに登録: ref_count_up() → ref_count=2
+  ↓
+GPU転送中: ref_count_up() → ref_count=3
+  ↓
+GPU転送完了: ref_count_down() → ref_count=2
+  ↓
+hot_cacheから追い出し: ref_count_down() → ref_count=1
+  ↓
+batched_put完了: ref_count_down() → ref_count=0 → allocator.free()
+</code></pre>
+<p><strong>pin_count</strong>: lookup時にpin()でEviction対象外にマーク。</p>
+<ul>
+<li><code>can_evict = not is_pinned and ref_count == 1</code>（ref_count=1=hot_cacheのみが保持）</li>
+<li>PinMonitor: タイムアウト追跡。異常なpin長期化を検出</li>
+</ul>
+<h3 id="bytesbuffermemoryobj"><a class="header" href="#bytesbuffermemoryobj">BytesBufferMemoryObj</a></h3>
+<p><code>bytes</code>/<code>bytearray</code>のラッパー。ref_count操作はno-op（GC任せ）。
+BINARY_BUFFER形式用。Serde圧縮結果の格納に使用。</p>
+<h2 id="メモリサイズ計算"><a class="header" href="#メモリサイズ計算">メモリサイズ計算</a></h2>
+<h3 id="calculate_chunk_budget"><a class="header" href="#calculate_chunk_budget">calculate_chunk_budget()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:688</code></p>
+<pre><code class="language-python">max_chunks = total_memory // aligned_chunk_bytes
+</code></pre>
+<p>非同期ローディングシステムでの同時確保数上限を算出。
+デッドロック防止のためのチャンクバジェット管理に使用。</p>
+<h3 id="get_full_chunk_size"><a class="header" href="#get_full_chunk_size">get_full_chunk_size()</a></h3>
+<p>Layerwise時: <code>chunk_tokens * kv_size * hidden_dim * dtype_size</code>（1レイヤー分）
+Bulk時: <code>kv_size * num_layers * chunk_tokens * hidden_dim * dtype_size</code>（全レイヤー分）</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../../lmcache/components/storage-manager/local-disk-backend.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../../lmcache/components/token-database/summary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -318,11 +316,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../../lmcache/components/storage-manager/local-disk-backend.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../../lmcache/components/token-database/summary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

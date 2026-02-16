@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8bb2998d.js";
+            window.path_to_searchindex_js = "searchindex-39a278f6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-9f076d22.js"></script>
+        <script src="toc-6c732275.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -9434,8 +9434,8 @@ vLLMのページドメモリレイアウトからslot_mappingを使って正し�
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="storagemanager--localcpubackend"><a class="header" href="#storagemanager--localcpubackend">StorageManager + LocalCPUBackend</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM] / <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-16（Phase 1 セッション1）</p>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
 </blockquote>
 <h2 id="概要-25"><a class="header" href="#概要-25">概要</a></h2>
 <p>多段ストレージバックエンドを管理するディスパッチャ（StorageManager）と、
@@ -9444,8 +9444,27 @@ L1 CPUメモリキャッシュの実装（LocalCPUBackend）。</p>
 <ul>
 <li><code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py</code>（StorageManager）</li>
 <li><code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py</code>（LocalCPUBackend）</li>
+<li><code>target/LMCache/lmcache/v1/storage_backend/abstract_backend.py</code>（インターフェース定義）</li>
+</ul>
+<p><strong>サブドキュメント</strong>:</p>
+<ul>
+<li><a href="#メモリアロケータ階層">memory-allocator.md</a> — メモリアロケータ階層と物理メモリ管理</li>
+<li><a href="#cachepolicy--eviction戦略">cache-policy.md</a> — Eviction戦略（FIFO/LRU/LFU/MRU）</li>
+<li><a href="#localdiskbackend--l2ディスクバックエンド">local-disk-backend.md</a> — L2ディスクバックエンドと階層化動作</li>
 </ul>
 <h2 id="storagemanager-1"><a class="header" href="#storagemanager-1">StorageManager</a></h2>
+<h3 id="バックエンド登録と優先度"><a class="header" href="#バックエンド登録と優先度">バックエンド登録と優先度</a></h3>
+<p><code>storage_backends</code>は<code>OrderedDict</code>で登録順=優先度:</p>
+<pre><code>LocalCPUBackend (L1) → LocalDiskBackend (L2) → RemoteBackend (L3)
+</code></pre>
+<p><strong>allocator_backend</strong>: メモリ確保の責務を持つバックエンド。通常は<code>LocalCPUBackend</code>（PD有効時は<code>PDBackend</code>）。
+全バックエンドは<code>get_allocator_backend()</code>で自身のallocator元を返す:</p>
+<ul>
+<li>LocalCPUBackend → 自身（<code>AllocatorBackendInterface</code>実装）</li>
+<li>LocalDiskBackend → <code>local_cpu_backend</code>参照（CPU上に確保してからディスクに書く）</li>
+<li>RemoteBackend → <code>local_cpu_backend</code>参照</li>
+</ul>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:321</code></p>
 <h3 id="batched_allocate"><a class="header" href="#batched_allocate">batched_allocate()</a></h3>
 <p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:352</code></p>
 <pre><code class="language-python">def batched_allocate(
@@ -9457,30 +9476,30 @@ L1 CPUメモリキャッシュの実装（LocalCPUBackend）。</p>
     busy_loop: bool = True,
 ) -&gt; Optional[list[MemoryObj]]
 </code></pre>
-<p><code>allocator_backend</code>（通常LocalCPUBackend）に委譲。メモリ不足時はNoneを返す。</p>
+<p><code>allocator_backend</code>に委譲。LocalCPUBackendが内部でEviction→再確保のループを行う。</p>
 <h3 id="batched_put"><a class="header" href="#batched_put">batched_put()</a></h3>
 <p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:388</code></p>
-<pre><code class="language-python">def batched_put(
-    keys: Sequence[CacheEngineKey],
-    memory_objs: List[MemoryObj],
-    transfer_spec=None,
-    location: Optional[str] = None,
-) -&gt; None
-</code></pre>
 <p><strong>処理フロー</strong>:</p>
 <ol>
 <li><code>allocator_backend</code>のデータをそのまま利用（コピー不要）</li>
 <li><code>OrderedDict</code>順に全バックエンド（L1→L2→L3）を走査</li>
-<li>異なるallocatorを持つバックエンドには<code>allocate_and_copy_objects()</code>で新メモリ確保＋コピー</li>
+<li>異なるallocatorを持つバックエンドには<code>allocate_and_copy_objects()</code>で新メモリ確保＋コピー
+<ul>
+<li>実際にはLocalDiskBackendもRemoteBackendも<code>get_allocator_backend()</code>→LocalCPUBackendなので、同一allocator＝コピー不要</li>
+</ul>
+</li>
 <li>各バックエンドの<code>batched_submit_put_task()</code>を呼び出し</li>
-<li>全バックエンド処理後、<code>ref_count_down()</code>でrefcount解放</li>
+<li>全バックエンド処理後、各obj_dictの<code>ref_count_down()</code>で解放</li>
 </ol>
 <p><strong>注意</strong>: <code>put()</code>は非推奨（<code>RuntimeError</code>を投げる）。<code>batched_put()</code>が唯一のエントリポイント。</p>
-<h3 id="contains"><a class="header" href="#contains">contains()</a></h3>
-<pre><code class="language-python">def contains(key: CacheEngineKey) -&gt; Optional[str]
-</code></pre>
-<p>全バックエンドを順に検索し、ヒットしたバックエンド名を返す。<code>batched_contains()</code>も存在。</p>
+<h3 id="運用機能"><a class="header" href="#運用機能">運用機能</a></h3>
+<ul>
+<li><strong>freeze mode</strong>: <code>_freeze=True</code>でリモートバックエンドをスキップ（LocalCPUのみ使用）</li>
+<li><strong>bypass mode</strong>: ヘルスチェック失敗時に特定バックエンドを一時的にバイパス</li>
+<li><strong>internal_copy_stream</strong>: put時の異なるallocator間コピー用CUDAストリーム</li>
+</ul>
 <h2 id="localcpubackend"><a class="header" href="#localcpubackend">LocalCPUBackend</a></h2>
+<p><code>AllocatorBackendInterface</code>を実装。<strong>メモリ確保</strong>と<strong>キャッシュストレージ</strong>の2つの役割を持つ。</p>
 <h3 id="submit_put_task"><a class="header" href="#submit_put_task">submit_put_task()</a></h3>
 <p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:141</code></p>
 <p><strong>同期実行</strong>（バックグラウンドスレッドなし）。<code>cpu_lock</code>下で:</p>
@@ -9490,82 +9509,503 @@ L1 CPUメモリキャッシュの実装（LocalCPUBackend）。</p>
 <li><code>hot_cache[key] = memory_obj</code></li>
 <li><code>cache_policy.update_on_put(key)</code> — Evictionポリシー更新</li>
 <li><code>batched_msg_sender.add_kv_op(ADMIT, key.chunk_hash)</code> — controller通知（オプション）</li>
+<li>ロック外でon_complete_callback実行</li>
 </ol>
-<h3 id="batched_allocate-1"><a class="header" href="#batched_allocate-1">batched_allocate()</a></h3>
-<p>MemoryObj（pinned CPUテンソル）のバッチ確保。メモリ不足時はEvictionを試行:</p>
+<h3 id="allocate--batched_allocate--evictionループ"><a class="header" href="#allocate--batched_allocate--evictionループ">allocate() / batched_allocate() — Evictionループ</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:426</code></p>
+<pre><code>memory_allocatorに確保試行
+  ↓ 失敗
+cache_policy.get_evict_candidates(hot_cache, num_candidates=1)
+  ↓ 候補あり
+batched_remove(evict_keys)  ← hot_cacheから除去 + ref_count_down → allocatorに返却
+  ↓
+memory_allocatorに再確保試行
+  ↓ 失敗 &amp;&amp; busy_loop=True
+0.1秒待機して再試行（他のstore完了によるメモリ解放を待つ）
+</code></pre>
+<p><strong>batched_allocateの特殊処理</strong>: Layerwise時、1チャンクの全レイヤーをまとめて追い出す
+（<code>evict_key.split_layers(batch_size)</code>で全レイヤーキーを生成→一括free）。</p>
+<p><strong>busy_loopの用途</strong>:</p>
 <ul>
-<li><code>eviction=True</code>: 古いエントリを<code>cache_policy</code>に基づき追い出し</li>
-<li><code>busy_loop=True</code>: 確保できるまでEviction→再試行をループ</li>
+<li>store（書き込み）: <code>busy_loop=False</code> — 並行storeがデッドロックするため</li>
+<li>retrieve（読み出し）: <code>busy_loop=True</code> — storeの完了でメモリが解放されるのを待つ</li>
 </ul>
 <h3 id="hot_cache"><a class="header" href="#hot_cache">hot_cache</a></h3>
-<p><code>OrderedDict[CacheEngineKey, MemoryObj]</code>。CachePolicyが管理:</p>
+<p><code>cache_policy.init_mutable_mapping()</code>が返すマッピング:</p>
 <ul>
-<li><strong>FIFO</strong>: <code>OrderedDict</code>の先頭から追い出し</li>
-<li><strong>LRU</strong>: アクセス時にmove_to_end()、先頭から追い出し</li>
-<li><strong>LFU/MRU</strong>: それぞれの戦略</li>
+<li>FIFO: <code>dict</code>（Python dictは挿入順を保持）</li>
+<li>LRU/MRU: <code>OrderedDict</code></li>
+<li>LFU: <code>dict</code>（freq_to_keysで別途管理）</li>
 </ul>
-<h3 id="メモリ管理"><a class="header" href="#メモリ管理">メモリ管理</a></h3>
-<p>LocalCPUBackendは<strong>メモリアロケータ</strong>としても機能:</p>
+<h3 id="touch_cache"><a class="header" href="#touch_cache">touch_cache()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:128</code></p>
+<p><code>keys_in_request</code>を<strong>逆順</strong>にupdate_on_hit()。suffix→prefix順にlookupされたキーを、
+prefix→suffix順（正しい時系列順）に修正してアクセス順序を更新。</p>
+<h3 id="contains-with-pin"><a class="header" href="#contains-with-pin">contains() with pin</a></h3>
+<p>lookup時に<code>pin=True</code>で呼ばれると:</p>
+<ol>
+<li><code>hot_cache[key].pin()</code> → Eviction対象外にマーク</li>
+<li><code>keys_in_request</code>に追加 → retrieve完了後にtouch_cache()で解除</li>
+</ol>
+<h3 id="initialize_allocator"><a class="header" href="#initialize_allocator">initialize_allocator()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:346</code></p>
+<p>設定に応じてアロケータを選択:</p>
 <ul>
-<li>MemoryObjはpinned CPU memory（<code>page_locked</code>）</li>
-<li><code>MemoryAllocator</code>がプール管理（事前確保 or 動的確保）</li>
-<li>ref_countで共有管理、0になるとプールに返却</li>
+<li><strong>P2P有効時</strong>: <code>PagedCpuGpuMemoryAllocator</code>（NIXL連携用ページアロケータ）</li>
+<li><strong>通常時</strong>: <code>MixedMemoryAllocator</code>（テンソル用PinMemory + バイナリ用BufferAllocator）</li>
+<li>NUMA対応: GPU→NUMAマッピングでNUMA-awareなpinned memory確保</li>
+<li>MLA first rank: 最初のrankのみ大容量CPU確保</li>
+<li>reserve_cpu_size: システム利用可能メモリから予約サイズを差し引き</li>
 </ul>
 <h2 id="storagemanagerretrieve方向"><a class="header" href="#storagemanagerretrieve方向">StorageManager（Retrieve方向）</a></h2>
 <h3 id="batched_get"><a class="header" href="#batched_get">batched_get()</a></h3>
 <p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484</code></p>
-<pre><code class="language-python">def batched_get(
-    keys: List[CacheEngineKey],
-    location: Optional[str] = None,
-) -&gt; List[Optional[MemoryObj]]
-</code></pre>
 <p>指定locationのバックエンドから<code>batched_get_blocking(keys)</code>でMemoryObjを取得。
 <strong>write-back</strong>: リモートバックエンドから取得した場合、<code>LocalCPUBackend</code>が存在すれば自動的にL1にコピー。</p>
 <h3 id="layerwise_batched_get"><a class="header" href="#layerwise_batched_get">layerwise_batched_get()</a></h3>
-<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:519</code></p>
-<pre><code class="language-python">def layerwise_batched_get(
-    keys: List[List[CacheEngineKey]],  # [num_layers][num_chunks]
-    location: Optional[str] = None,
-) -&gt; Generator[Future, None, None]
-</code></pre>
-<p>レイヤー単位で非同期取得。各レイヤーの<code>batched_get_non_blocking()</code>をasyncio.create_taskで投入し、Futureをyield。
-デフォルトlocationは<code>"LocalCPUBackend"</code>。</p>
+<p>レイヤー単位で非同期取得。各レイヤーの<code>batched_get_non_blocking()</code>をasyncio.create_taskで投入し、Futureをyield。</p>
 <h3 id="get_block_mapping"><a class="header" href="#get_block_mapping">get_block_mapping()</a></h3>
-<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:908</code></p>
 <p>チャンクリストを受け取り、各チャンクの所在バックエンドを特定。<strong>prefix match方式</strong>: 各バックエンドの<code>batched_contains()</code>で先頭からの連続ヒット数を取得し、残りを次のバックエンドに渡す。</p>
 <h3 id="async_lookup_and_prefetch"><a class="header" href="#async_lookup_and_prefetch">async_lookup_and_prefetch()</a></h3>
-<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:641</code></p>
 <p>非同期プリフェッチの中核。LookupServerから呼ばれ、全バックエンドに対してprefix match方式で<code>batched_async_contains()</code>→<code>batched_get_non_blocking()</code>を実行。結果は<code>EventManager</code>にFutureとして登録。</p>
-<h2 id="localcpubackendretrieve方向"><a class="header" href="#localcpubackendretrieve方向">LocalCPUBackend（Retrieve方向）</a></h2>
-<h3 id="batched_get_non_blocking"><a class="header" href="#batched_get_non_blocking">batched_get_non_blocking()</a></h3>
-<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:216</code></p>
-<p><code>cpu_lock</code>下で<code>hot_cache[key]</code>を取得し、<code>ref_count_up()</code>してからリストで返す。<strong>同期的に完了</strong>する（CPU上のOrderedDictアクセスのみ）。</p>
-<h3 id="batched_get_blocking"><a class="header" href="#batched_get_blocking">batched_get_blocking()</a></h3>
-<p>抽象基底クラス<code>LMCStorageBackendInterface</code>のデフォルト実装を継承。個別<code>get_blocking()</code>のループ。</p>
-<h2 id="バックエンド登録"><a class="header" href="#バックエンド登録">バックエンド登録</a></h2>
-<p>StorageManagerの<code>storage_backends</code>は<code>OrderedDict</code>で登録順=優先度:</p>
-<pre><code>LocalCPUBackend (L1) → LocalDiskBackend (L2) → RemoteBackend (L3)
+<h2 id="バックエンドインターフェース階層"><a class="header" href="#バックエンドインターフェース階層">バックエンドインターフェース階層</a></h2>
+<pre><code>StorageBackendInterface (abstract)
+├── AllocatorBackendInterface (abstract)  — メモリ確保能力あり
+│   └── LocalCPUBackend (concrete)
+├── StoragePluginInterface (abstract)     — 独自バックエンド実装用
+│   └── (ユーザー定義バックエンド)
+├── LocalDiskBackend (concrete)
+└── RemoteBackend (concrete)
 </code></pre>
-<p><code>batched_put()</code>は全バックエンドに配布。<code>batched_get()</code>は指定locationから取得（リモート→L1 write-back付き）。<code>get_block_mapping()</code>はprefix match順。</p>
+<p>独自バックエンド実装の詳細は <a href="#localdiskbackend--l2ディスクバックエンド">local-disk-backend.md</a> 末尾の「独自バックエンド実装ガイド」を参照。</p>
 <h2 id="上流下流-3"><a class="header" href="#上流下流-3">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheEngine（batched_allocate/batched_put/contains等）</li>
 <li><strong>下流</strong>:
 <ul>
-<li>LocalCPUBackend（L1 CPUメモリ）</li>
-<li>LocalDiskBackend（L2 ディスク）</li>
+<li>LocalCPUBackend（L1 CPUメモリ）— <a href="#メモリアロケータ階層">memory-allocator.md</a>, <a href="#cachepolicy--eviction戦略">cache-policy.md</a></li>
+<li>LocalDiskBackend（L2 ディスク）— <a href="#localdiskbackend--l2ディスクバックエンド">local-disk-backend.md</a></li>
 <li>RemoteBackend（L3 リモート、Redis/S3等）</li>
 </ul>
 </li>
-<li><strong>依存</strong>: CachePolicy（Eviction戦略）、MemoryAllocator（メモリプール）</li>
+<li><strong>依存</strong>: CachePolicy（Eviction戦略）、MemoryAllocator（メモリプール）、EventManager（非同期prefetch）</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="cachepolicy--eviction戦略"><a class="header" href="#cachepolicy--eviction戦略">CachePolicy — Eviction戦略</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
+</blockquote>
+<h2 id="概要-26"><a class="header" href="#概要-26">概要</a></h2>
+<p>キャッシュのEviction（追い出し）戦略を抽象化するポリシーフレームワーク。
+LocalCPUBackendとLocalDiskBackendが独立したCachePolicyインスタンスを持つ。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/</code></p>
+<h2 id="basecachepolicy-インターフェース"><a class="header" href="#basecachepolicy-インターフェース">BaseCachePolicy インターフェース</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/base_policy.py</code></p>
+<pre><code class="language-python">class BaseCachePolicy(Generic[KeyType, MapType]):
+    def init_mutable_mapping(self) -&gt; MapType
+    def update_on_hit(self, key, cache_dict) -&gt; None
+    def update_on_put(self, key) -&gt; None
+    def update_on_force_evict(self, key) -&gt; None
+    def get_evict_candidates(self, cache_dict, num_candidates=1) -&gt; list[KeyType]
+</code></pre>
+<p><strong>重要な設計判断</strong>:</p>
+<ul>
+<li><code>init_mutable_mapping()</code>がhot_cache/dictの型を決定（dict, OrderedDict等）</li>
+<li><code>get_evict_candidates()</code>は<strong>best effort</strong>: <code>can_evict</code>チェックでpinned/参照中のオブジェクトをスキップ</li>
+<li><code>cache_dict</code>の値がMemoryObj（hot_cache）またはDiskCacheMetadata（disk dict）</li>
+</ul>
+<h2 id="fifo--first-in-first-out"><a class="header" href="#fifo--first-in-first-out">FIFO — First In, First Out</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/fifo.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>dict</code>（Python dictは挿入順保持）</td></tr>
+<tr><td><code>update_on_hit()</code></td><td><strong>何もしない</strong>（FIFOはアクセスで順序不変）</td></tr>
+<tr><td><code>update_on_put()</code></td><td><strong>何もしない</strong>（dictの末尾に自然追加）</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>dict先頭からイテレート、<code>can_evict</code>なものを返す</td></tr>
+</tbody>
+</table>
+</div>
+<p>最もシンプル。追い出し候補の選定はO(k)（kは先頭のnon-evictableエントリ数）。</p>
+<h2 id="lru--least-recently-used"><a class="header" href="#lru--least-recently-used">LRU — Least Recently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/lru.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>OrderedDict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td><code>cache_dict.move_to_end(key)</code> + chunk再利用時間追跡</td></tr>
+<tr><td><code>update_on_put()</code></td><td>chunk初回タイムスタンプ記録</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>OrderedDict先頭（最も古いアクセス）からイテレート</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>追加機能</strong>: <code>chunk_hash_to_init_timestamp</code>でチャンクの再利用間隔をPrometheusメトリクスに報告。
+メモリ上限 <code>max_num_chunk_hash=12,500,000</code>、超過時は辞書をclear()。</p>
+<h2 id="lfu--least-frequently-used"><a class="header" href="#lfu--least-frequently-used">LFU — Least Frequently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/lfu.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>dict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td>freq++。freq_to_keys[old_freq]→freq_to_keys[new_freq]に移動</td></tr>
+<tr><td><code>update_on_put()</code></td><td><code>key_to_freq[key] = 1</code>、freq_to_keys[1]に登録</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td>key_to_freq/freq_to_keys両方からkey除去</td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>最低freq→高freqの順にイテレート、同freq内はFIFO</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>データ構造</strong>:</p>
+<ul>
+<li><code>freq_to_keys</code>: <code>SortedDict[int, dict[key, None]]</code> — freq順ソート</li>
+<li><code>key_to_freq</code>: <code>dict[key, int]</code> — O(1)でfreq逆引き</li>
+<li>計算量: update_on_hit = O(log N)（SortedDictの操作）</li>
+</ul>
+<p><strong>注意</strong>: get_evict_candidates()内でkey_to_freq.pop()を直接実行（副作用あり）。</p>
+<h2 id="mru--most-recently-used"><a class="header" href="#mru--most-recently-used">MRU — Most Recently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/mru.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>OrderedDict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td><code>cache_dict.move_to_end(key, last=True)</code></td></tr>
+<tr><td><code>update_on_put()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td><code>reversed(cache_dict.items())</code>でOrderedDict末尾（最新アクセス）から</td></tr>
+</tbody>
+</table>
+</div>
+<p>LRUの逆。ストリーミング的アクセスパターン（同じチャンクが二度使われない場合）に有効。</p>
+<h2 id="eviction発動フロー"><a class="header" href="#eviction発動フロー">Eviction発動フロー</a></h2>
+<pre class="mermaid">graph TD
+    A[allocate() 失敗] --&gt; B{use_hot?}
+    B --&gt;|Yes| C[cache_policy.get_evict_candidates\nhot_cache, num=1]
+    C --&gt; D{候補あり?}
+    D --&gt;|Yes| E[batched_remove\nevict_keys]
+    E --&gt; F[allocate再試行]
+    F --&gt; G{成功?}
+    G --&gt;|No| C
+    D --&gt;|No| H{busy_loop?}
+    H --&gt;|Yes| I[0.1秒待機]
+    I --&gt; C
+    H --&gt;|No| J[None返却]
+    G --&gt;|Yes| K[MemoryObj返却]
+    B --&gt;|No| H
+</pre>
+
+<p><strong>can_evict条件</strong>: <code>not is_pinned and ref_count == 1</code></p>
+<ul>
+<li>pinned: lookup中のチャンク（retrieve完了まで保護）</li>
+<li>ref_count &gt; 1: 他のバックエンドやGPU転送が参照中</li>
+</ul>
+<h2 id="設定-8"><a class="header" href="#設定-8">設定</a></h2>
+<p><code>LMCacheEngineConfig.cache_policy</code>で指定:</p>
+<pre><code class="language-yaml">cache_policy: "lru"  # fifo | lru | lfu | mru
+</code></pre>
+<p><code>get_cache_policy()</code>ファクトリ関数で対応するポリシーインスタンスを生成。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="localdiskbackend--l2ディスクバックエンド"><a class="header" href="#localdiskbackend--l2ディスクバックエンド">LocalDiskBackend — L2ディスクバックエンド</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
+</blockquote>
+<h2 id="概要-27"><a class="header" href="#概要-27">概要</a></h2>
+<p>ローカルディスクにKVキャッシュを永続化するL2バックエンド。
+CPU上のMemoryObjをバイト列としてファイルに書き出し/読み出しする。
+メモリ確保は<code>local_cpu_backend</code>に委譲（自身はAllocatorBackendInterfaceではない）。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py</code></p>
+<h2 id="アーキテクチャ-11"><a class="header" href="#アーキテクチャ-11">アーキテクチャ</a></h2>
+<pre><code>StorageManager
+  ├── LocalCPUBackend (L1)  ← hot_cache + MemoryAllocator
+  ├── LocalDiskBackend (L2) ← ファイル永続化 + local_cpu_backendからメモリ借用
+  └── RemoteBackend (L3)    ← ネットワーク永続化
+</code></pre>
+<p>LocalDiskBackendは<code>StorageBackendInterface</code>を直接実装（<code>AllocatorBackendInterface</code>ではない）。
+<code>get_allocator_backend()</code> → <code>self.local_cpu_backend</code>を返す。</p>
+<h2 id="store方向"><a class="header" href="#store方向">Store方向</a></h2>
+<h3 id="submit_put_task-1"><a class="header" href="#submit_put_task-1">submit_put_task()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:291</code></p>
+<ol>
+<li>重複チェック: <code>exists_in_put_tasks(key)</code> → スキップ</li>
+<li><code>disk_worker.insert_put_task(key)</code> — 進行中タスクリストに登録</li>
+<li><strong>ディスク容量Eviction</strong>: <code>disk_lock</code>下で <code>current_cache_size + required_size &gt; max_cache_size</code> の間、
+<code>cache_policy.get_evict_candidates()</code> → <code>batched_remove()</code> + <code>os.remove(path)</code></li>
+<li><code>memory_obj.ref_count_up()</code> — 非同期書き込み中の保護</li>
+<li><code>asyncio.run_coroutine_threadsafe()</code> で <code>async_save_bytes_to_disk()</code> を投入</li>
+</ol>
+<h3 id="async_save_bytes_to_disk"><a class="header" href="#async_save_bytes_to_disk">async_save_bytes_to_disk()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:479</code></p>
+<p><code>AsyncPQThreadPoolExecutor</code>上で実行（max_workers=4のスレッドプール）。</p>
+<ol>
+<li><code>memory_obj.byte_array</code> → <code>write_file(buffer, path)</code></li>
+<li><code>memory_obj.ref_count_down()</code> — 参照解放</li>
+<li><code>insert_key(key, size, shape, dtype, fmt)</code> — <code>self.dict</code>にDiskCacheMetadata登録</li>
+<li><code>disk_worker.remove_put_task(key)</code></li>
+<li><code>on_complete_callback(key)</code> 実行（ロック外）</li>
+</ol>
+<h3 id="write_file"><a class="header" href="#write_file">write_file()</a></h3>
+<ul>
+<li><strong>通常</strong>: <code>open(path, "wb").write(buffer)</code></li>
+<li><strong>O_DIRECT</strong>: サイズがディスクブロックサイズの倍数の場合、<code>os.O_DIRECT</code>フラグで直接I/O</li>
+</ul>
+<h3 id="diskcachemetadata"><a class="header" href="#diskcachemetadata">DiskCacheMetadata</a></h3>
+<pre><code class="language-python">DiskCacheMetadata(path, size, shape, dtype, cached_positions, fmt, pin_count)
+</code></pre>
+<p>MemoryObjとは異なり、ディスク上のファイルパスとメタデータのみ保持。</p>
+<h2 id="retrieve方向"><a class="header" href="#retrieve方向">Retrieve方向</a></h2>
+<h3 id="get_blocking"><a class="header" href="#get_blocking">get_blocking()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:380</code></p>
+<ol>
+<li><code>disk_lock</code>下で<code>self.dict[key]</code>からpath/shape/dtype/fmt取得</li>
+<li><code>cache_policy.update_on_hit(key, self.dict)</code> — アクセス順更新</li>
+<li><code>local_cpu_backend.allocate(shape, dtype, fmt)</code> — <strong>CPUメモリに確保</strong></li>
+<li><code>read_file(key, buffer, path)</code> — ファイルからバッファに読み込み</li>
+<li><code>metadata.cached_positions</code>をDiskCacheMetadataから復元</li>
+</ol>
+<h3 id="batched_get_non_blocking--非同期プリフェッチ"><a class="header" href="#batched_get_non_blocking--非同期プリフェッチ">batched_get_non_blocking() — 非同期プリフェッチ</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:410</code></p>
+<ol>
+<li>各キーについて:
+<ul>
+<li><code>local_cpu_backend.allocate()</code> でCPUメモリ確保</li>
+<li><code>self.dict[key].pin()</code> — 読み込み中のEviction防止</li>
+<li><code>cache_policy.update_on_hit()</code> — アクセス順更新</li>
+</ul>
+</li>
+<li><code>disk_worker.submit_task("prefetch", batched_async_load_bytes_from_disk, ...)</code>
+<ul>
+<li>priority=0（最高優先度）でスレッドプールに投入</li>
+</ul>
+</li>
+</ol>
+<h3 id="batched_async_load_bytes_from_disk"><a class="header" href="#batched_async_load_bytes_from_disk">batched_async_load_bytes_from_disk()</a></h3>
+<p>各ファイルを<code>read_file()</code>で読み込み後、<code>self.dict[key].unpin()</code>。</p>
+<h3 id="read_file"><a class="header" href="#read_file">read_file()</a></h3>
+<ul>
+<li><strong>通常</strong>: <code>open(path, "rb").readinto(buffer)</code></li>
+<li><strong>O_DIRECT</strong>: ブロック整列時のみ <code>os.O_DIRECT | os.O_RDONLY</code></li>
+<li>FileNotFoundError時: 警告ログ + dictからキー除去</li>
+</ul>
+<h2 id="localdiskworker--優先度付きスレッドプール"><a class="header" href="#localdiskworker--優先度付きスレッドプール">LocalDiskWorker — 優先度付きスレッドプール</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_disk_backend.py:37</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>タスク種別</th><th>優先度</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td>prefetch</td><td>0 (最高)</td><td>ディスク→CPUメモリ読み込み</td></tr>
+<tr><td>delete</td><td>1</td><td>ファイル削除</td></tr>
+<tr><td>put</td><td>2 (最低)</td><td>CPUメモリ→ディスク書き込み</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>AsyncPQThreadPoolExecutor</code>（Priority Queue付き非同期スレッドプール）で管理。
+prefetchが最優先なのは、retrieve（推論の待ち時間に直結）をstoreより優先するため。</p>
+<h2 id="容量管理"><a class="header" href="#容量管理">容量管理</a></h2>
+<ul>
+<li><code>max_cache_size</code>: <code>config.max_local_disk_size * 1024^3</code>（バイト単位）</li>
+<li><code>current_cache_size</code>: 現在のディスク使用量（書き込み時に加算、削除時に減算）</li>
+<li>Eviction: store時にmax超過なら<code>cache_policy.get_evict_candidates()</code> → <code>os.remove()</code></li>
+</ul>
+<p><strong>注意</strong>: ディスクフラグメンテーションは未考慮（TODO）。</p>
+<h2 id="独自ストレージバックエンド実装ガイド"><a class="header" href="#独自ストレージバックエンド実装ガイド">独自ストレージバックエンド実装ガイド</a></h2>
+<h3 id="storageplugininterface"><a class="header" href="#storageplugininterface">StoragePluginInterface</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/abstract_backend.py:394</code></p>
+<p>独自バックエンドを実装する場合は<code>StoragePluginInterface</code>を継承する:</p>
+<pre><code class="language-python">class MyBackend(StoragePluginInterface):
+    def __init__(self, dst_device, config, metadata, local_cpu_backend, loop):
+        super().__init__(dst_device, config, metadata, local_cpu_backend, loop)
+</code></pre>
+<h3 id="必須メソッドstoragebackendinterface由来"><a class="header" href="#必須メソッドstoragebackendinterface由来">必須メソッド（StorageBackendInterface由来）</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>役割</th></tr>
+</thead>
+<tbody>
+<tr><td><code>contains(key, pin)</code></td><td>キーの存在確認。pin=Trueで追い出し保護</td></tr>
+<tr><td><code>exists_in_put_tasks(key)</code></td><td>書き込み進行中のキー確認（重複store防止）</td></tr>
+<tr><td><code>batched_submit_put_task(keys, objs, ...)</code></td><td>非同期書き込み投入</td></tr>
+<tr><td><code>get_blocking(key)</code></td><td>同期的なKVデータ取得</td></tr>
+<tr><td><code>pin(key)</code> / <code>unpin(key)</code></td><td>Eviction保護の制御</td></tr>
+<tr><td><code>remove(key, force)</code></td><td>エントリ削除</td></tr>
+<tr><td><code>get_allocator_backend()</code></td><td>メモリ確保先（通常<code>local_cpu_backend</code>を返す）</td></tr>
+<tr><td><code>close()</code></td><td>リソース解放</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="オプショナルメソッド"><a class="header" href="#オプショナルメソッド">オプショナルメソッド</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>デフォルト動作</th><th>オーバーライド推奨</th></tr>
+</thead>
+<tbody>
+<tr><td><code>batched_get_blocking(keys)</code></td><td>個別get_blocking()のループ</td><td>バッチ取得が効率的な場合</td></tr>
+<tr><td><code>batched_async_contains(lookup_id, keys, pin)</code></td><td>NotImplementedError</td><td>非同期prefetch対応時</td></tr>
+<tr><td><code>batched_get_non_blocking(lookup_id, keys, ...)</code></td><td>NotImplementedError</td><td>非同期prefetch対応時</td></tr>
+<tr><td><code>batched_contains(keys, pin)</code></td><td>個別contains()のループ（prefix match方式）</td><td>バッチ判定が効率的な場合</td></tr>
+<tr><td><code>touch_cache()</code></td><td>（定義なし）</td><td>LRU等のアクセス順更新が必要な場合</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="メモリ確保パターン"><a class="header" href="#メモリ確保パターン">メモリ確保パターン</a></h3>
+<p>独自バックエンドからデータを取得する場合:</p>
+<ol>
+<li><code>local_cpu_backend.allocate(shape, dtype, fmt)</code> でCPUメモリを確保</li>
+<li>データをMemoryObjの<code>byte_array</code>に書き込み（<code>readinto()</code>等）</li>
+<li><code>metadata.cached_positions</code>等のメタデータを復元</li>
+<li>MemoryObjを返却（呼び出し元がref_count管理）</li>
+</ol>
+<h3 id="on_complete_callback"><a class="header" href="#on_complete_callback">on_complete_callback</a></h3>
+<p><code>batched_submit_put_task()</code>のオプションパラメータ。
+各キーのstore完了時にコールバックを実行（バッチ単位ではなくキー単位）。
+他バックエンドへの連鎖store等に使用可能。実装側でcatch/logすること。</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="メモリアロケータ階層"><a class="header" href="#メモリアロケータ階層">メモリアロケータ階層</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
+</blockquote>
+<h2 id="概要-28"><a class="header" href="#概要-28">概要</a></h2>
+<p>LMCacheのメモリ管理は、事前確保された大きなバッファ上で仮想アドレス空間管理を行う
+カスタムアロケータで実現されている。pinned CPUメモリ上に確保することで、
+GPU⇔CPU間のDMA転送を高速化する。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py</code></p>
+<h2 id="アロケータ階層"><a class="header" href="#アロケータ階層">アロケータ階層</a></h2>
+<pre><code>MemoryAllocatorInterface (abstract)
+├── TensorMemoryAllocator         ← explicit free list方式
+├── PagedTensorMemoryAllocator    ← ページ単位の固定サイズスロット
+├── BufferAllocator               ← バイト配列用（GC任せ）
+├── HostMemoryAllocator           ← 非pinned CPU + 内部委譲
+├── PinMemoryAllocator            ← pinned CPU + 内部委譲
+├── MixedMemoryAllocator          ← テンソル用Pin + バイナリ用Buffer
+├── GPUMemoryAllocator            ← GPU VRAM + 内部委譲
+├── CuFileMemoryAllocator         ← GPUDirect Storage対応
+├── PagedCpuGpuMemoryAllocator   ← CPU+GPU両方のページアロケータ（NIXL/P2P用）
+└── AdHocMemoryAllocator          ← テスト用ダミー
+</code></pre>
+<h2 id="tensormemoryallocator--explicit-free-list方式"><a class="header" href="#tensormemoryallocator--explicit-free-list方式">TensorMemoryAllocator — explicit free list方式</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1135</code></p>
+<p>事前確保されたフラットテンソル(<code>buffer</code>)上で、AddressManagerが仮想アドレス空間を管理。</p>
+<h3 id="addressmanager"><a class="header" href="#addressmanager">AddressManager</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:903</code></p>
+<ul>
+<li><strong>データ構造</strong>: <code>SortedList[FreeBlock]</code>（<code>sortedcontainers</code>ライブラリ）</li>
+<li><strong>FreeBlock</strong>: <code>(start, size)</code> タプル。startでソート</li>
+<li><strong>アライメント</strong>: デフォルト4,096バイト（<code>ALIGN_BYTES</code>）</li>
+<li><strong>確保</strong>: first-fit方式。ソートリストを先頭から走査し最初に十分な空きブロックを選択</li>
+<li><strong>解放</strong>: bisect_leftで挿入位置を特定し、前後のブロックとcoalesce（結合）</li>
+<li><strong>sbrk()</strong>: アドレス空間の動的拡張（LazyAllocator向け）</li>
+<li><strong>スレッドセーフ</strong>: <code>@synchronized("_lock")</code>デコレータで全操作をロック保護</li>
+</ul>
+<h3 id="allocate-の動作"><a class="header" href="#allocate-の動作">allocate() の動作</a></h3>
+<pre><code class="language-python">aligned_size = (raw_size + 4095) &amp; ~4095  # 4KB境界に切り上げ
+# SortedListからfirst-fitで空きブロックを探索
+# ブロックを分割: [確保分 | 残余→フリーリストに戻す]
+# buffer[start:start+raw_size] をraw_dataとしてTensorMemoryObjを生成
+</code></pre>
+<h3 id="batched_allocate-の最適化"><a class="header" href="#batched_allocate-の最適化">batched_allocate() の最適化</a></h3>
+<p>通常のallocateはブロックごとに個別確保だが、batched_allocateは
+<code>unit_aligned_size * batch_size</code> の<strong>1つの大きなブロック</strong>として確保し、
+<code>torch.chunk()</code>で分割。これによりフラグメンテーションを軽減。</p>
+<h3 id="free--batched_free"><a class="header" href="#free--batched_free">free() / batched_free()</a></h3>
+<ul>
+<li><code>free()</code>: AddressManager.free()でブロックを返却→前後のFreeBlockとcoalesce</li>
+<li><code>batched_free()</code>: メモリブロックをアドレス順にソートし、隣接ブロックを事前にcoalesceしてから
+AddressManager.free()を呼ぶ。フリーリスト操作回数を削減</li>
+</ul>
+<h2 id="pagedtensormemoryallocator--ページスロット方式"><a class="header" href="#pagedtensormemoryallocator--ページスロット方式">PagedTensorMemoryAllocator — ページスロット方式</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1404</code></p>
+<p>固定サイズのスロット（ページ）に分割し、<code>deque[TensorMemoryObj]</code>でフリーリストを管理。</p>
+<ul>
+<li><strong>初期化</strong>: <code>buffer</code>を<code>align_bytes</code>（=1チャンク分のKVデータサイズ）で分割</li>
+<li><strong>allocate()</strong>: <code>free_blocks.popleft()</code> — O(1)</li>
+<li><strong>free()</strong>: <code>free_blocks.append(mem_obj)</code> — O(1)、<code>invalidate()</code>しない（再利用）</li>
+<li><strong>スレッドセーフ</strong>: <code>deque</code>のCPython実装がアトミックなため、ロック不要</li>
+<li><strong>用途</strong>: P2P/PD共有時のNIXL連携（ページ単位のアドレス管理が必要）</li>
+</ul>
+<h2 id="mixedmemoryallocator--通常時のデフォルト"><a class="header" href="#mixedmemoryallocator--通常時のデフォルト">MixedMemoryAllocator — 通常時のデフォルト</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:1892</code></p>
+<p>LocalCPUBackendの<code>initialize_allocator()</code>がデフォルトで生成するアロケータ。</p>
+<pre><code>MixedMemoryAllocator
+├── pin_allocator: TensorMemoryAllocator or PagedTensorMemoryAllocator
+│   └── buffer: pinned CPU memory（NUMA-aware確保可能）
+└── buffer_allocator: BufferAllocator
+    └── 個別bytearrayを都度確保
+</code></pre>
+<ul>
+<li><strong>MemoryFormat分岐</strong>: KV_2LTD/KV_T2D/KV_2TD/KV_MLA_FMT → pin_allocator、BINARY_BUFFER → buffer_allocator</li>
+<li><strong>pinned memory確保</strong>: <code>lmc_ops.alloc_pinned_ptr()</code>（CUDAのcudaHostAlloc相当）
+<ul>
+<li>NUMA対応時: <code>lmc_ops.alloc_pinned_numa_ptr(size, numa_id)</code></li>
+</ul>
+</li>
+<li><strong>close()</strong>: <code>lmc_ops.free_pinned_ptr()</code>で明示解放</li>
+</ul>
+<h2 id="memoryobj--メモリオブジェクトの抽象"><a class="header" href="#memoryobj--メモリオブジェクトの抽象">MemoryObj — メモリオブジェクトの抽象</a></h2>
+<h3 id="tensormemoryobj"><a class="header" href="#tensormemoryobj">TensorMemoryObj</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/memory_management.py:431</code></p>
+<ul>
+<li><strong>raw_data</strong>: フラットな<code>torch.Tensor</code>（uint8ビュー）。アロケータのバッファスライス</li>
+<li><strong>metadata</strong>: <code>MemoryObjMetadata</code>（shape, dtype, address, phy_size, ref_count, pin_count, fmt, cached_positions）</li>
+<li><strong>group_prefix_sum</strong>: 複数グループ（shapes/dtypes）のバイトオフセットプレフィックスサム</li>
+<li><strong>tensor プロパティ</strong>: <code>raw_data[:logical_size].view(dtype).view(shape)</code> でテンソルビューを返す</li>
+<li><strong>get_tensor(index)</strong>: グループ別テンソルビュー（MLA等の複数形状対応）</li>
+</ul>
+<h3 id="ref_count--pin_count-ライフサイクル"><a class="header" href="#ref_count--pin_count-ライフサイクル">ref_count / pin_count ライフサイクル</a></h3>
+<pre><code>確保時: ref_count=1, pin_count=0
+  ↓
+hot_cacheに登録: ref_count_up() → ref_count=2
+  ↓
+GPU転送中: ref_count_up() → ref_count=3
+  ↓
+GPU転送完了: ref_count_down() → ref_count=2
+  ↓
+hot_cacheから追い出し: ref_count_down() → ref_count=1
+  ↓
+batched_put完了: ref_count_down() → ref_count=0 → allocator.free()
+</code></pre>
+<p><strong>pin_count</strong>: lookup時にpin()でEviction対象外にマーク。</p>
+<ul>
+<li><code>can_evict = not is_pinned and ref_count == 1</code>（ref_count=1=hot_cacheのみが保持）</li>
+<li>PinMonitor: タイムアウト追跡。異常なpin長期化を検出</li>
+</ul>
+<h3 id="bytesbuffermemoryobj"><a class="header" href="#bytesbuffermemoryobj">BytesBufferMemoryObj</a></h3>
+<p><code>bytes</code>/<code>bytearray</code>のラッパー。ref_count操作はno-op（GC任せ）。
+BINARY_BUFFER形式用。Serde圧縮結果の格納に使用。</p>
+<h2 id="メモリサイズ計算"><a class="header" href="#メモリサイズ計算">メモリサイズ計算</a></h2>
+<h3 id="calculate_chunk_budget"><a class="header" href="#calculate_chunk_budget">calculate_chunk_budget()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:688</code></p>
+<pre><code class="language-python">max_chunks = total_memory // aligned_chunk_bytes
+</code></pre>
+<p>非同期ローディングシステムでの同時確保数上限を算出。
+デッドロック防止のためのチャンクバジェット管理に使用。</p>
+<h3 id="get_full_chunk_size"><a class="header" href="#get_full_chunk_size">get_full_chunk_size()</a></h3>
+<p>Layerwise時: <code>chunk_tokens * kv_size * hidden_dim * dtype_size</code>（1レイヤー分）
+Bulk時: <code>kv_size * num_layers * chunk_tokens * hidden_dim * dtype_size</code>（全レイヤー分）</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="tokendatabasechunkedtokendatabase"><a class="header" href="#tokendatabasechunkedtokendatabase">TokenDatabase（ChunkedTokenDatabase）</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM] / <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-16（Phase 1 セッション1）</p>
 </blockquote>
-<h2 id="概要-26"><a class="header" href="#概要-26">概要</a></h2>
+<h2 id="概要-29"><a class="header" href="#概要-29">概要</a></h2>
 <p>トークン列をチャンクに分割し、プレフィックスチェーンハッシュを計算してCacheEngineKeyを生成する。
 vLLMのプレフィックスキャッシュと<strong>同一のハッシュアルゴリズム</strong>を使用し、キーの互換性を保証する。</p>
 <p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/token_database.py</code></p>
@@ -9653,7 +10093,7 @@ vLLMのプレフィックスキャッシュと<strong>同一のハッシュア�
 <p><strong>深度</strong>: [MEDIUM] / <strong>確信度</strong>: [VERIFIED]
 <strong>最終更新</strong>: 2026-02-16（Phase 1 セッション1）</p>
 </blockquote>
-<h2 id="概要-27"><a class="header" href="#概要-27">概要</a></h2>
+<h2 id="概要-30"><a class="header" href="#概要-30">概要</a></h2>
 <p>LMCacheとvLLMを接続するアダプタ層。vLLMの<code>KVConnectorBase_V1</code>インターフェースを実装し、
 attentionレイヤー実行中のKVキャッシュstore/retrieveをLMCacheに委譲する。</p>
 <h2 id="クラス階層-6"><a class="header" href="#クラス階層-6">クラス階層</a></h2>

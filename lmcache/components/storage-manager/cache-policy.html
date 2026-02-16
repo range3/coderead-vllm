@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>マルチモーダル処理パイプライン サマリー - コードリーディング: vLLM &amp; LMCache</title>
+        <title>CachePolicy — Eviction戦略 - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -175,140 +175,142 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="マルチモーダル処理パイプライン-サマリー"><a class="header" href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン サマリー</a></h1>
+                        <h1 id="cachepolicy--eviction戦略"><a class="header" href="#cachepolicy--eviction戦略">CachePolicy — Eviction戦略</a></h1>
 <blockquote>
-<p><strong>深度</strong>: [MEDIUM]
-<strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-11</p>
+<p><strong>深度</strong>: [DEEP] / <strong>確信度</strong>: [VERIFIED]
+<strong>最終更新</strong>: 2026-02-16（Phase 2 セッション1）</p>
 </blockquote>
 <h2 id="概要"><a class="header" href="#概要">概要</a></h2>
-<p>vLLMのマルチモーダル処理パイプラインは、画像・音声・動画等の非テキストデータをLLMの推論に統合するシステムである。フロントエンド（P0）でのメディア前処理・キャッシュと、バックエンド（P1）でのエンコーダ実行・埋め込みマージの2段構成で動作する。</p>
-<h2 id="エンドツーエンド-データフロー"><a class="header" href="#エンドツーエンド-データフロー">エンドツーエンド データフロー</a></h2>
+<p>キャッシュのEviction（追い出し）戦略を抽象化するポリシーフレームワーク。
+LocalCPUBackendとLocalDiskBackendが独立したCachePolicyインスタンスを持つ。</p>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/</code></p>
+<h2 id="basecachepolicy-インターフェース"><a class="header" href="#basecachepolicy-インターフェース">BaseCachePolicy インターフェース</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/base_policy.py</code></p>
+<pre><code class="language-python">class BaseCachePolicy(Generic[KeyType, MapType]):
+    def init_mutable_mapping(self) -&gt; MapType
+    def update_on_hit(self, key, cache_dict) -&gt; None
+    def update_on_put(self, key) -&gt; None
+    def update_on_force_evict(self, key) -&gt; None
+    def get_evict_candidates(self, cache_dict, num_candidates=1) -&gt; list[KeyType]
+</code></pre>
+<p><strong>重要な設計判断</strong>:</p>
+<ul>
+<li><code>init_mutable_mapping()</code>がhot_cache/dictの型を決定（dict, OrderedDict等）</li>
+<li><code>get_evict_candidates()</code>は<strong>best effort</strong>: <code>can_evict</code>チェックでpinned/参照中のオブジェクトをスキップ</li>
+<li><code>cache_dict</code>の値がMemoryObj（hot_cache）またはDiskCacheMetadata（disk dict）</li>
+</ul>
+<h2 id="fifo--first-in-first-out"><a class="header" href="#fifo--first-in-first-out">FIFO — First In, First Out</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/fifo.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>dict</code>（Python dictは挿入順保持）</td></tr>
+<tr><td><code>update_on_hit()</code></td><td><strong>何もしない</strong>（FIFOはアクセスで順序不変）</td></tr>
+<tr><td><code>update_on_put()</code></td><td><strong>何もしない</strong>（dictの末尾に自然追加）</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>dict先頭からイテレート、<code>can_evict</code>なものを返す</td></tr>
+</tbody>
+</table>
+</div>
+<p>最もシンプル。追い出し候補の選定はO(k)（kは先頭のnon-evictableエントリ数）。</p>
+<h2 id="lru--least-recently-used"><a class="header" href="#lru--least-recently-used">LRU — Least Recently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/lru.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>OrderedDict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td><code>cache_dict.move_to_end(key)</code> + chunk再利用時間追跡</td></tr>
+<tr><td><code>update_on_put()</code></td><td>chunk初回タイムスタンプ記録</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>OrderedDict先頭（最も古いアクセス）からイテレート</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>追加機能</strong>: <code>chunk_hash_to_init_timestamp</code>でチャンクの再利用間隔をPrometheusメトリクスに報告。
+メモリ上限 <code>max_num_chunk_hash=12,500,000</code>、超過時は辞書をclear()。</p>
+<h2 id="lfu--least-frequently-used"><a class="header" href="#lfu--least-frequently-used">LFU — Least Frequently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/lfu.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>dict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td>freq++。freq_to_keys[old_freq]→freq_to_keys[new_freq]に移動</td></tr>
+<tr><td><code>update_on_put()</code></td><td><code>key_to_freq[key] = 1</code>、freq_to_keys[1]に登録</td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td>key_to_freq/freq_to_keys両方からkey除去</td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td>最低freq→高freqの順にイテレート、同freq内はFIFO</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>データ構造</strong>:</p>
+<ul>
+<li><code>freq_to_keys</code>: <code>SortedDict[int, dict[key, None]]</code> — freq順ソート</li>
+<li><code>key_to_freq</code>: <code>dict[key, int]</code> — O(1)でfreq逆引き</li>
+<li>計算量: update_on_hit = O(log N)（SortedDictの操作）</li>
+</ul>
+<p><strong>注意</strong>: get_evict_candidates()内でkey_to_freq.pop()を直接実行（副作用あり）。</p>
+<h2 id="mru--most-recently-used"><a class="header" href="#mru--most-recently-used">MRU — Most Recently Used</a></h2>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/cache_policy/mru.py</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>メソッド</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init_mutable_mapping()</code></td><td><code>OrderedDict</code></td></tr>
+<tr><td><code>update_on_hit()</code></td><td><code>cache_dict.move_to_end(key, last=True)</code></td></tr>
+<tr><td><code>update_on_put()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>update_on_force_evict()</code></td><td><strong>何もしない</strong></td></tr>
+<tr><td><code>get_evict_candidates()</code></td><td><code>reversed(cache_dict.items())</code>でOrderedDict末尾（最新アクセス）から</td></tr>
+</tbody>
+</table>
+</div>
+<p>LRUの逆。ストリーミング的アクセスパターン（同じチャンクが二度使われない場合）に有効。</p>
+<h2 id="eviction発動フロー"><a class="header" href="#eviction発動フロー">Eviction発動フロー</a></h2>
 <pre class="mermaid">graph TD
-    A["API Request&lt;br&gt;(messages + images)"] --&gt; B["ChatTemplate 適用&lt;br&gt;プレースホルダー挿入"]
-    B --&gt; C["InputPreprocessor&lt;br&gt;トークナイズ + HF Processor"]
-
-    C --&gt; D{"ProcessorCache&lt;br&gt;ヒット?"}
-    D --&gt;|HIT| E["キャッシュから取得&lt;br&gt;(HF処理スキップ)"]
-    D --&gt;|MISS| F["HF Processor 実行&lt;br&gt;pixel_values テンソル生成"]
-    E --&gt; G["MultiModalFeatureSpec 構築"]
-    F --&gt; G
-
-    G --&gt; H["EngineCoreRequest&lt;br&gt;ZMQ IPC 送信"]
-
-    H --&gt; I["Scheduler"]
-    I --&gt; J{"EncoderCacheManager&lt;br&gt;ヒット?"}
-    J --&gt;|HIT| K["エンコーダ計算スキップ"]
-    J --&gt;|MISS| L["encoder_compute_budget&lt;br&gt;から割り当て"]
-
-    K --&gt; M["GPUModelRunner"]
-    L --&gt; M
-
-    M --&gt; N["_execute_mm_encoder()&lt;br&gt;model.embed_multimodal()"]
-    N --&gt; O["encoder_cache に格納"]
-    O --&gt; P["_gather_mm_embeddings()&lt;br&gt;キャッシュからスライス"]
-    P --&gt; Q["embed_input_ids()&lt;br&gt;text + vision マージ&lt;br&gt;(masked_scatter_)"]
-    Q --&gt; R["model.forward()&lt;br&gt;統合推論"]
+    A[allocate() 失敗] --&gt; B{use_hot?}
+    B --&gt;|Yes| C[cache_policy.get_evict_candidates\nhot_cache, num=1]
+    C --&gt; D{候補あり?}
+    D --&gt;|Yes| E[batched_remove\nevict_keys]
+    E --&gt; F[allocate再試行]
+    F --&gt; G{成功?}
+    G --&gt;|No| C
+    D --&gt;|No| H{busy_loop?}
+    H --&gt;|Yes| I[0.1秒待機]
+    I --&gt; C
+    H --&gt;|No| J[None返却]
+    G --&gt;|Yes| K[MemoryObj返却]
+    B --&gt;|No| H
 </pre>
 
-<h2 id="主要コンポーネント"><a class="header" href="#主要コンポーネント">主要コンポーネント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>コンポーネント</th><th>場所</th><th>役割</th></tr>
-</thead>
-<tbody>
-<tr><td><code>MULTIMODAL_REGISTRY</code></td><td><code>vllm/multimodal/registry.py</code></td><td>モデルごとのプロセッサ/情報を登録・取得</td></tr>
-<tr><td><code>BaseMultiModalProcessor</code></td><td><code>vllm/multimodal/processing/processor.py</code></td><td>HFプロセッサ実行、プロンプト更新管理</td></tr>
-<tr><td><code>MultiModalHasher</code></td><td><code>vllm/multimodal/hasher.py</code></td><td>コンテンツベースハッシュ（blake3）</td></tr>
-<tr><td><code>ProcessorCache</code> (4種)</td><td><code>vllm/multimodal/cache.py</code></td><td>P0側のHF処理結果キャッシュ</td></tr>
-<tr><td><code>EncoderCacheManager</code></td><td><code>vllm/v1/core/encoder_cache_manager.py</code></td><td>P1側のエンコーダ出力の論理管理</td></tr>
-<tr><td><code>encoder_cache</code></td><td><code>vllm/v1/worker/gpu_model_runner.py:439</code></td><td>GPU上のエンコーダ出力テンソルキャッシュ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="キャッシュの3層構造"><a class="header" href="#キャッシュの3層構造">キャッシュの3層構造</a></h2>
-<pre><code>P0（フロントエンド）               P1（Scheduler）              P1（GPU）
-┌──────────────────┐           ┌─────────────────┐        ┌──────────────┐
-│ ProcessorCache   │           │ EncoderCache    │        │ encoder_cache│
-│ LRU, サイズベース │           │ Manager         │        │ dict[str,    │
-│                  │           │ RefCount + FIFO │        │  Tensor]     │
-│ 何をキャッシュ:   │           │                 │        │              │
-│ HF処理済みテンソル │           │ 何を管理:       │        │ 何をキャッシュ:│
-│ + prompt_updates │           │ 容量・参照カウント│       │ エンコーダ出力│
-│                  │           │ Evictionリスト   │        │ (GPUテンソル) │
-└──────────────────┘           └─────────────────┘        └──────────────┘
-  ヒット時:                      ヒット時:                   ヒット時:
-  HF処理スキップ                 エンコーダ計算スキップ        テンソル再利用
-  IPC転送量削減                  予算節約                    再計算不要
+<p><strong>can_evict条件</strong>: <code>not is_pinned and ref_count == 1</code></p>
+<ul>
+<li>pinned: lookup中のチャンク（retrieve完了まで保護）</li>
+<li>ref_count &gt; 1: 他のバックエンドやGPU転送が参照中</li>
+</ul>
+<h2 id="設定"><a class="header" href="#設定">設定</a></h2>
+<p><code>LMCacheEngineConfig.cache_policy</code>で指定:</p>
+<pre><code class="language-yaml">cache_policy: "lru"  # fifo | lru | lfu | mru
 </code></pre>
-<h2 id="テキスト推論との主な差分"><a class="header" href="#テキスト推論との主な差分">テキスト推論との主な差分</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>処理段階</th><th>テキスト推論</th><th>マルチモーダル推論</th></tr>
-</thead>
-<tbody>
-<tr><td>入力前処理</td><td>tokenize のみ</td><td>tokenize + HF Processor + ハッシュ + キャッシュ</td></tr>
-<tr><td>プロンプト</td><td>テキストトークンのみ</td><td>テキスト + プレースホルダートークン（<code>&lt;start_of_image&gt;</code> 等）</td></tr>
-<tr><td>EngineCoreRequest</td><td><code>mm_features = None</code></td><td><code>mm_features = [MultiModalFeatureSpec, ...]</code></td></tr>
-<tr><td>Scheduler</td><td>KVキャッシュ予算のみ</td><td>+ エンコーダ計算予算管理</td></tr>
-<tr><td>GPUModelRunner</td><td>input_ids → model.forward()</td><td>encoder実行 → embed_input_ids(masked_scatter_) → inputs_embeds → model.forward()</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="gemma3-固有の特徴"><a class="header" href="#gemma3-固有の特徴">Gemma3 固有の特徴</a></h2>
-<ul>
-<li><strong>ビジョンエンコーダ</strong>: SiglipVisionModel（SIGLIP ViT、双方向Attention）</li>
-<li><strong>プロジェクタ</strong>: AvgPool2d → GemmaRMSNorm → Linear（vision → text空間）</li>
-<li><strong>プレースホルダー</strong>: <code>&lt;start_of_image&gt;</code> → <code>image_token × 256</code> に展開</li>
-<li><strong>Pan-and-Scan</strong>: アスペクト比が大きい画像を複数クロップ（V1では簡略化されたアテンション）</li>
-<li><strong>改行トークン結合</strong>: <code>\n</code> + <code>\n\n</code> → <code>\n\n\n</code> 等の特殊処理</li>
-</ul>
-<h2 id="詳細ドキュメント"><a class="header" href="#詳細ドキュメント">詳細ドキュメント</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>ドキュメント</th><th>内容</th></tr>
-</thead>
-<tbody>
-<tr><td><a href="mm-processing.html">mm-processing.md</a></td><td>フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ</td></tr>
-<tr><td><a href="mm-engine-gpu.html">mm-engine-gpu.md</a></td><td>バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ</td></tr>
-<tr><td><a href="gemma3-vision.html">gemma3-vision.md</a></td><td>Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
-<ul>
-<li><strong>上流</strong>: <a href="../entrypoint/summary.html">エントリポイント</a> → <a href="../input-processor/summary.html">InputProcessor</a></li>
-<li><strong>下流</strong>: <a href="../scheduler/summary.html">Scheduler</a> → <a href="../gpu-model-runner/summary.html">GPUModelRunner</a> → モデル層</li>
-</ul>
-<h2 id="主要ファイル"><a class="header" href="#主要ファイル">主要ファイル</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>ファイル</th><th>概要</th></tr>
-</thead>
-<tbody>
-<tr><td><code>target/vllm/vllm/multimodal/</code></td><td>マルチモーダル処理の基盤（レジストリ、ハッシュ、キャッシュ、パース）</td></tr>
-<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td>フロントエンドでのMM処理統合</td></tr>
-<tr><td><code>target/vllm/vllm/v1/core/encoder_cache_manager.py</code></td><td>バックエンドのエンコーダキャッシュ管理</td></tr>
-<tr><td><code>target/vllm/vllm/v1/worker/gpu_model_runner.py</code></td><td>GPU上でのエンコーダ実行と埋め込みマージ</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/gemma3_mm.py</code></td><td>Gemma3のマルチモーダル実装</td></tr>
-<tr><td><code>target/vllm/vllm/model_executor/models/siglip.py</code></td><td>SiglipVisionModel（ビジョンエンコーダ）</td></tr>
-</tbody>
-</table>
-</div>
+<p><code>get_cache_policy()</code>ファクトリ関数で対応するポリシーインスタンスを生成。</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../../lmcache/components/storage-manager/summary.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../../lmcache/components/storage-manager/local-disk-backend.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -318,11 +320,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../../vllm/components/kv-transfer/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../../lmcache/components/storage-manager/summary.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../../vllm/components/multimodal/gemma3-vision.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../../lmcache/components/storage-manager/local-disk-backend.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
