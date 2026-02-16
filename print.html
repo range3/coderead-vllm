@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-27792acf.js";
+            window.path_to_searchindex_js = "searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-9f076d22.js"></script>
@@ -8503,10 +8503,9 @@ class DisaggSpec:
 <h1 id="データフロー-1"><a class="header" href="#データフロー-1">データフロー</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [MEDIUM] / <strong>確信度</strong>: [VERIFIED]
-<strong>最終更新</strong>: 2026-02-16（Phase 1 セッション1）</p>
+<strong>最終更新</strong>: 2026-02-16（Phase 1 セッション2）</p>
 </blockquote>
-<p>本ドキュメントはLMCacheのKVキャッシュ store パスを追跡する。
-retrieve パスはPhase 1 セッション2で追加予定。</p>
+<p>本ドキュメントはLMCacheのKVキャッシュ store / retrieve パスを追跡する。</p>
 <h2 id="store-パス概要"><a class="header" href="#store-パス概要">Store パス概要</a></h2>
 <p>vLLMのattentionレイヤー実行中に、KVキャッシュをGPUからCPU（および後段ストレージ）に退避するパス。
 <strong>レイヤーワイズ方式</strong>（<code>use_layerwise=True</code>）が主要パスであり、各attentionレイヤーの実行直後にそのレイヤーのKVデータを転送する。</p>
@@ -8659,6 +8658,252 @@ batched_from_gpu Generator: [初期化] → yield → [L0 DMA]     → yield →
 </tbody>
 </table>
 </div>
+<hr>
+<h2 id="retrieve-パス概要"><a class="header" href="#retrieve-パス概要">Retrieve パス概要</a></h2>
+<p>KVキャッシュをストレージ（CPU/Disk/Remote）からGPUのvLLMページドメモリに復元するパス。
+<strong>2フェーズ設計</strong>: Scheduler側の<strong>lookup</strong>（ヒット判定+prefetch指示）と、Worker側の<strong>load</strong>（実際のGPU転送）に分離。</p>
+<h3 id="schedulerworker間の情報伝達"><a class="header" href="#schedulerworker間の情報伝達">Scheduler→Worker間の情報伝達</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant Sched as V1Impl (Scheduler側)
+    participant LC as LookupClient
+    participant Worker as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+
+    Note over Sched: vLLM Scheduler.schedule() から呼ばれる
+    Sched-&gt;&gt;LC: lookup(token_ids, req_id)
+    LC--&gt;&gt;Sched: num_external_hit_tokens
+    Note over Sched: LoadSpec(vllm_cached, lmcache_cached) を生成
+    Sched-&gt;&gt;Sched: update_state_after_alloc() → can_load=True
+    Sched-&gt;&gt;Sched: build_connector_meta() → ReqMeta(load_spec) を構築
+    Note over Sched: ConnectorMetadata を SchedulerOutput に添付
+
+    Note over Worker: Forward開始時
+    Worker-&gt;&gt;Engine: start_load_kv(forward_context)
+    Note over Engine: Bulk or Layerwise retrieve 実行
+</pre>
+
+<h3 id="lookupclient-の動作"><a class="header" href="#lookupclient-の動作">LookupClient の動作</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/lookup_client/lmcache_lookup_client.py:28</code></p>
+<p><code>LMCacheLookupClient</code>はvLLMのSchedulerプロセスで動作する。LMCacheEngine（Worker側）とは<strong>ZMQ IPC</strong>（REQ/REP）で通信。</p>
+<p><strong>処理フロー</strong>:</p>
+<ol>
+<li><code>process_tokens()</code>でトークン列をチャンクハッシュに分割</li>
+<li>ハッシュ列をmsgpackシリアライズし、ZMQで<code>LookupServer</code>に送信</li>
+<li><code>LookupServer</code>（Worker側）が<code>StorageManager.contains()</code>で存在チェック</li>
+<li>ヒットトークン数を返却</li>
+</ol>
+<p><strong>キャッシュ</strong>: 同一リクエストの2回目以降のlookupは<code>reqs_status</code>辞書から即座に返す。</p>
+<h3 id="retrieve-パスの2モード"><a class="header" href="#retrieve-パスの2モード">Retrieve パスの2モード</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>モード</th><th>条件</th><th>エントリポイント</th><th>特徴</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Bulk</strong></td><td><code>use_layerwise=False</code>（デフォルト）</td><td><code>LMCacheEngine.retrieve()</code></td><td>全レイヤー一括取得→一括GPU転送</td></tr>
+<tr><td><strong>Layerwise</strong></td><td><code>use_layerwise=True</code></td><td><code>LMCacheEngine.retrieve_layer()</code></td><td>レイヤー単位Generator、パイプライン可能</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="bulk-retrieve-パス"><a class="header" href="#bulk-retrieve-パス">Bulk Retrieve パス</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant Adapter as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+    participant TDB as TokenDatabase
+    participant SM as StorageManager
+    participant CPU as LocalCPUBackend
+    participant GPU as GPUConnector (V2)
+
+    Adapter-&gt;&gt;Engine: retrieve(tokens, mask, kvcaches, slot_mapping, ...)
+    activate Engine
+
+    Engine-&gt;&gt;TDB: process_tokens(tokens, mask)
+    TDB--&gt;&gt;Engine: [(start, end, CacheEngineKey), ...]
+
+    alt async_loading == True
+        Note over Engine: event_managerからprefetch済みMemoryObjを取得
+        Engine-&gt;&gt;Engine: _async_process_tokens_internal()
+    else sync loading
+        Engine-&gt;&gt;SM: get_block_mapping(chunk_infos)
+        SM--&gt;&gt;Engine: {backend_name: [(key, start, end)]}
+        Engine-&gt;&gt;SM: batched_get(keys, location)
+        SM-&gt;&gt;CPU: batched_get_blocking(keys)
+        CPU--&gt;&gt;SM: List[MemoryObj]（ref_count_up済み）
+        SM--&gt;&gt;Engine: List[MemoryObj]
+    end
+
+    Engine-&gt;&gt;GPU: batched_to_gpu(memory_objs, starts, ends, slot_mapping=...)
+    Note over GPU: load_stream上で全チャンクをGPU転送
+    GPU-&gt;&gt;GPU: lmc_ops.multi_layer_kv_transfer(memobj→paged KV)
+    GPU--&gt;&gt;Engine: 完了
+
+    Note over Engine: memory_obj.ref_count_down() で解放
+    Engine--&gt;&gt;Adapter: ret_mask (bool tensor)
+    deactivate Engine
+</pre>
+
+<h4 id="_process_tokens_internal-の詳細"><a class="header" href="#_process_tokens_internal-の詳細">_process_tokens_internal() の詳細</a></h4>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:1527</code></p>
+<ol>
+<li><code>process_tokens()</code>でチャンク分割・ハッシュ計算</li>
+<li><code>StorageManager.get_block_mapping()</code>でチャンクの<strong>所在バックエンド</strong>を特定
+<ul>
+<li>各バックエンドの<code>batched_contains()</code>をprefix match方式で呼び出し</li>
+<li>チャンクを所在バックエンドごとにグルーピング</li>
+</ul>
+</li>
+<li>バックエンドごとに<code>batched_get()</code>で<code>MemoryObj</code>を取得</li>
+<li>取得失敗時は<code>last_failed_block_start</code>以降の<code>ret_mask</code>をFalseに戻し、チャンクリストを切り詰め</li>
+</ol>
+<h4 id="_async_process_tokens_internal-の詳細"><a class="header" href="#_async_process_tokens_internal-の詳細">_async_process_tokens_internal() の詳細</a></h4>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:1463</code></p>
+<p>非同期プリフェッチ済みの結果を<code>event_manager</code>から取得するパス。</p>
+<ol>
+<li><code>event_manager.pop_event(EventType.LOADING, req_id)</code>でprefetch結果の<code>Future</code>を取得</li>
+<li><code>future.result()</code>で<code>list[list[tuple[CacheEngineKey, MemoryObj]]]</code>（tier×chunk）を取得</li>
+<li><code>process_tokens()</code>で再度チャンク分割し、<code>memory_obj_map</code>からマッチングしてチャンクリストを構築</li>
+<li>未使用の<code>MemoryObj</code>は<code>ref_count_down()</code>で即座に解放</li>
+</ol>
+<h4 id="storagemanagerbatched_get-のwrite-back"><a class="header" href="#storagemanagerbatched_get-のwrite-back">StorageManager.batched_get() のwrite-back</a></h4>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484</code></p>
+<p>リモートバックエンド（Disk/Remote）からデータを取得した場合、<strong>自動的にLocalCPUBackendにwrite-back</strong>する。</p>
+<ul>
+<li><code>LocalCPUBackend</code>以外から取得 &amp;&amp; <code>LocalCPUBackend</code>が存在 &amp;&amp; 全MemoryObjがnon-None → <code>batched_submit_put_task()</code>でL1にコピー</li>
+</ul>
+<h3 id="layerwise-retrieve-パス"><a class="header" href="#layerwise-retrieve-パス">Layerwise Retrieve パス</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant Adapter as V1Impl (Worker側)
+    participant Engine as LMCacheEngine
+    participant TDB as TokenDatabase
+    participant SM as StorageManager
+    participant GPU as GPUConnector (Layerwise)
+
+    Note over Adapter: start_load_kv() 内
+    Adapter-&gt;&gt;Engine: retrieve_layer(tokens, mask, kvcaches, slot_mapping, sync)
+    activate Engine
+    Engine-&gt;&gt;TDB: process_tokens(tokens, mask)
+    TDB--&gt;&gt;Engine: [(start, end, CacheEngineKey), ...]
+    Note over Engine: contains(layer0_key) でヒット判定 + location統一チェック
+
+    Engine-&gt;&gt;SM: layerwise_batched_get(keys_layer_major, location)
+    Note over SM: Layer 0 の get_non_blocking を asyncio.create_task() で投入
+    Engine-&gt;&gt;GPU: batched_to_gpu(starts, ends, ...) → mem_obj_consumer Generator 生成
+    GPU--&gt;&gt;Engine: mem_obj_consumer primed (yield)
+
+    Engine--&gt;&gt;Adapter: yield torch.sum(ret_mask) — Layer 0 のヒット数
+    deactivate Engine
+
+    Note over Adapter: next(retriever) で Layer 0 データ受領
+    Adapter-&gt;&gt;Engine: next(retriever)
+    activate Engine
+    Note over Engine: Layer 0 の task.result() を取得
+    Engine-&gt;&gt;GPU: mem_obj_consumer.send(mem_objs_layer0)
+    Note over GPU: CPU→GPUバッファ copy（load_stream）
+    SM--&gt;&gt;Engine: Layer 1 の task yield
+    Engine--&gt;&gt;Adapter: yield None
+    deactivate Engine
+
+    Note over Adapter: wait_for_layer_load(layer_name) で同期
+    Adapter-&gt;&gt;Engine: next(retriever)
+    activate Engine
+    Note over Engine: Layer N-1 処理...
+    Engine--&gt;&gt;Adapter: yield ret_mask（最終レイヤー後）
+    deactivate Engine
+</pre>
+
+<h4 id="retrieve_layer-の-generator-構造"><a class="header" href="#retrieve_layer-の-generator-構造">retrieve_layer() の Generator 構造</a></h4>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:851</code></p>
+<p><code>num_layers + 3</code>回yieldする（ヒットあり時）:</p>
+<ol>
+<li><strong>yield 0</strong>: <code>torch.sum(ret_mask)</code> — ヒットトークン数（sglang統合向け）</li>
+<li><strong>yield 1 ~ N-1</strong>: <code>None</code> — 各レイヤーのGPU転送進行中</li>
+<li><strong>yield N</strong>: <code>None</code> — 最終レイヤー処理中</li>
+<li><strong>yield N+1</strong>: <code>next(mem_obj_consumer)</code> で同期</li>
+<li><strong>yield N+2</strong>: <code>ret_mask</code> — 最終結果</li>
+</ol>
+<p>各レイヤーで:</p>
+<ul>
+<li><code>next(get_generator)</code>で<code>StorageManager</code>から非同期取得した<code>Future</code>を受け取る</li>
+<li><code>task.result()</code>で<code>List[MemoryObj]</code>を取得（ブロッキング）</li>
+<li><code>mem_obj_consumer.send(mem_objs_layer)</code>でGPUコネクタにデータを渡す</li>
+<li><code>MemoryObj.ref_count_down()</code>は全レイヤー完了後にバッチで実行</li>
+</ul>
+<h4 id="layerwise-gpuconnectorbatched_to_gpu-のパイプライン"><a class="header" href="#layerwise-gpuconnectorbatched_to_gpu-のパイプライン">Layerwise GPUConnector.batched_to_gpu() のパイプライン</a></h4>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:683</code></p>
+<p><code>VLLMBufferLayerwiseGPUConnector</code>は<code>num_layers + 2</code>回のイテレーションで<strong>3段パイプライン</strong>を実行:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>イテレーション i</th><th>操作1: paged書き込み</th><th>操作2: RoPE補正+gap zeroing</th><th>操作3: CPU→GPU load</th></tr>
+</thead>
+<tbody>
+<tr><td>i = 0</td><td>—</td><td>—</td><td><code>yield</code>で<code>mem_objs_layer0</code>受領、load_stream上でcopy</td></tr>
+<tr><td>i = 1</td><td>—</td><td>Layer 0のRoPE補正</td><td><code>yield</code>で<code>mem_objs_layer1</code>受領、load_stream上でcopy</td></tr>
+<tr><td>i = 2</td><td>Layer 0をpagedメモリに書き込み</td><td>Layer 1のRoPE補正</td><td><code>yield</code>で<code>mem_objs_layer2</code>受領</td></tr>
+<tr><td>…</td><td>Layer i-2</td><td>Layer i-1</td><td>Layer i</td></tr>
+<tr><td>i = N</td><td>Layer N-2</td><td>Layer N-1</td><td><code>yield</code>（同期用、データなし）</td></tr>
+<tr><td>i = N+1</td><td>Layer N-1</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ダブルバッファ</strong>: <code>compute_gpu_buffer_obj</code>と<code>load_gpu_buffer_obj</code>をping-pongして、RoPE計算とDMAをオーバーラップ。</p>
+<p><strong>RoPE位置補正</strong>: <code>cache_positions=True</code>の場合、保存時の位置と現在の位置の差分で<code>fused_rotary_emb()</code>を適用。保存時位置は<code>MemoryObjMetadata.cached_positions</code>から取得。</p>
+<p><strong>gap zeroing</strong>: チャンク間のギャップ位置（連続しないstart/endの隙間）をゼロ埋め。</p>
+<h3 id="非同期プリフェッチの全体フロー"><a class="header" href="#非同期プリフェッチの全体フロー">非同期プリフェッチの全体フロー</a></h3>
+<pre class="mermaid">sequenceDiagram
+    participant Sched as V1Impl (Scheduler)
+    participant LC as LookupClient
+    participant LS as LookupServer (Worker)
+    participant SM as StorageManager
+    participant EM as EventManager
+    participant Worker as V1Impl (Worker)
+    participant Engine as LMCacheEngine
+
+    Note over Sched: get_num_new_matched_tokens() 内
+    Sched-&gt;&gt;LC: lookup(token_ids, req_id)
+    LC-&gt;&gt;LS: ZMQ REQ (hashes + offsets + req_id)
+    LS-&gt;&gt;SM: async_lookup_and_prefetch(lookup_id, keys, ...)
+    Note over SM: 各バックエンドに batched_async_contains → batched_get_non_blocking
+    SM-&gt;&gt;EM: add_event(LOADING, lookup_id, all_done_task)
+    LS--&gt;&gt;LC: num_hit_tokens
+    LC--&gt;&gt;Sched: num_external_hit_tokens
+
+    Note over Sched: build_connector_meta() で LoadSpec を ConnectorMetadata に格納
+
+    Note over Worker: start_load_kv() 内
+    Worker-&gt;&gt;Engine: retrieve(tokens, mask, ..., req_id=req_id)
+    Engine-&gt;&gt;EM: pop_event(LOADING, req_id)
+    Note over Engine: future.result() で prefetch 済み MemoryObj を取得
+    Engine-&gt;&gt;Engine: _async_process_tokens_internal()
+    Engine-&gt;&gt;GPU: batched_to_gpu(memory_objs, ...)
+</pre>
+
+<p><strong>ポイント</strong>:</p>
+<ul>
+<li>Scheduler側のlookupがprefetchを<strong>トリガー</strong>し、Worker側のretrieveがprefetch結果を<strong>消費</strong>する</li>
+<li><code>EventManager</code>が両者を<code>lookup_id</code>（=req_id）で紐付け</li>
+<li>prefetchは<code>asyncio.create_task()</code>で非同期実行され、Worker側のretrieveまでに完了していればブロッキングなし</li>
+</ul>
+<h3 id="token_mask-と-ret_mask-の意味"><a class="header" href="#token_mask-と-ret_mask-の意味">token_mask と ret_mask の意味</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>マスク</th><th>用途</th><th>値の意味</th></tr>
+</thead>
+<tbody>
+<tr><td><code>token_mask</code></td><td>adapter側で構築</td><td><code>False</code>=vLLMがキャッシュ済み（チャンク境界まで切り詰め）、<code>True</code>=LMCacheから要ロード</td></tr>
+<tr><td><code>ret_mask</code></td><td>Engine内部で構築</td><td><code>True</code>=実際にLMCacheから取得成功、<code>False</code>=未取得</td></tr>
+<tr><td><code>mask</code>（Engine引数）</td><td>token_maskと同じ</td><td><code>process_tokens()</code>のFalseプレフィックス=スキップ対象</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>token_mask</code>のFalse区間は<code>vllm_cached_tokens</code>をchunk_sizeの倍数に切り下げた範囲。これにより、vLLMとLMCacheのキャッシュ境界がチャンク単位で整合する（オーバーラップ領域はLMCacheが上書き）。</p>
+<h3 id="エラーハンドリング"><a class="header" href="#エラーハンドリング">エラーハンドリング</a></h3>
+<ul>
+<li><strong>部分的取得失敗</strong>: <code>ret_mask.sum() &lt; expected</code>の場合、<code>record_failed_blocks()</code>で失敗ブロックIDを計算し、<code>_invalid_block_ids</code>に蓄積。vLLMのSchedulerが次stepで<code>get_block_ids_with_load_errors()</code>で回収し、再計算を指示</li>
+<li><strong>StorageManager.batched_get()</strong>: <code>memory_obj=None</code>が返された場合、<code>last_failed_block_start</code>以降を切り捨て（prefix matchの性質上、途中の欠損以降は全て無効）</li>
+<li><strong>健全性チェック</strong>: <code>is_healthy()==False</code>の場合、retrieve自体をスキップ（ゼロマスクを返す）</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="lmcache-アーキテクチャ概要"><a class="header" href="#lmcache-アーキテクチャ概要">LMCache アーキテクチャ概要</a></h1>
 <blockquote>
@@ -9006,6 +9251,62 @@ KVキャッシュのstore/retrieveオペレーションを実行する。</p>
 </tbody>
 </table>
 </div>
+<h2 id="retrieve-api2つのエントリポイント"><a class="header" href="#retrieve-api2つのエントリポイント">Retrieve API（2つのエントリポイント）</a></h2>
+<h3 id="retrieve--bulkデフォルト"><a class="header" href="#retrieve--bulkデフォルト">retrieve() — Bulk（デフォルト）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:708</code></p>
+<pre><code class="language-python">def retrieve(
+    tokens: Union[Tensor, list[int]],
+    mask: Optional[Tensor] = None,
+    **kwargs,  # kvcaches, slot_mapping, request_configs, req_id
+) -&gt; torch.Tensor  # ret_mask (bool, CPU)
+</code></pre>
+<p>全レイヤーのKVキャッシュを一括取得し、GPUのページドメモリに書き戻す。</p>
+<p><strong>処理フロー</strong>:</p>
+<ol>
+<li><code>_process_tokens_internal()</code>（同期）or <code>_async_process_tokens_internal()</code>（非同期prefetch済み）でMemoryObjを取得</li>
+<li><code>save_only_first_rank</code>時は<code>_broadcast_or_receive_memory_objs()</code>で他ランクにブロードキャスト</li>
+<li><code>GPUConnector.batched_to_gpu(memory_objs, starts, ends, ...)</code>で一括GPU転送</li>
+<li><code>memory_obj.ref_count_down()</code>で解放</li>
+<li><code>remove_after_retrieve</code>時は<code>StorageManager.remove(key)</code>で即座に削除</li>
+</ol>
+<p><strong>_process_tokens_internal()</strong>（同期パス）:</p>
+<ol>
+<li><code>process_tokens()</code>でチャンク分割</li>
+<li><code>get_block_mapping()</code>でチャンクの所在バックエンドをprefix matchで特定</li>
+<li><code>batched_get(keys, location)</code>でバックエンドからMemoryObj取得</li>
+<li>取得失敗時は<code>last_failed_block_start</code>以降を全て無効化</li>
+</ol>
+<p><strong>_async_process_tokens_internal()</strong>（非同期パス）:</p>
+<ol>
+<li><code>event_manager.pop_event(LOADING, req_id)</code>でprefetch済みFutureを取得</li>
+<li><code>future.result()</code>でtier×chunkのMemoryObjマップを構築</li>
+<li><code>process_tokens()</code>で再チャンク分割しマッチング</li>
+<li>未使用MemoryObjは即座に<code>ref_count_down()</code></li>
+</ol>
+<h3 id="retrieve_layer--layerwise"><a class="header" href="#retrieve_layer--layerwise">retrieve_layer() — Layerwise</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:851</code></p>
+<pre><code class="language-python">def retrieve_layer(
+    tokens: Union[Tensor, list[int]],
+    mask: Optional[Tensor] = None,
+    **kwargs,  # kvcaches, slot_mapping, sync
+) -&gt; Generator[Optional[Tensor], None, None]
+</code></pre>
+<p>レイヤー単位でKVキャッシュを取得するGenerator関数。</p>
+<p><strong>初期化フェーズ</strong>:</p>
+<ol>
+<li><code>process_tokens()</code>でチャンク分割</li>
+<li><code>StorageManager.contains(layer0_key)</code>でヒット＋location統一チェック</li>
+<li>キーをlayer-major形式に転置: <code>keys[chunk][layer]</code> → <code>keys_layer_major[layer][chunk]</code></li>
+<li><code>StorageManager.layerwise_batched_get(keys_layer_major, location)</code> → <code>get_generator</code></li>
+<li><code>GPUConnector.batched_to_gpu(starts, ends, ...)</code> → <code>mem_obj_consumer</code> Generator</li>
+</ol>
+<p><strong>レイヤーループ</strong>:</p>
+<pre><code>yield → task = next(get_generator) → mem_objs = task.result() → mem_obj_consumer.send(mem_objs)
+</code></pre>
+<p>最終yield時に<code>ret_mask</code>を返す。<code>ref_count_down()</code>は全レイヤー完了後にバッチ実行。</p>
+<h3 id="lookup--ヒット数問い合わせ"><a class="header" href="#lookup--ヒット数問い合わせ">lookup() — ヒット数問い合わせ</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:992</code></p>
+<p>Scheduler側から呼ばれるヒット数チェック。<code>process_tokens()</code>でチャンク分割し、<code>StorageManager</code>の<code>contains()</code>/<code>batched_contains()</code>でプレフィックスマッチ。</p>
 <h2 id="上流下流-1"><a class="header" href="#上流下流-1">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheConnectorV1Impl（store_layer/retrieve呼び出し）</li>
@@ -9086,6 +9387,37 @@ vLLMのページドメモリレイアウトからslot_mappingを使って正し�
     # 標準: [num_tokens, 2, hidden_dim_size]
     # MLA:  [num_tokens, hidden_dim_size]
 </code></pre>
+<h2 id="主要メソッドretrieve方向"><a class="header" href="#主要メソッドretrieve方向">主要メソッド（Retrieve方向）</a></h2>
+<h3 id="batched_to_gpuvllmpagedmemgpuconnectorv2--bulk"><a class="header" href="#batched_to_gpuvllmpagedmemgpuconnectorv2--bulk">batched_to_gpu()（VLLMPagedMemGPUConnectorV2 — Bulk）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:359</code></p>
+<pre><code class="language-python">def batched_to_gpu(memory_objs, starts, ends, **kwargs)
+</code></pre>
+<p><code>load_stream</code>上で全チャンクの<code>to_gpu()</code>を順次実行し、最後に<code>load_stream.synchronize()</code>。
+<code>to_gpu()</code>は<code>lmc_ops.multi_layer_kv_transfer()</code>でMemoryObj → pagedメモリに<strong>全レイヤー一括</strong>転送。</p>
+<h3 id="batched_to_gpuvllmbufferlayerwisegpuconnector--layerwise"><a class="header" href="#batched_to_gpuvllmbufferlayerwisegpuconnector--layerwise">batched_to_gpu()（VLLMBufferLayerwiseGPUConnector — Layerwise）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:683</code></p>
+<p><strong>Generator関数</strong>。<code>num_layers + 2</code>回イテレーションの<strong>3段パイプライン</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>段</th><th>操作</th><th>ストリーム</th></tr>
+</thead>
+<tbody>
+<tr><td>Load</td><td>CPU pinned → GPUバッファに<code>copy_(non_blocking=True)</code></td><td><code>load_stream</code></td></tr>
+<tr><td>Compute</td><td>RoPE位置補正 + gap zeroing</td><td>default stream</td></tr>
+<tr><td>Write</td><td><code>lmc_ops.single_layer_kv_transfer()</code>でバッファ→pagedメモリ</td><td>default stream</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ダブルバッファ</strong>: <code>compute_gpu_buffer_obj</code>と<code>load_gpu_buffer_obj</code>をping-pongし、DMAとRoPE計算をオーバーラップ。</p>
+<p><strong>RoPE位置補正</strong>（<code>cache_positions=True</code>時）:</p>
+<ul>
+<li><code>MemoryObjMetadata.cached_positions</code>から保存時位置を取得</li>
+<li><code>fused_rotary_emb(old_positions, new_positions, K_tensor)</code>で差分補正</li>
+<li>これにより異なるコンテキスト位置でもKVキャッシュを再利用可能</li>
+</ul>
+<p><strong>gap zeroing</strong>: 連続しないチャンク間のギャップ位置をゼロ埋め。</p>
+<p><strong><code>mem_obj_consumer.send()</code>パターン</strong>: Engine側から<code>send(mem_objs_layer)</code>でデータを受け取る（Generator.send）。<code>yield</code>でデータ受領→次イテレーションで処理。</p>
 <h2 id="上流下流-2"><a class="header" href="#上流下流-2">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）</li>
@@ -9097,6 +9429,7 @@ vLLMのページドメモリレイアウトからslot_mappingを使って正し�
 <li>中間GPUバッファ（<code>use_gpu=True</code>）は<strong>全チャンクを結合してから一括転送</strong>するため、チャンクごとのカーネル起動オーバーヘッドを削減</li>
 <li><code>kvcaches</code>はvLLMの<code>kv_cache</code>リスト（<code>list[Tensor]</code>、レイヤーごとに1テンソル）を<code>initialize_kvcaches_ptr()</code>で受け取る</li>
 <li>GPUバッファは<code>gpu_buffer_allocator</code>から確保し、使用後に<code>ref_count_down()</code>で解放</li>
+<li><strong>Retrieve時のCUDAカーネル</strong>: Bulk=<code>multi_layer_kv_transfer</code>（全レイヤー一括）、Layerwise=<code>single_layer_kv_transfer</code>（store=Falseで逆方向=メモリ→paged）</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="storagemanager--localcpubackend"><a class="header" href="#storagemanager--localcpubackend">StorageManager + LocalCPUBackend</a></h1>
@@ -9178,11 +9511,42 @@ L1 CPUメモリキャッシュの実装（LocalCPUBackend）。</p>
 <li><code>MemoryAllocator</code>がプール管理（事前確保 or 動的確保）</li>
 <li>ref_countで共有管理、0になるとプールに返却</li>
 </ul>
+<h2 id="storagemanagerretrieve方向"><a class="header" href="#storagemanagerretrieve方向">StorageManager（Retrieve方向）</a></h2>
+<h3 id="batched_get"><a class="header" href="#batched_get">batched_get()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484</code></p>
+<pre><code class="language-python">def batched_get(
+    keys: List[CacheEngineKey],
+    location: Optional[str] = None,
+) -&gt; List[Optional[MemoryObj]]
+</code></pre>
+<p>指定locationのバックエンドから<code>batched_get_blocking(keys)</code>でMemoryObjを取得。
+<strong>write-back</strong>: リモートバックエンドから取得した場合、<code>LocalCPUBackend</code>が存在すれば自動的にL1にコピー。</p>
+<h3 id="layerwise_batched_get"><a class="header" href="#layerwise_batched_get">layerwise_batched_get()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:519</code></p>
+<pre><code class="language-python">def layerwise_batched_get(
+    keys: List[List[CacheEngineKey]],  # [num_layers][num_chunks]
+    location: Optional[str] = None,
+) -&gt; Generator[Future, None, None]
+</code></pre>
+<p>レイヤー単位で非同期取得。各レイヤーの<code>batched_get_non_blocking()</code>をasyncio.create_taskで投入し、Futureをyield。
+デフォルトlocationは<code>"LocalCPUBackend"</code>。</p>
+<h3 id="get_block_mapping"><a class="header" href="#get_block_mapping">get_block_mapping()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:908</code></p>
+<p>チャンクリストを受け取り、各チャンクの所在バックエンドを特定。<strong>prefix match方式</strong>: 各バックエンドの<code>batched_contains()</code>で先頭からの連続ヒット数を取得し、残りを次のバックエンドに渡す。</p>
+<h3 id="async_lookup_and_prefetch"><a class="header" href="#async_lookup_and_prefetch">async_lookup_and_prefetch()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:641</code></p>
+<p>非同期プリフェッチの中核。LookupServerから呼ばれ、全バックエンドに対してprefix match方式で<code>batched_async_contains()</code>→<code>batched_get_non_blocking()</code>を実行。結果は<code>EventManager</code>にFutureとして登録。</p>
+<h2 id="localcpubackendretrieve方向"><a class="header" href="#localcpubackendretrieve方向">LocalCPUBackend（Retrieve方向）</a></h2>
+<h3 id="batched_get_non_blocking"><a class="header" href="#batched_get_non_blocking">batched_get_non_blocking()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:216</code></p>
+<p><code>cpu_lock</code>下で<code>hot_cache[key]</code>を取得し、<code>ref_count_up()</code>してからリストで返す。<strong>同期的に完了</strong>する（CPU上のOrderedDictアクセスのみ）。</p>
+<h3 id="batched_get_blocking"><a class="header" href="#batched_get_blocking">batched_get_blocking()</a></h3>
+<p>抽象基底クラス<code>LMCStorageBackendInterface</code>のデフォルト実装を継承。個別<code>get_blocking()</code>のループ。</p>
 <h2 id="バックエンド登録"><a class="header" href="#バックエンド登録">バックエンド登録</a></h2>
 <p>StorageManagerの<code>storage_backends</code>は<code>OrderedDict</code>で登録順=優先度:</p>
 <pre><code>LocalCPUBackend (L1) → LocalDiskBackend (L2) → RemoteBackend (L3)
 </code></pre>
-<p><code>batched_put()</code>は全バックエンドに配布。<code>get()</code>は最初にヒットしたバックエンドから取得。</p>
+<p><code>batched_put()</code>は全バックエンドに配布。<code>batched_get()</code>は指定locationから取得（リモート→L1 write-back付き）。<code>get_block_mapping()</code>はprefix match順。</p>
 <h2 id="上流下流-3"><a class="header" href="#上流下流-3">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheEngine（batched_allocate/batched_put/contains等）</li>
@@ -9269,9 +9633,17 @@ vLLMのプレフィックスキャッシュと<strong>同一のハッシュア�
 )
 </code></pre>
 <p><code>save_only_first_rank</code>はMLA（Multi-head Latent Attention）使用時に有効。world_sizeを1に固定することで、異なるTP並列度でもキーが一致する。</p>
+<h2 id="retrieve時の利用"><a class="header" href="#retrieve時の利用">Retrieve時の利用</a></h2>
+<p>Retrieveパスでも同じ<code>process_tokens()</code>が使用される:</p>
+<ul>
+<li><strong>Bulk retrieve</strong>: <code>_process_tokens_internal()</code>と<code>_async_process_tokens_internal()</code>の両方で呼ばれ、チャンクキーを生成</li>
+<li><strong>Layerwise retrieve</strong>: <code>retrieve_layer()</code>内で呼ばれ、layer 0のキーで<code>StorageManager.contains()</code>判定</li>
+<li><strong>LookupClient</strong>: Schedulerプロセス内でも独自の<code>ChunkedTokenDatabase</code>インスタンスを持ち、<code>process_tokens(make_key=False)</code>でハッシュのみ計算してZMQ経由でLookupServerに送信</li>
+<li><strong>非同期prefetch</strong>: <code>async_process_tokens_internal()</code>ではハッシュ再計算が発生する（TODO: スキップ最適化の余地あり）</li>
+</ul>
 <h2 id="上流下流-4"><a class="header" href="#上流下流-4">上流・下流</a></h2>
 <ul>
-<li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）</li>
+<li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）、LookupClient（lookup時）</li>
 <li><strong>下流</strong>: なし（純粋な変換コンポーネント）</li>
 <li><strong>依存</strong>: vLLMのハッシュ関数ライブラリ</li>
 </ul>
@@ -9321,12 +9693,55 @@ attentionレイヤー実行中のKVキャッシュstore/retrieveをLMCacheに委
 <li><strong>下流</strong>: LMCacheEngine（<code>store_layer</code> / <code>store</code> / <code>retrieve</code> / <code>retrieve_layer</code>）</li>
 <li><strong>関連</strong>: LMCacheManager（ライフサイクル管理、Engine取得）</li>
 </ul>
+<h2 id="主要メソッドretrieve方向-1"><a class="header" href="#主要メソッドretrieve方向-1">主要メソッド（Retrieve方向）</a></h2>
+<h3 id="scheduler側-get_num_new_matched_tokens"><a class="header" href="#scheduler側-get_num_new_matched_tokens">Scheduler側: get_num_new_matched_tokens()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:1193</code></p>
+<p>vLLM Schedulerの<code>schedule()</code>から呼ばれ、外部KVキャッシュのヒット数を返す。</p>
+<ol>
+<li><code>LookupClient.lookup_cache(req_id)</code>で既存キャッシュ確認（2回目以降）</li>
+<li>未キャッシュなら<code>LookupClient.lookup(token_ids, req_id)</code>でZMQ経由でWorker側に問い合わせ</li>
+<li><code>LoadSpec(vllm_cached_tokens, lmcache_cached_tokens, can_load=False)</code>を生成</li>
+<li><code>update_state_after_alloc()</code>で<code>can_load=True</code>に更新（ブロック確保成功時）</li>
+<li><code>build_connector_meta()</code>で<code>ReqMeta(load_spec=LoadSpec)</code>を<code>LMCacheConnectorMetadata</code>に格納</li>
+</ol>
+<h3 id="worker側-start_load_kv"><a class="header" href="#worker側-start_load_kv">Worker側: start_load_kv()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:737</code></p>
+<p>vLLMのforward実行<strong>前</strong>に<code>ForwardContext</code>から呼ばれ、KVキャッシュのGPU復元を開始。</p>
+<p><strong>token_maskの構築</strong>:</p>
+<ol>
+<li><code>request.load_spec.vllm_cached_tokens</code>をchunk_sizeの倍数に切り下げ → <code>masked_token_count</code></li>
+<li><code>token_mask[:masked_token_count] = False</code>（vLLM既キャッシュ分）、残り=True</li>
+</ol>
+<p><strong>2モード分岐</strong>:</p>
+<ul>
+<li><strong>Layerwise</strong> (<code>use_layerwise=True</code>):
+<ol>
+<li><code>LMCacheEngine.retrieve_layer()</code>でGenerator取得</li>
+<li><code>next()</code> × 2回で先行2レイヤー分をキック</li>
+<li><code>self.layerwise_retrievers</code>にGenerator追加</li>
+</ol>
+</li>
+<li><strong>Bulk</strong> (<code>use_layerwise=False</code>):
+<ol>
+<li><code>LMCacheEngine.retrieve()</code>を呼び出し、<code>ret_mask</code>を取得</li>
+<li>取得失敗時は<code>record_failed_blocks()</code>で失敗ブロックIDを<code>_invalid_block_ids</code>に記録</li>
+</ol>
+</li>
+</ul>
+<h3 id="worker側-wait_for_layer_load"><a class="header" href="#worker側-wait_for_layer_load">Worker側: wait_for_layer_load()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:940</code></p>
+<p>各attentionレイヤー実行<strong>前</strong>に呼ばれ、該当レイヤーのKVロード完了を待機。
+<code>layerwise_retrievers</code>内の全Generatorを<code>next()</code>で1ステップ進行。
+最終レイヤーでは<code>ret_mask</code>を取得して検証。</p>
 <h2 id="設計上の注意点-1"><a class="header" href="#設計上の注意点-1">設計上の注意点</a></h2>
 <ul>
 <li><code>LMCacheConnectorV1Dynamic</code>は純粋な委譲シェル。全メソッドが<code>self._lmcache_engine</code>（V1Impl）に転送</li>
 <li><strong>LMCacheManagerにstore()メソッドは存在しない</strong>。V1ImplがEngineを直接呼ぶ</li>
 <li><code>kv_role</code>は<code>"kv_both"</code>（default）/<code>"kv_producer"</code>/<code>"kv_consumer"</code>の3値。producer時はskip_leading_tokens=0（全トークンstore）</li>
 <li><code>current_layer</code>カウンタでレイヤー追跡。wait_for_save()でリセット</li>
+<li><strong>Retrieve 2モード</strong>: <code>use_layerwise</code>（デフォルトFalse）でBulk/Layerwiseを切替</li>
+<li><strong>LookupClient-LookupServer分離</strong>: SchedulerプロセスのLookupClientからWorkerプロセスのLookupServerにZMQ IPC通信</li>
+<li><strong>LoadSpec</strong>: Scheduler→Worker間でlookup結果を伝達するデータ構造（ConnectorMetadata経由）</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="lmcache-用語集"><a class="header" href="#lmcache-用語集">LMCache 用語集</a></h1>
@@ -9404,6 +9819,10 @@ attentionレイヤー実行中のKVキャッシュstore/retrieveをLMCacheに委
 <tr><td><strong>lmc_ops.single_layer_kv_transfer</strong></td><td>CUDAカーネル。vLLMのページドKVキャッシュからslot_mapping経由でデータを抽出/書き戻し。</td></tr>
 <tr><td><strong>slot_mapping</strong></td><td>トークン位置→vLLMページドメモリのflat slot位置へのマッピング。GPU Tensor。</td></tr>
 <tr><td><strong>store_stream</strong></td><td>GPU→CPU転送専用CUDAストリーム。メイン計算ストリームとオーバーラップ可能。</td></tr>
+<tr><td><strong>load_stream</strong></td><td>CPU→GPU転送専用CUDAストリーム。retrieve時にメイン計算とオーバーラップ。</td></tr>
+<tr><td><strong>lmc_ops.multi_layer_kv_transfer</strong></td><td>CUDAカーネル。全レイヤー一括でMemoryObj→paged KVキャッシュに転送（Bulk retrieve用）。</td></tr>
+<tr><td><strong>fused_rotary_emb</strong></td><td>RoPE位置補正関数。Layerwise retrieve時に保存時と現在のposition差分を補正。</td></tr>
+<tr><td><strong>VLLMBufferLayerwiseGPUConnector</strong></td><td>CacheBlend対応のLayerwiseコネクタ。ダブルバッファ+RoPE補正+gap zeroing。</td></tr>
 </tbody>
 </table>
 </div>
@@ -9420,7 +9839,13 @@ attentionレイヤー実行中のKVキャッシュstore/retrieveをLMCacheに委
 <tr><td><strong>SaveSpec</strong></td><td>保存仕様。<code>skip_leading_tokens</code>（キャッシュ済みプレフィックス長）、<code>can_save</code>（保存可否）。</td></tr>
 <tr><td><strong>ConnectorMetadata</strong></td><td>Scheduler→Worker間で渡されるメタデータ。各リクエストのtoken_ids, slot_mapping, LoadSpec, SaveSpecを含む。</td></tr>
 <tr><td><strong>kv_role</strong></td><td><code>"kv_both"</code>（default）/<code>"kv_producer"</code>/<code>"kv_consumer"</code>。producer時はskip_leading_tokens=0。</td></tr>
-<tr><td><strong>LookupClient</strong></td><td>Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。</td></tr>
+<tr><td><strong>LookupClient</strong></td><td>Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。<code>lmcache_lookup_client.py</code></td></tr>
+<tr><td><strong>LookupServer</strong></td><td>Worker側でLookupClientからのZMQ REQ/REPを受け付け、StorageManager.async_lookup_and_prefetchを実行。</td></tr>
+<tr><td><strong>EventManager</strong></td><td>非同期イベント（LOADING等）のFutureを管理。lookup_idでprefetch結果とretrieve消費を紐付け。</td></tr>
+<tr><td><strong>token_mask</strong></td><td>retrieve時のマスク。False=vLLMがキャッシュ済み（chunk_sizeの倍数に切り下げ）、True=LMCacheからロード対象。</td></tr>
+<tr><td><strong>ret_mask</strong></td><td>retrieve結果のマスク。True=LMCacheから実際に取得成功、False=未取得。Engine内部で構築。</td></tr>
+<tr><td><strong>write-back</strong></td><td>StorageManager.batched_get()がリモートバックエンドから取得した場合、自動的にLocalCPUBackendにコピーする動作。</td></tr>
+<tr><td><strong>get_block_mapping</strong></td><td>チャンクの所在バックエンドをprefix match方式で特定するStorageManagerメソッド。</td></tr>
 </tbody>
 </table>
 </div>

@@ -36,7 +36,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-9f076d22.js"></script>
@@ -220,12 +220,55 @@ attentionレイヤー実行中のKVキャッシュstore/retrieveをLMCacheに委
 <li><strong>下流</strong>: LMCacheEngine（<code>store_layer</code> / <code>store</code> / <code>retrieve</code> / <code>retrieve_layer</code>）</li>
 <li><strong>関連</strong>: LMCacheManager（ライフサイクル管理、Engine取得）</li>
 </ul>
+<h2 id="主要メソッドretrieve方向"><a class="header" href="#主要メソッドretrieve方向">主要メソッド（Retrieve方向）</a></h2>
+<h3 id="scheduler側-get_num_new_matched_tokens"><a class="header" href="#scheduler側-get_num_new_matched_tokens">Scheduler側: get_num_new_matched_tokens()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:1193</code></p>
+<p>vLLM Schedulerの<code>schedule()</code>から呼ばれ、外部KVキャッシュのヒット数を返す。</p>
+<ol>
+<li><code>LookupClient.lookup_cache(req_id)</code>で既存キャッシュ確認（2回目以降）</li>
+<li>未キャッシュなら<code>LookupClient.lookup(token_ids, req_id)</code>でZMQ経由でWorker側に問い合わせ</li>
+<li><code>LoadSpec(vllm_cached_tokens, lmcache_cached_tokens, can_load=False)</code>を生成</li>
+<li><code>update_state_after_alloc()</code>で<code>can_load=True</code>に更新（ブロック確保成功時）</li>
+<li><code>build_connector_meta()</code>で<code>ReqMeta(load_spec=LoadSpec)</code>を<code>LMCacheConnectorMetadata</code>に格納</li>
+</ol>
+<h3 id="worker側-start_load_kv"><a class="header" href="#worker側-start_load_kv">Worker側: start_load_kv()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:737</code></p>
+<p>vLLMのforward実行<strong>前</strong>に<code>ForwardContext</code>から呼ばれ、KVキャッシュのGPU復元を開始。</p>
+<p><strong>token_maskの構築</strong>:</p>
+<ol>
+<li><code>request.load_spec.vllm_cached_tokens</code>をchunk_sizeの倍数に切り下げ → <code>masked_token_count</code></li>
+<li><code>token_mask[:masked_token_count] = False</code>（vLLM既キャッシュ分）、残り=True</li>
+</ol>
+<p><strong>2モード分岐</strong>:</p>
+<ul>
+<li><strong>Layerwise</strong> (<code>use_layerwise=True</code>):
+<ol>
+<li><code>LMCacheEngine.retrieve_layer()</code>でGenerator取得</li>
+<li><code>next()</code> × 2回で先行2レイヤー分をキック</li>
+<li><code>self.layerwise_retrievers</code>にGenerator追加</li>
+</ol>
+</li>
+<li><strong>Bulk</strong> (<code>use_layerwise=False</code>):
+<ol>
+<li><code>LMCacheEngine.retrieve()</code>を呼び出し、<code>ret_mask</code>を取得</li>
+<li>取得失敗時は<code>record_failed_blocks()</code>で失敗ブロックIDを<code>_invalid_block_ids</code>に記録</li>
+</ol>
+</li>
+</ul>
+<h3 id="worker側-wait_for_layer_load"><a class="header" href="#worker側-wait_for_layer_load">Worker側: wait_for_layer_load()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/integration/vllm/vllm_v1_adapter.py:940</code></p>
+<p>各attentionレイヤー実行<strong>前</strong>に呼ばれ、該当レイヤーのKVロード完了を待機。
+<code>layerwise_retrievers</code>内の全Generatorを<code>next()</code>で1ステップ進行。
+最終レイヤーでは<code>ret_mask</code>を取得して検証。</p>
 <h2 id="設計上の注意点"><a class="header" href="#設計上の注意点">設計上の注意点</a></h2>
 <ul>
 <li><code>LMCacheConnectorV1Dynamic</code>は純粋な委譲シェル。全メソッドが<code>self._lmcache_engine</code>（V1Impl）に転送</li>
 <li><strong>LMCacheManagerにstore()メソッドは存在しない</strong>。V1ImplがEngineを直接呼ぶ</li>
 <li><code>kv_role</code>は<code>"kv_both"</code>（default）/<code>"kv_producer"</code>/<code>"kv_consumer"</code>の3値。producer時はskip_leading_tokens=0（全トークンstore）</li>
 <li><code>current_layer</code>カウンタでレイヤー追跡。wait_for_save()でリセット</li>
+<li><strong>Retrieve 2モード</strong>: <code>use_layerwise</code>（デフォルトFalse）でBulk/Layerwiseを切替</li>
+<li><strong>LookupClient-LookupServer分離</strong>: SchedulerプロセスのLookupClientからWorkerプロセスのLookupServerにZMQ IPC通信</li>
+<li><strong>LoadSpec</strong>: Scheduler→Worker間でlookup結果を伝達するデータ構造（ConnectorMetadata経由）</li>
 </ul>
 
                     </main>

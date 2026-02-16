@@ -36,7 +36,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-9f076d22.js"></script>
@@ -250,6 +250,10 @@
 <tr><td><strong>lmc_ops.single_layer_kv_transfer</strong></td><td>CUDAカーネル。vLLMのページドKVキャッシュからslot_mapping経由でデータを抽出/書き戻し。</td></tr>
 <tr><td><strong>slot_mapping</strong></td><td>トークン位置→vLLMページドメモリのflat slot位置へのマッピング。GPU Tensor。</td></tr>
 <tr><td><strong>store_stream</strong></td><td>GPU→CPU転送専用CUDAストリーム。メイン計算ストリームとオーバーラップ可能。</td></tr>
+<tr><td><strong>load_stream</strong></td><td>CPU→GPU転送専用CUDAストリーム。retrieve時にメイン計算とオーバーラップ。</td></tr>
+<tr><td><strong>lmc_ops.multi_layer_kv_transfer</strong></td><td>CUDAカーネル。全レイヤー一括でMemoryObj→paged KVキャッシュに転送（Bulk retrieve用）。</td></tr>
+<tr><td><strong>fused_rotary_emb</strong></td><td>RoPE位置補正関数。Layerwise retrieve時に保存時と現在のposition差分を補正。</td></tr>
+<tr><td><strong>VLLMBufferLayerwiseGPUConnector</strong></td><td>CacheBlend対応のLayerwiseコネクタ。ダブルバッファ+RoPE補正+gap zeroing。</td></tr>
 </tbody>
 </table>
 </div>
@@ -266,7 +270,13 @@
 <tr><td><strong>SaveSpec</strong></td><td>保存仕様。<code>skip_leading_tokens</code>（キャッシュ済みプレフィックス長）、<code>can_save</code>（保存可否）。</td></tr>
 <tr><td><strong>ConnectorMetadata</strong></td><td>Scheduler→Worker間で渡されるメタデータ。各リクエストのtoken_ids, slot_mapping, LoadSpec, SaveSpecを含む。</td></tr>
 <tr><td><strong>kv_role</strong></td><td><code>"kv_both"</code>（default）/<code>"kv_producer"</code>/<code>"kv_consumer"</code>。producer時はskip_leading_tokens=0。</td></tr>
-<tr><td><strong>LookupClient</strong></td><td>Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。</td></tr>
+<tr><td><strong>LookupClient</strong></td><td>Scheduler側でキャッシュ存在確認を行うZMQベースクライアント。<code>lmcache_lookup_client.py</code></td></tr>
+<tr><td><strong>LookupServer</strong></td><td>Worker側でLookupClientからのZMQ REQ/REPを受け付け、StorageManager.async_lookup_and_prefetchを実行。</td></tr>
+<tr><td><strong>EventManager</strong></td><td>非同期イベント（LOADING等）のFutureを管理。lookup_idでprefetch結果とretrieve消費を紐付け。</td></tr>
+<tr><td><strong>token_mask</strong></td><td>retrieve時のマスク。False=vLLMがキャッシュ済み（chunk_sizeの倍数に切り下げ）、True=LMCacheからロード対象。</td></tr>
+<tr><td><strong>ret_mask</strong></td><td>retrieve結果のマスク。True=LMCacheから実際に取得成功、False=未取得。Engine内部で構築。</td></tr>
+<tr><td><strong>write-back</strong></td><td>StorageManager.batched_get()がリモートバックエンドから取得した場合、自動的にLocalCPUBackendにコピーする動作。</td></tr>
+<tr><td><strong>get_block_mapping</strong></td><td>チャンクの所在バックエンドをprefix match方式で特定するStorageManagerメソッド。</td></tr>
 </tbody>
 </table>
 </div>

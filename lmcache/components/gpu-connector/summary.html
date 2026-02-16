@@ -36,7 +36,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-9f076d22.js"></script>
@@ -248,6 +248,37 @@ vLLMのページドメモリレイアウトからslot_mappingを使って正し�
     # 標準: [num_tokens, 2, hidden_dim_size]
     # MLA:  [num_tokens, hidden_dim_size]
 </code></pre>
+<h2 id="主要メソッドretrieve方向"><a class="header" href="#主要メソッドretrieve方向">主要メソッド（Retrieve方向）</a></h2>
+<h3 id="batched_to_gpuvllmpagedmemgpuconnectorv2--bulk"><a class="header" href="#batched_to_gpuvllmpagedmemgpuconnectorv2--bulk">batched_to_gpu()（VLLMPagedMemGPUConnectorV2 — Bulk）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:359</code></p>
+<pre><code class="language-python">def batched_to_gpu(memory_objs, starts, ends, **kwargs)
+</code></pre>
+<p><code>load_stream</code>上で全チャンクの<code>to_gpu()</code>を順次実行し、最後に<code>load_stream.synchronize()</code>。
+<code>to_gpu()</code>は<code>lmc_ops.multi_layer_kv_transfer()</code>でMemoryObj → pagedメモリに<strong>全レイヤー一括</strong>転送。</p>
+<h3 id="batched_to_gpuvllmbufferlayerwisegpuconnector--layerwise"><a class="header" href="#batched_to_gpuvllmbufferlayerwisegpuconnector--layerwise">batched_to_gpu()（VLLMBufferLayerwiseGPUConnector — Layerwise）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/gpu_connector/gpu_connectors.py:683</code></p>
+<p><strong>Generator関数</strong>。<code>num_layers + 2</code>回イテレーションの<strong>3段パイプライン</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>段</th><th>操作</th><th>ストリーム</th></tr>
+</thead>
+<tbody>
+<tr><td>Load</td><td>CPU pinned → GPUバッファに<code>copy_(non_blocking=True)</code></td><td><code>load_stream</code></td></tr>
+<tr><td>Compute</td><td>RoPE位置補正 + gap zeroing</td><td>default stream</td></tr>
+<tr><td>Write</td><td><code>lmc_ops.single_layer_kv_transfer()</code>でバッファ→pagedメモリ</td><td>default stream</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>ダブルバッファ</strong>: <code>compute_gpu_buffer_obj</code>と<code>load_gpu_buffer_obj</code>をping-pongし、DMAとRoPE計算をオーバーラップ。</p>
+<p><strong>RoPE位置補正</strong>（<code>cache_positions=True</code>時）:</p>
+<ul>
+<li><code>MemoryObjMetadata.cached_positions</code>から保存時位置を取得</li>
+<li><code>fused_rotary_emb(old_positions, new_positions, K_tensor)</code>で差分補正</li>
+<li>これにより異なるコンテキスト位置でもKVキャッシュを再利用可能</li>
+</ul>
+<p><strong>gap zeroing</strong>: 連続しないチャンク間のギャップ位置をゼロ埋め。</p>
+<p><strong><code>mem_obj_consumer.send()</code>パターン</strong>: Engine側から<code>send(mem_objs_layer)</code>でデータを受け取る（Generator.send）。<code>yield</code>でデータ受領→次イテレーションで処理。</p>
 <h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）</li>
@@ -259,6 +290,7 @@ vLLMのページドメモリレイアウトからslot_mappingを使って正し�
 <li>中間GPUバッファ（<code>use_gpu=True</code>）は<strong>全チャンクを結合してから一括転送</strong>するため、チャンクごとのカーネル起動オーバーヘッドを削減</li>
 <li><code>kvcaches</code>はvLLMの<code>kv_cache</code>リスト（<code>list[Tensor]</code>、レイヤーごとに1テンソル）を<code>initialize_kvcaches_ptr()</code>で受け取る</li>
 <li>GPUバッファは<code>gpu_buffer_allocator</code>から確保し、使用後に<code>ref_count_down()</code>で解放</li>
+<li><strong>Retrieve時のCUDAカーネル</strong>: Bulk=<code>multi_layer_kv_transfer</code>（全レイヤー一括）、Layerwise=<code>single_layer_kv_transfer</code>（store=Falseで逆方向=メモリ→paged）</li>
 </ul>
 
                     </main>

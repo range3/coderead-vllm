@@ -36,7 +36,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-9f076d22.js"></script>
@@ -248,9 +248,17 @@ vLLMのプレフィックスキャッシュと<strong>同一のハッシュア�
 )
 </code></pre>
 <p><code>save_only_first_rank</code>はMLA（Multi-head Latent Attention）使用時に有効。world_sizeを1に固定することで、異なるTP並列度でもキーが一致する。</p>
+<h2 id="retrieve時の利用"><a class="header" href="#retrieve時の利用">Retrieve時の利用</a></h2>
+<p>Retrieveパスでも同じ<code>process_tokens()</code>が使用される:</p>
+<ul>
+<li><strong>Bulk retrieve</strong>: <code>_process_tokens_internal()</code>と<code>_async_process_tokens_internal()</code>の両方で呼ばれ、チャンクキーを生成</li>
+<li><strong>Layerwise retrieve</strong>: <code>retrieve_layer()</code>内で呼ばれ、layer 0のキーで<code>StorageManager.contains()</code>判定</li>
+<li><strong>LookupClient</strong>: Schedulerプロセス内でも独自の<code>ChunkedTokenDatabase</code>インスタンスを持ち、<code>process_tokens(make_key=False)</code>でハッシュのみ計算してZMQ経由でLookupServerに送信</li>
+<li><strong>非同期prefetch</strong>: <code>async_process_tokens_internal()</code>ではハッシュ再計算が発生する（TODO: スキップ最適化の余地あり）</li>
+</ul>
 <h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
 <ul>
-<li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）</li>
+<li><strong>上流</strong>: LMCacheEngine（store_layer/store/retrieve等で呼び出し）、LookupClient（lookup時）</li>
 <li><strong>下流</strong>: なし（純粋な変換コンポーネント）</li>
 <li><strong>依存</strong>: vLLMのハッシュ関数ライブラリ</li>
 </ul>

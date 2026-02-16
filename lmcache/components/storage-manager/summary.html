@@ -36,7 +36,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-9f076d22.js"></script>
@@ -254,11 +254,42 @@ L1 CPUメモリキャッシュの実装（LocalCPUBackend）。</p>
 <li><code>MemoryAllocator</code>がプール管理（事前確保 or 動的確保）</li>
 <li>ref_countで共有管理、0になるとプールに返却</li>
 </ul>
+<h2 id="storagemanagerretrieve方向"><a class="header" href="#storagemanagerretrieve方向">StorageManager（Retrieve方向）</a></h2>
+<h3 id="batched_get"><a class="header" href="#batched_get">batched_get()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:484</code></p>
+<pre><code class="language-python">def batched_get(
+    keys: List[CacheEngineKey],
+    location: Optional[str] = None,
+) -&gt; List[Optional[MemoryObj]]
+</code></pre>
+<p>指定locationのバックエンドから<code>batched_get_blocking(keys)</code>でMemoryObjを取得。
+<strong>write-back</strong>: リモートバックエンドから取得した場合、<code>LocalCPUBackend</code>が存在すれば自動的にL1にコピー。</p>
+<h3 id="layerwise_batched_get"><a class="header" href="#layerwise_batched_get">layerwise_batched_get()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:519</code></p>
+<pre><code class="language-python">def layerwise_batched_get(
+    keys: List[List[CacheEngineKey]],  # [num_layers][num_chunks]
+    location: Optional[str] = None,
+) -&gt; Generator[Future, None, None]
+</code></pre>
+<p>レイヤー単位で非同期取得。各レイヤーの<code>batched_get_non_blocking()</code>をasyncio.create_taskで投入し、Futureをyield。
+デフォルトlocationは<code>"LocalCPUBackend"</code>。</p>
+<h3 id="get_block_mapping"><a class="header" href="#get_block_mapping">get_block_mapping()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:908</code></p>
+<p>チャンクリストを受け取り、各チャンクの所在バックエンドを特定。<strong>prefix match方式</strong>: 各バックエンドの<code>batched_contains()</code>で先頭からの連続ヒット数を取得し、残りを次のバックエンドに渡す。</p>
+<h3 id="async_lookup_and_prefetch"><a class="header" href="#async_lookup_and_prefetch">async_lookup_and_prefetch()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/storage_manager.py:641</code></p>
+<p>非同期プリフェッチの中核。LookupServerから呼ばれ、全バックエンドに対してprefix match方式で<code>batched_async_contains()</code>→<code>batched_get_non_blocking()</code>を実行。結果は<code>EventManager</code>にFutureとして登録。</p>
+<h2 id="localcpubackendretrieve方向"><a class="header" href="#localcpubackendretrieve方向">LocalCPUBackend（Retrieve方向）</a></h2>
+<h3 id="batched_get_non_blocking"><a class="header" href="#batched_get_non_blocking">batched_get_non_blocking()</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/storage_backend/local_cpu_backend.py:216</code></p>
+<p><code>cpu_lock</code>下で<code>hot_cache[key]</code>を取得し、<code>ref_count_up()</code>してからリストで返す。<strong>同期的に完了</strong>する（CPU上のOrderedDictアクセスのみ）。</p>
+<h3 id="batched_get_blocking"><a class="header" href="#batched_get_blocking">batched_get_blocking()</a></h3>
+<p>抽象基底クラス<code>LMCStorageBackendInterface</code>のデフォルト実装を継承。個別<code>get_blocking()</code>のループ。</p>
 <h2 id="バックエンド登録"><a class="header" href="#バックエンド登録">バックエンド登録</a></h2>
 <p>StorageManagerの<code>storage_backends</code>は<code>OrderedDict</code>で登録順=優先度:</p>
 <pre><code>LocalCPUBackend (L1) → LocalDiskBackend (L2) → RemoteBackend (L3)
 </code></pre>
-<p><code>batched_put()</code>は全バックエンドに配布。<code>get()</code>は最初にヒットしたバックエンドから取得。</p>
+<p><code>batched_put()</code>は全バックエンドに配布。<code>batched_get()</code>は指定locationから取得（リモート→L1 write-back付き）。<code>get_block_mapping()</code>はprefix match順。</p>
 <h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheEngine（batched_allocate/batched_put/contains等）</li>

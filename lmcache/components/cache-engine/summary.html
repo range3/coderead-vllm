@@ -36,7 +36,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-27792acf.js";
+            window.path_to_searchindex_js = "../../../searchindex-8bb2998d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-9f076d22.js"></script>
@@ -232,6 +232,62 @@ KVキャッシュのstore/retrieveオペレーションを実行する。</p>
 </tbody>
 </table>
 </div>
+<h2 id="retrieve-api2つのエントリポイント"><a class="header" href="#retrieve-api2つのエントリポイント">Retrieve API（2つのエントリポイント）</a></h2>
+<h3 id="retrieve--bulkデフォルト"><a class="header" href="#retrieve--bulkデフォルト">retrieve() — Bulk（デフォルト）</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:708</code></p>
+<pre><code class="language-python">def retrieve(
+    tokens: Union[Tensor, list[int]],
+    mask: Optional[Tensor] = None,
+    **kwargs,  # kvcaches, slot_mapping, request_configs, req_id
+) -&gt; torch.Tensor  # ret_mask (bool, CPU)
+</code></pre>
+<p>全レイヤーのKVキャッシュを一括取得し、GPUのページドメモリに書き戻す。</p>
+<p><strong>処理フロー</strong>:</p>
+<ol>
+<li><code>_process_tokens_internal()</code>（同期）or <code>_async_process_tokens_internal()</code>（非同期prefetch済み）でMemoryObjを取得</li>
+<li><code>save_only_first_rank</code>時は<code>_broadcast_or_receive_memory_objs()</code>で他ランクにブロードキャスト</li>
+<li><code>GPUConnector.batched_to_gpu(memory_objs, starts, ends, ...)</code>で一括GPU転送</li>
+<li><code>memory_obj.ref_count_down()</code>で解放</li>
+<li><code>remove_after_retrieve</code>時は<code>StorageManager.remove(key)</code>で即座に削除</li>
+</ol>
+<p><strong>_process_tokens_internal()</strong>（同期パス）:</p>
+<ol>
+<li><code>process_tokens()</code>でチャンク分割</li>
+<li><code>get_block_mapping()</code>でチャンクの所在バックエンドをprefix matchで特定</li>
+<li><code>batched_get(keys, location)</code>でバックエンドからMemoryObj取得</li>
+<li>取得失敗時は<code>last_failed_block_start</code>以降を全て無効化</li>
+</ol>
+<p><strong>_async_process_tokens_internal()</strong>（非同期パス）:</p>
+<ol>
+<li><code>event_manager.pop_event(LOADING, req_id)</code>でprefetch済みFutureを取得</li>
+<li><code>future.result()</code>でtier×chunkのMemoryObjマップを構築</li>
+<li><code>process_tokens()</code>で再チャンク分割しマッチング</li>
+<li>未使用MemoryObjは即座に<code>ref_count_down()</code></li>
+</ol>
+<h3 id="retrieve_layer--layerwise"><a class="header" href="#retrieve_layer--layerwise">retrieve_layer() — Layerwise</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:851</code></p>
+<pre><code class="language-python">def retrieve_layer(
+    tokens: Union[Tensor, list[int]],
+    mask: Optional[Tensor] = None,
+    **kwargs,  # kvcaches, slot_mapping, sync
+) -&gt; Generator[Optional[Tensor], None, None]
+</code></pre>
+<p>レイヤー単位でKVキャッシュを取得するGenerator関数。</p>
+<p><strong>初期化フェーズ</strong>:</p>
+<ol>
+<li><code>process_tokens()</code>でチャンク分割</li>
+<li><code>StorageManager.contains(layer0_key)</code>でヒット＋location統一チェック</li>
+<li>キーをlayer-major形式に転置: <code>keys[chunk][layer]</code> → <code>keys_layer_major[layer][chunk]</code></li>
+<li><code>StorageManager.layerwise_batched_get(keys_layer_major, location)</code> → <code>get_generator</code></li>
+<li><code>GPUConnector.batched_to_gpu(starts, ends, ...)</code> → <code>mem_obj_consumer</code> Generator</li>
+</ol>
+<p><strong>レイヤーループ</strong>:</p>
+<pre><code>yield → task = next(get_generator) → mem_objs = task.result() → mem_obj_consumer.send(mem_objs)
+</code></pre>
+<p>最終yield時に<code>ret_mask</code>を返す。<code>ref_count_down()</code>は全レイヤー完了後にバッチ実行。</p>
+<h3 id="lookup--ヒット数問い合わせ"><a class="header" href="#lookup--ヒット数問い合わせ">lookup() — ヒット数問い合わせ</a></h3>
+<p><strong>参照</strong>: <code>target/LMCache/lmcache/v1/cache_engine.py:992</code></p>
+<p>Scheduler側から呼ばれるヒット数チェック。<code>process_tokens()</code>でチャンク分割し、<code>StorageManager</code>の<code>contains()</code>/<code>batched_contains()</code>でプレフィックスマッチ。</p>
 <h2 id="上流下流"><a class="header" href="#上流下流">上流・下流</a></h2>
 <ul>
 <li><strong>上流</strong>: LMCacheConnectorV1Impl（store_layer/retrieve呼び出し）</li>
