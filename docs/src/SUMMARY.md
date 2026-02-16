@@ -70,6 +70,9 @@
 - [LMCacheEngine](lmcache/components/cache-engine/summary.md)
 - [GPUConnector](lmcache/components/gpu-connector/summary.md)
 - [StorageManager + LocalCPUBackend](lmcache/components/storage-manager/summary.md)
+  - [CachePolicy — Eviction戦略](lmcache/components/storage-manager/cache-policy.md)
+  - [LocalDiskBackend — L2ディスクバックエンド](lmcache/components/storage-manager/local-disk-backend.md)
+  - [メモリアロケータ階層](lmcache/components/storage-manager/memory-allocator.md)
 - [TokenDatabase（ChunkedTokenDatabase）](lmcache/components/token-database/summary.md)
 - [vLLM統合（LMCacheConnector）](lmcache/components/vllm-integration/summary.md)
 

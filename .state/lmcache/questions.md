@@ -2,12 +2,19 @@
 
 ## Phase 2以降
 
-- [ ] LocalCPUBackend の詳細実装（メモリ確保戦略、Eviction実装）
-- [ ] 独自ストレージバックエンドを作る場合に実装すべきインターフェースは？
 - [ ] CacheBlend の Blender がレイヤー単位でどう計算を実行するか？
 - [ ] Serde の CacheGen 圧縮率と性能特性は？
 - [ ] In-Process モードと MP モードでの LMCacheEngine の生成・利用パスの違いは？
 - [ ] async_lookup_and_prefetchの全バックエンド横断prefetchでtier間のchunk分配は具体的にどう動くか？
+- [ ] RemoteBackendのhealth monitoring + reconnect戦略の詳細は？
+- [ ] on_complete_callbackの実際の利用パターンは？（どのバックエンドが連鎖storeに使っているか）
+
+## Phase 2で解決済み
+
+- [x] LocalCPUBackend の詳細実装（メモリ確保戦略、Eviction実装）
+  → MixedMemoryAllocator（PinMemory+Buffer）がデフォルト。TensorMemoryAllocator explicit free list + AddressManager(SortedList, 4KB align, coalesce)。Evictionはcache_policy.get_evict_candidates()→batched_remove()→ref_count_down()→allocator.free()のループ。busy_loop=Trueでretrieve時は待機、store時は即座返却
+- [x] 独自ストレージバックエンドを作る場合に実装すべきインターフェースは？
+  → StoragePluginInterface継承。必須7メソッド(contains/exists_in_put_tasks/batched_submit_put_task/get_blocking/pin/unpin/remove/get_allocator_backend/close)。非同期prefetch対応にはbatched_async_contains+batched_get_non_blockingも実装。get_allocator_backend()→local_cpu_backendを返す
 
 ## Phase 1で解決済み
 
