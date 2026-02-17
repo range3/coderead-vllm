@@ -47,6 +47,7 @@
 | `docs/src/investigations/process-architecture.md` | プロセスアーキテクチャ（TP=2構成）。4プロセス構成、3種通信、ShmRingBufferロックフリー設計、MessageQueue詳細（enqueue/dequeueバイトフォーマット、pickle5 oob buffers、メモリフェンスプロトコル、SpinTimer）、Worker→EngineCore結果返却パス（response_mq構成、output_rankフィルタリング、async_scheduling、non_block/FutureWrapper） | [DEEP] | [VERIFIED] | 2026-02-14 |
 | `docs/src/investigations/lmcache-integration.md` | LMCache統合調査。チャンク単位KV保存（256トークン/チャンク）、CacheEngineKey（プレフィックスハッシュ）、3層ストレージ階層（CPU/Disk/Remote）、15+リモートコネクタ。vLLMアダプタ（native/latest 2パス分岐）、RequestTracker/ReqMeta/LoadSpec/SaveSpec、GPUConnector 3種、KV形状、セーブ判定ロジック、Disaggregated Serving、設定体系、CacheBlend概要（詳細は別ドキュメント） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 | `docs/src/investigations/cacheblend-implementation.md` | CacheBlend実装調査。vLLM本体パッチ必須（VLLMModelTracker登録）、独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（中間バッファ+RoPE補正+パイプライン）、対応モデル3種（Llama/Qwen2/Qwen3）、BlendServer（段落分割+段落単位KV保存/ルックアップ）、制約多数（TP/PP未対応、プレフィックスキャッシュ非互換、バッチサイズ1） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
+| `docs/src/investigations/zmq-communication-patterns.md` | ZMQ通信パターン横断調査。16ファイル5カテゴリ（Frontend↔EngineCore ROUTER/DEALER+PUSH/PULL、DPCoordinator XPUB/XSUB+PULL、ShmRingBufferフォールバック XPUB/SUB、KV Events PUB+ROUTER replay、KV Transfer ROUTER/DEALER）。10種ソケットタイプ使用一覧。信頼性分析: HWM=0+IPC+プロセス監視でコア通信は実質喪失なし、KV Eventsはリプレイ、KV Transferはタイムアウト+リトライ | [MEDIUM] | [VERIFIED] | 2026-02-18 |
 
 ## 外部リソース (target/ 内参照用)
 

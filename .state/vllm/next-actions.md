@@ -41,6 +41,12 @@
 
 ## 完了
 
+- [x] Phase 3a: ZMQ通信パターン横断調査（2026-02-18）
+  - 16ファイル5カテゴリ: Frontend↔EngineCore / DPCoordinator / ShmRingBufferフォールバック / KV Events / KV Transfer
+  - 10種ZMQソケットタイプの使用一覧
+  - 信頼性分析: コア通信はHWM=0+IPC+プロセス監視で実質喪失なし、補助パスはベストエフォート+リカバリ
+  - `docs/src/investigations/zmq-communication-patterns.md`
+
 - [x] Phase 2g: KV Transfer / LMCache 調査（2026-02-15）
   - KVConnectorBase_V1: 7 abstract メソッド、2ロール分離（Scheduler/Worker）
   - KVConnectorFactory: 10個の登録済みコネクタ、遅延ロード

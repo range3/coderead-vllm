@@ -2,7 +2,7 @@
 
 ## 現在のフェーズ
 
-Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了、EncoderCache MEDIUM完了、ECConnector MEDIUM完了、Executor MEDIUM完了、GPUModelRunner MEDIUM完了、KV Transfer MEDIUM完了）
+Phase 2/3 並行: コンポーネント別深堀り + 横断調査（KVCacheManager DEEP完了、マルチモーダル MEDIUM完了、EncoderCache MEDIUM完了、ECConnector MEDIUM完了、Executor MEDIUM完了、GPUModelRunner MEDIUM完了、KV Transfer MEDIUM完了、ZMQ通信パターン横断調査完了）
 
 ## カバレッジマップ
 
@@ -25,6 +25,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | EncoderCache | [MEDIUM] | 2026-02-14 | `docs/src/components/encoder-cache/summary.md` |
 | ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/components/ec-connector/summary.md` + investigations 2件 |
 | マルチモーダル | [MEDIUM→DEEP(§3)] | 2026-02-17 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
+| ZMQ通信パターン（横断調査） | [MEDIUM] | 2026-02-18 | `docs/src/investigations/zmq-communication-patterns.md` |
 
 ## セッション履歴
 
@@ -47,3 +48,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-15 | 2g | KV Transfer / LMCache調査。KVConnectorBase_V1（7 abstract、2ロール分離）、KVConnectorFactory（10コネクタ）、Scheduler統合（WAITING_FOR_REMOTE_KVS）、Worker/Mixin統合、KV Cache Events、LMCacheチャンク単位保存・3層ストレージ・vLLMアダプタ。[SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260215-phase2g-kv-transfer-lmcache.md` |
 | 2026-02-15 | 2g+ | CacheBlend実装調査。独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（RoPE補正+パイプライン）、vLLM本体パッチ必須（VLLMModelTracker登録）、対応モデル3種のみ、BlendServer段落分割、制約多数 | `.state/sessions/20260215-phase2g+-cacheblend.md` |
 | 2026-02-17 | 2h | mm_hash計算方法調査。hash_kwargs()/serialize_item()/iter_item_to_bytes()の3層構造、画像3シリアライズパス（EXIF UUID/MediaWithBytes/ピクセル）、_hash_mm_items()のmm_uuids分岐、identifier vs mm_hashの使い分け、プレフィックスキャッシュextra_keys連携、Gemma3はデフォルト実装。mm-processing.md §3を[MEDIUM]→[DEEP]昇格 | `.state/sessions/20260217-phase2h-mm-hash.md` |
+| 2026-02-18 | 3a | ZMQ通信パターン横断調査。16ファイル5カテゴリ（Frontend↔EngineCore/DPCoordinator/ShmRingBufferフォールバック/KV Events/KV Transfer）、10種ソケットタイプ使用一覧、信頼性分析（HWM=0+IPC+プロセス監視でコア通信は実質喪失なし、補助パスはベストエフォート+リカバリ） | `.state/sessions/20260218-phase3a-zmq-patterns.md` |

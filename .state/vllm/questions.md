@@ -18,7 +18,7 @@
 ## 解決済み
 
 - [x] GPUModelRunnerが6277行もある理由 — **回答**: バッチ状態管理、入力準備、Attentionメタデータ、モデルフォワード（CUDAGraph対応）、サンプリング、KV Transfer、Speculative Decoding、PP、LoRA、マルチモーダルの10+責務を集約。詳細は `docs/src/components/gpu-model-runner/summary.md`
-- [x] ZMQ IPCを採用した理由は何か？ — **回答**: EngineCoreが別プロセスで動作し、GIL回避とスケジューリング/GPU実行の並行を実現。ZMQ ROUTER/PULLソケット + msgpackシリアライゼーション。EngineCore↔WorkerはSharedMemory MQ（低レイテンシ）、Worker間はNCCL（GPU直接通信）。通信方式選択理由の詳細は `docs/src/investigations/process-architecture.md`
+- [x] ZMQ IPCを採用した理由は何か？ — **回答**: EngineCoreが別プロセスで動作し、GIL回避とスケジューリング/GPU実行の並行を実現。ZMQ ROUTER/PULLソケット + msgpackシリアライゼーション。EngineCore↔WorkerはSharedMemory MQ（低レイテンシ）、Worker間はNCCL（GPU直接通信）。通信方式選択理由の詳細は `docs/src/investigations/process-architecture.md`。ZMQ通信パターンの体系的調査は `docs/src/investigations/zmq-communication-patterns.md`
 - [x] v0→v1の移行はいつ、なぜ行われたか？ — **回答**: `vllm/engine/` がv1への1行エイリアス。v1が現行本体。移行の時期・理由は未調査だが、プロセス分離やContinuous Batching改善が動機と推測 [INFERRED]
 - [x] Scheduler.schedule() のトークン予算割当はどのように動作するか？ — **回答**: `token_budget = max_num_scheduled_tokens` で初期化し、Phase 1（RUNNING）→ Phase 2（WAITING）で各リクエストのスケジュール時に消費。Unified Compute Modelで統一管理。詳細は `docs/src/components/scheduler/summary.md`
 - [x] SchedulerOutput に含まれる情報の全体像は？ — **回答**: 15フィールド。NewRequestData（初回フルデータ）と CachedRequestData（差分のみ）の2種。詳細は `docs/src/architecture/data-flow.md` の境界データ構造セクション

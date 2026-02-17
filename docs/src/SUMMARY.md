@@ -48,6 +48,7 @@
 - [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](vllm/investigations/gemma3-vision-pipeline.md)
 - [LMCache 統合調査報告 [MEDIUM] [VERIFIED]](vllm/investigations/lmcache-integration.md)
 - [プロセスアーキテクチャ（TP=2構成）](vllm/investigations/process-architecture.md)
+- [ZMQ 通信パターンと信頼性分析](vllm/investigations/zmq-communication-patterns.md)
 
 # vLLM: 付録
 
