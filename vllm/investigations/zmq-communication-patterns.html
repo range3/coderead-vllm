@@ -1,0 +1,563 @@
+<!DOCTYPE HTML>
+<html lang="ja" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>ZMQ 通信パターンと信頼性分析 - コードリーディング: vLLM &amp; LMCache</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../../theme/custom-9cb14b51.css">
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-2b27895b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-51e995a9.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">コードリーディング: vLLM &amp; LMCache</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="zmq-通信パターンと信頼性分析"><a class="header" href="#zmq-通信パターンと信頼性分析">ZMQ 通信パターンと信頼性分析</a></h1>
+<blockquote>
+<p><strong>深度</strong>: [MEDIUM]
+<strong>確信度</strong>: [VERIFIED]
+<strong>日付</strong>: 2026-02-18
+<strong>きっかけ</strong>: vLLM全体のプロセス間通信基盤であるZMQの使用パターンを体系的に理解し、メッセージ喪失時の挙動を分析する</p>
+</blockquote>
+<h2 id="問い"><a class="header" href="#問い">問い</a></h2>
+<ol>
+<li>vLLMはZMQのどのソケットタイプ・通信パターンを使っているか？</li>
+<li>ZMQにはネイティブな到達保証やリトライがないが、メッセージが喪失した場合はどうなるか？</li>
+<li>vLLM側で信頼性を担保する仕組みはあるか？</li>
+</ol>
+<h2 id="zmq使用箇所の全体像"><a class="header" href="#zmq使用箇所の全体像">ZMQ使用箇所の全体像</a></h2>
+<p>vLLM（v1）では16ファイルでZMQが使用されており、以下の5カテゴリに分類できる。</p>
+<h3 id="カテゴリ一覧"><a class="header" href="#カテゴリ一覧">カテゴリ一覧</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>カテゴリ</th><th>ファイル数</th><th>トランスポート</th><th>用途</th></tr>
+</thead>
+<tbody>
+<tr><td>Frontend↔EngineCore通信</td><td>5</td><td>IPC / TCP</td><td>コアのリクエスト/レスポンス通信</td></tr>
+<tr><td>DP Coordinator</td><td>1</td><td>IPC / TCP</td><td>Data Parallel負荷分散・Wave調整</td></tr>
+<tr><td>MessageQueue (ShmRingBuffer)</td><td>1</td><td>IPC</td><td>SharedMemoryオーバーフロー時のフォールバック</td></tr>
+<tr><td>KV Cache Events</td><td>1</td><td>TCP / IPC</td><td>外部サービスへのKVイベント配信</td></tr>
+<tr><td>KV Transfer コネクタ</td><td>8</td><td>TCP</td><td>ノード間KVキャッシュ転送の制御チャネル</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="1-frontendenginecore通信-verified"><a class="header" href="#1-frontendenginecore通信-verified">1. Frontend↔EngineCore通信 [VERIFIED]</a></h2>
+<p>最も重要な通信パス。フロントエンド（AsyncLLM/LLM）とEngineCore間のリクエスト送信・レスポンス受信を担う。</p>
+<h3 id="ソケット構成"><a class="header" href="#ソケット構成">ソケット構成</a></h3>
+<pre><code>Frontend (MPClient)              EngineCore (EngineCoreProc)
+┌─────────────────┐              ┌─────────────────┐
+│  input_socket    │ ──ROUTER──► │  input_socket    │
+│  (zmq.ROUTER,    │              │  (zmq.DEALER,    │
+│   bind=True)     │              │   bind=False)    │
+│                  │              │                  │
+│  output_socket   │ ◄──PULL──── │  output_socket   │
+│  (zmq.PULL,      │              │  (zmq.PUSH,      │
+│   bind=False)    │              │   bind=True)     │ ← linger=4000ms
+└─────────────────┘              └─────────────────┘
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:510-514</code> (ソケット作成)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:1199-1206</code> (EngineCore側input)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:1286-1296</code> (EngineCore側output)</p>
+<h3 id="パターン-routerdealer"><a class="header" href="#パターン-routerdealer">パターン: ROUTER/DEALER</a></h3>
+<ul>
+<li>
+<p><strong>リクエスト送信</strong>: Frontend(ROUTER) → EngineCore(DEALER)</p>
+<ul>
+<li>ROUTERはidentityベースのルーティングを行う。DPモードでは複数EngineCoreへの振り分けに使用</li>
+<li>EngineCoreのidentityはDP rankの2バイトリトルエンディアン表現</li>
+<li>メッセージ形式: <code>(identity, request_type, serialized_data, [oob_buffers...])</code></li>
+</ul>
+</li>
+<li>
+<p><strong>レスポンス返却</strong>: EngineCore(PUSH) → Frontend(PULL)</p>
+<ul>
+<li>PUSH/PULLはunidirectionalで、identityルーティングなし</li>
+<li>複数API serverがある場合、各API serverに別々のPUSH→PULLペア</li>
+<li><code>client_index</code>で宛先のPUSHソケットを選択</li>
+</ul>
+</li>
+</ul>
+<h3 id="hwmhigh-water-mark設定"><a class="header" href="#hwmhigh-water-mark設定">HWM（High Water Mark）設定</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/utils/network_utils.py:260-313</code> (make_zmq_socket)</p>
+<pre><code class="language-python"># PULL, DEALER, ROUTER
+socket.setsockopt(zmq.RCVHWM, 0)  # 受信HWM無制限
+socket.setsockopt(zmq.RCVBUF, buf_size)  # 0.5GB or system default
+
+# PUSH, DEALER, ROUTER
+socket.setsockopt(zmq.SNDHWM, 0)  # 送信HWM無制限
+socket.setsockopt(zmq.SNDBUF, buf_size)  # 0.5GB or system default
+</code></pre>
+<p><strong>重要</strong>: HWMが0（無制限）に設定されているため、<strong>送信側でのメッセージドロップは発生しない</strong>。ZMQはHWMに達した場合にメッセージをドロップするが、HWM=0ではカーネルバッファが許す限りキューイングされる。</p>
+<h3 id="ハンドシェイクプロトコル"><a class="header" href="#ハンドシェイクプロトコル">ハンドシェイクプロトコル</a></h3>
+<p>起動時の3段階ハンドシェイク:</p>
+<ol>
+<li><strong>EngineCore→Frontend</strong>: DEALER→ROUTERで空メッセージ<code>b""</code>送信（ROUTER側がidentityを認識するため必須）</li>
+<li><strong>EngineCore→Frontend</strong>: <code>"HELLO"</code>メッセージ送信（DP rank、local/remote情報）</li>
+<li><strong>Frontend→EngineCore</strong>: <code>EngineHandshakeMetadata</code>返却（ZMQアドレス、parallel_config）</li>
+<li><strong>EngineCore→Frontend</strong>: <code>"READY"</code>メッセージ送信（初期化完了、num_gpu_blocks報告）</li>
+</ol>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/utils.py:937-1091</code> (wait_for_engine_startup)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:870-920</code> (EngineCore側ハンドシェイク)</p>
+<h3 id="ゼロコピー送信とmessagetracker"><a class="header" href="#ゼロコピー送信とmessagetracker">ゼロコピー送信とMessageTracker</a></h3>
+<p>メッセージにテンソルのバッキングバッファが含まれる場合、<code>send_multipart(copy=False, track=True)</code>でゼロコピー送信を行う。<code>zmq.MessageTracker</code>でZMQがバッファを使い終わるまで参照を保持する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core_client.py:581-587</code> (pending_messages管理)
+<strong>参照</strong>: <code>target/vllm/vllm/v1/engine/core.py:1322-1332</code> (output側のpending管理+バッファ再利用)</p>
+<h2 id="2-dp-coordinator通信-verified"><a class="header" href="#2-dp-coordinator通信-verified">2. DP Coordinator通信 [VERIFIED]</a></h2>
+<p>Data Parallel環境での負荷分散統計の集約・配信とWave調整を担う。</p>
+<h3 id="ソケット構成-1"><a class="header" href="#ソケット構成-1">ソケット構成</a></h3>
+<pre><code>Frontend(s)                DPCoordinator            EngineCore(s)
+┌──────────┐              ┌──────────────┐          ┌──────────┐
+│stats_upd │◄──XSUB────── │publish_front │          │          │
+│(zmq.XSUB)│              │(zmq.XPUB,    │          │          │
+│          │──────────────►│ bind=True)   │          │          │
+│          │ 新リクエスト通知│              │          │          │
+│          │              │              │          │          │
+│          │              │output_back   │◄──PUSH── │coord_out │
+│          │              │(zmq.PULL,    │          │(zmq.PUSH)│
+│          │              │ bind=True)   │          │          │
+│          │              │              │          │          │
+│          │              │publish_back  │──XPUB──► │coord_in  │
+│          │              │(zmq.XPUB,    │          │(zmq.XSUB)│
+│          │              │ bind=True)   │          │          │
+└──────────┘              └──────────────┘          └──────────┘
+</code></pre>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/coordinator.py:113-395</code></p>
+<h3 id="3つの通信チャネル"><a class="header" href="#3つの通信チャネル">3つの通信チャネル</a></h3>
+<ol>
+<li><strong>publish_front (XPUB)</strong>: Coordinator→Frontend。統計情報（各エンジンのwaiting/running数）とwave状態を配信</li>
+<li><strong>output_back (PULL)</strong>: EngineCore→Coordinator。各エンジンのScheduler統計とwave完了通知</li>
+<li><strong>publish_back (XPUB)</strong>: Coordinator→EngineCore。wave開始指示のブロードキャスト</li>
+</ol>
+<h3 id="xpubxsubパターン"><a class="header" href="#xpubxsubパターン">XPUB/XSUBパターン</a></h3>
+<p>通常のPUB/SUBと異なり、XPUB/XSUBはサブスクリプションメッセージを可視化できる:</p>
+<ul>
+<li><strong>XPUB</strong>: subscription/unsubscriptionメッセージを受信可能 → 全サブスクライバの接続確認に使用</li>
+<li><strong>XSUB</strong>: 明示的にsubscriptionメッセージを送信可能 → 動的なsubscribe制御に使用</li>
+</ul>
+<h2 id="3-messagequeue-shmringbuffer-zmqフォールバック-verified"><a class="header" href="#3-messagequeue-shmringbuffer-zmqフォールバック-verified">3. MessageQueue (ShmRingBuffer) ZMQフォールバック [VERIFIED]</a></h2>
+<p>EngineCore↔Worker間のSharedMemory通信で、メッセージがShmRingBufferの最大チャンクサイズ（デフォルト24MiB）を超えた場合にZMQ PUB/SUBへフォールバックする。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py:590-594</code></p>
+<h3 id="オーバーフロー判定"><a class="header" href="#オーバーフロー判定">オーバーフロー判定</a></h3>
+<pre><code class="language-python">if total_bytes + len(all_buffers[0]) &gt;= self.buffer.max_chunk_bytes:
+    with self.acquire_write(timeout) as buf:
+        buf[0] = 1  # overflow flag
+    self.local_socket.send_multipart(all_buffers, copy=False)  # ZMQ XPUB
+</code></pre>
+<ol>
+<li>ShmRingBufferのメタデータブロックに <code>overflow=1</code> フラグを書き込み</li>
+<li>実データはXPUB→SUBソケット経由で送信</li>
+<li>Reader側はメタデータのoverflowフラグを確認し、ZMQソケットから読み取る</li>
+</ol>
+<h3 id="ソケット構成-2"><a class="header" href="#ソケット構成-2">ソケット構成</a></h3>
+<ul>
+<li><strong>Writer</strong>: <code>XPUB</code> (bind、IPC)。ローカルリーダー向け + リモートリーダー向けの2つ</li>
+<li><strong>Local Reader</strong>: <code>SUB</code> (connect、IPC)。ShmRingBufferとペア</li>
+<li><strong>Remote Reader</strong>: <code>SUB</code> (connect、TCP)。ShmRingBufferなし、常にZMQ経由</li>
+</ul>
+<h3 id="接続確認"><a class="header" href="#接続確認">接続確認</a></h3>
+<p><code>wait_until_ready()</code>で全リーダーのサブスクリプション受信→<code>b"READY"</code>送信で双方向の接続を確認後に通信開始。</p>
+<h2 id="4-kv-cache-events-verified"><a class="header" href="#4-kv-cache-events-verified">4. KV Cache Events [VERIFIED]</a></h2>
+<p>KVキャッシュの変更イベント（BlockStored/BlockRemoved/AllBlocksCleared）を外部サービスに配信する。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_events.py:270-400</code></p>
+<h3 id="ソケット構成-3"><a class="header" href="#ソケット構成-3">ソケット構成</a></h3>
+<ul>
+<li><strong>PUB</strong> (bind、TCP <code>tcp://*:5557</code>): イベントストリームの配信</li>
+<li><strong>ROUTER</strong> (bind): リプレイリクエストの受け付け（過去イベントの再送要求用）</li>
+</ul>
+<h3 id="特徴"><a class="header" href="#特徴">特徴</a></h3>
+<ul>
+<li><strong>HWM設定あり</strong>: <code>set_hwm(100_000)</code> — PUBソケットにHWMが設定されている。サブスクライバが遅い場合、HWMを超えたメッセージはドロップされる</li>
+<li><strong>シーケンス番号</strong>: 各イベントバッチにシーケンス番号を付与</li>
+<li><strong>リプレイ機能</strong>: ROUTERソケットでリプレイリクエストを受け付け、バッファリングされた過去イベントを再送可能（deque、maxlen=10,000ステップ）</li>
+<li><strong>バックグラウンドスレッド</strong>: パブリッシャーは専用スレッドで動作</li>
+</ul>
+<h2 id="5-kv-transfer-コネクタ-verified"><a class="header" href="#5-kv-transfer-コネクタ-verified">5. KV Transfer コネクタ [VERIFIED]</a></h2>
+<p>ノード間KVキャッシュ転送の制御プレーンにZMQを使用。データプレーンは各コネクタ固有（RDMA、NCCL等）。</p>
+<h3 id="共通パターン-routerdealer"><a class="header" href="#共通パターン-routerdealer">共通パターン: ROUTER/DEALER</a></h3>
+<p>全コネクタで共通して ROUTER（サーバー側、bind）/ DEALER（クライアント側、connect）パターンを使用。</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>コネクタ</th><th>ZMQ用途</th><th>ソケットタイプ</th></tr>
+</thead>
+<tbody>
+<tr><td>NIXL</td><td>メタデータハンドシェイク</td><td>ROUTER/REQ</td></tr>
+<tr><td>P2P NCCL</td><td>転送要求・応答</td><td>ROUTER/DEALER</td></tr>
+<tr><td>Mooncake</td><td>サイドチャネル通知</td><td>ROUTER/DEALER</td></tr>
+<tr><td>MoRIIO</td><td>メタデータ交換・通知</td><td>ROUTER/DEALER</td></tr>
+<tr><td>LMCache MP</td><td>LookupClient/Server通信</td><td>ZMQ経由（LMCache内部）</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="nixl特有-reqrep風ハンドシェイク"><a class="header" href="#nixl特有-reqrep風ハンドシェイク">NIXL特有: REQ/REP風ハンドシェイク</a></h3>
+<p>NIXLはROUTER/REQパターンを使用し、RDMAメモリ登録のためのメタデータ交換を行う。<code>RCVTIMEO=5000ms</code>でタイムアウトを設定。</p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py:615-618</code> (ROUTER側)
+<strong>参照</strong>: <code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py:1062-1076</code> (REQ側)</p>
+<h2 id="信頼性分析"><a class="header" href="#信頼性分析">信頼性分析</a></h2>
+<h3 id="zmqの特性前提知識"><a class="header" href="#zmqの特性前提知識">ZMQの特性（前提知識）</a></h3>
+<p>ZMQは<strong>メッセージ到達保証を提供しない</strong>メッセージングライブラリ:</p>
+<ul>
+<li>TCPの上に構築されているが、接続のライフサイクル管理は自動（再接続含む）</li>
+<li><strong>PUB/SUB</strong>: サブスクライバが遅い場合、HWMを超えたメッセージはサイレントにドロップされる</li>
+<li><strong>PUSH/PULL</strong>: HWMに達するとブロック（またはEAGAIN）</li>
+<li><strong>ROUTER/DEALER</strong>: HWMに達するとROUTER側はメッセージをドロップ（DEALERはブロック）</li>
+<li>IPC（同一ホスト内）はTCPより信頼性が高い（ネットワーク障害なし）</li>
+</ul>
+<h3 id="各通信パスの信頼性評価"><a class="header" href="#各通信パスの信頼性評価">各通信パスの信頼性評価</a></h3>
+<h4 id="1-frontendenginecore最重要パス"><a class="header" href="#1-frontendenginecore最重要パス">1. Frontend↔EngineCore（最重要パス）</a></h4>
+<p><strong>リスク</strong>: 低</p>
+<p>理由:</p>
+<ul>
+<li><strong>HWM=0（無制限）</strong>: 送信側でのメッセージドロップは発生しない</li>
+<li><strong>同一ホスト内IPC</strong>: ネットワーク障害のリスクなし（DP TCPモード除く）</li>
+<li><strong>プロセス死活監視</strong>: <code>MPClientEngineMonitor</code>スレッドがEngineCoreプロセスのsentinelを監視。プロセス死亡→<code>engine_dead=True</code>→以降の操作は<code>EngineDeadError</code></li>
+<li><strong>ENGINE_CORE_DEAD通知</strong>: EngineCore異常終了時にFrontendへ通知。<code>linger=4000ms</code>で送信完了を待つ</li>
+<li><strong>validate_alive()</strong>: 受信メッセージがENGINE_CORE_DEADか毎回チェック</li>
+</ul>
+<p><strong>メッセージ喪失時の影響</strong>:</p>
+<ul>
+<li><strong>リクエスト喪失（Frontend→EngineCore）</strong>: リクエストが処理されず、クライアントがタイムアウトするまで待機。vLLM内部でのリトライ機構はない</li>
+<li><strong>レスポンス喪失（EngineCore→Frontend）</strong>: リクエスト結果が返却されず、クライアントがタイムアウト。Schedulerのリクエストは残り続け、abort時に解放</li>
+</ul>
+<p><strong>実際にメッセージ喪失が起きうるか</strong>: IPCかつHWM=0の環境では、プロセスが正常動作している限りメッセージ喪失は極めて起きにくい。主なリスクはプロセスクラッシュ。</p>
+<h4 id="2-dp-coordinator通信"><a class="header" href="#2-dp-coordinator通信">2. DP Coordinator通信</a></h4>
+<p><strong>リスク</strong>: 低〜中</p>
+<p>理由:</p>
+<ul>
+<li><strong>XPUBの統計配信はベストエフォート</strong>: 統計メッセージの一部が失われても負荷分散の精度が一時的に低下するだけ。定期的に再送されるため自己回復する</li>
+<li><strong>Wave開始指示の喪失</strong>: エンジンが一時的にidle状態のまま留まる可能性がある。ただしフロントエンド側からの新リクエスト送信で再度waveが開始されるため、長時間のデッドロックにはならない</li>
+<li><strong>接続確認</strong>: 全サブスクライバのsubscription受信を待ってから通信開始</li>
+</ul>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/coordinator.py:189-198</code> (サブスクリプション待ち)</p>
+<h4 id="3-shmringbufferフォールバック"><a class="header" href="#3-shmringbufferフォールバック">3. ShmRingBufferフォールバック</a></h4>
+<p><strong>リスク</strong>: 低</p>
+<p>理由:</p>
+<ul>
+<li><strong>XPUB/SUBだがHWM未設定（デフォルト1000）</strong>: 理論上、非常に大きなメッセージが連続すると滞留可能</li>
+<li><strong>同一ホスト内IPC</strong>: ネットワーク障害なし</li>
+<li><strong>頻度が低い</strong>: 24MiB超のメッセージは稀（通常のSchedulerOutput、ModelRunnerOutputは小さい）</li>
+<li><strong>オーバーフロー自体がレアパス</strong>: 通常はShmRingBuffer直接で完結</li>
+</ul>
+<p><strong>メッセージ喪失時の影響</strong>: Worker側でRPCレスポンスが受信できず、EngineCore側でハングする可能性</p>
+<h4 id="4-kv-cache-events"><a class="header" href="#4-kv-cache-events">4. KV Cache Events</a></h4>
+<p><strong>リスク</strong>: 中（設計上許容）</p>
+<p>理由:</p>
+<ul>
+<li><strong>PUBにHWM=100,000</strong>: サブスクライバが遅い場合、メッセージがドロップされる</li>
+<li><strong>TCP経由</strong>: ネットワーク障害のリスクあり</li>
+<li><strong>リプレイ機能で緩和</strong>: シーケンス番号ギャップを検出し、ROUTERソケット経由で過去イベントを再取得可能</li>
+<li><strong>外部サービス向け</strong>: vLLMのコア動作には影響しない。あくまでKVイベントの外部通知</li>
+</ul>
+<p><strong>メッセージ喪失時の影響</strong>: 外部キャッシュマネージャがイベントを見逃す。リプレイで回復可能（バッファ範囲内）</p>
+<h4 id="5-kv-transfer-コネクタ"><a class="header" href="#5-kv-transfer-コネクタ">5. KV Transfer コネクタ</a></h4>
+<p><strong>リスク</strong>: 中</p>
+<p>理由:</p>
+<ul>
+<li><strong>TCP経由（ノード間通信）</strong>: ネットワーク障害のリスクあり</li>
+<li><strong>NIXL: RCVTIMEO設定あり</strong>: 1000msまたは5000msのタイムアウト。<code>zmq.Again</code>例外をキャッチしてリトライロジックを実装</li>
+<li><strong>P2P NCCL</strong>: Pollerでの待機、明示的なタイムアウトなし（ブロッキング）</li>
+<li><strong>Mooncake</strong>: DEALER側にlinger=0設定。タイムアウト付きで転送</li>
+</ul>
+<p><strong>メッセージ喪失時の影響</strong>:</p>
+<ul>
+<li>ハンドシェイク失敗→コネクタ初期化失敗→ログエラー、該当リクエストは通常の計算パスにフォールバック</li>
+<li>転送通知失敗→送信側がブロックをタイムアウト解放→受信側はprefillを再実行</li>
+</ul>
+<h3 id="信頼性設計のまとめ"><a class="header" href="#信頼性設計のまとめ">信頼性設計のまとめ</a></h3>
+<p>vLLMのZMQ使用における信頼性戦略:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>戦略</th><th>適用箇所</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>HWM=0（無制限バッファ）</strong></td><td>Frontend↔EngineCore</td><td>メッセージドロップを完全に防止</td></tr>
+<tr><td><strong>IPC優先</strong></td><td>同一ホスト内通信</td><td>ネットワーク障害を排除</td></tr>
+<tr><td><strong>プロセス死活監視</strong></td><td>Frontend→EngineCore</td><td>sentinelによる即座のクラッシュ検出</td></tr>
+<tr><td><strong>ENGINE_CORE_DEAD通知 + linger</strong></td><td>EngineCore→Frontend</td><td>異常終了の明示的通知を保証</td></tr>
+<tr><td><strong>ハンドシェイク</strong></td><td>起動時</td><td>通信確立の確認後に運用開始</td></tr>
+<tr><td><strong>リプレイ機能</strong></td><td>KV Events</td><td>メッセージドロップ後の回復手段</td></tr>
+<tr><td><strong>タイムアウト + リトライ</strong></td><td>KV Transfer</td><td>ネットワーク障害時のフォールバック</td></tr>
+<tr><td><strong>ベストエフォート + 自己回復</strong></td><td>DP Coordinator</td><td>統計は定期再送、waveは再トリガー</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>結論</strong>: vLLMは<strong>コア通信パスでは実質的にメッセージ喪失が起きない設計</strong>（HWM=0 + IPC + プロセス監視）を採用し、<strong>補助的な通信パスではベストエフォート + リカバリ機構</strong>（リプレイ、タイムアウト、再トリガー）で対処している。ZMQの「到達保証なし」の弱点は、使用パターンの選択（IPC、HWM=0）とアプリケーション層の監視で効果的に緩和されている。</p>
+<h2 id="ソケットタイプ使用一覧"><a class="header" href="#ソケットタイプ使用一覧">ソケットタイプ使用一覧</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ソケットタイプ</th><th>使用箇所</th><th>方向</th><th>特徴</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ROUTER</code></td><td>Frontend input, NIXL server, P2P server, Mooncake server, MoRIIO server, KV Events replay, ハンドシェイク</td><td>bind（サーバー）</td><td>identityベースルーティング</td></tr>
+<tr><td><code>DEALER</code></td><td>EngineCore input, NIXL client, P2P client, Mooncake client, MoRIIO client</td><td>connect（クライアント）</td><td>透過的なidentity送信</td></tr>
+<tr><td><code>PUSH</code></td><td>EngineCore output, EngineCore→Coordinator</td><td>connect</td><td>単方向、ブロック型</td></tr>
+<tr><td><code>PULL</code></td><td>Frontend output, Coordinator←EngineCore</td><td>bind</td><td>単方向、フェアキューイング</td></tr>
+<tr><td><code>XPUB</code></td><td>Coordinator→Frontend, Coordinator→EngineCore, MessageQueue writer</td><td>bind</td><td>サブスクリプション可視化</td></tr>
+<tr><td><code>XSUB</code></td><td>EngineCore←Coordinator, Frontend←Coordinator</td><td>connect</td><td>明示的サブスクリプション</td></tr>
+<tr><td><code>SUB</code></td><td>MessageQueue reader</td><td>connect</td><td>自動サブスクリプション</td></tr>
+<tr><td><code>PUB</code></td><td>KV Events</td><td>bind</td><td>ブロードキャスト、HWMドロップ</td></tr>
+<tr><td><code>PAIR</code></td><td>Frontend内部（shutdown通知、first_req通知）</td><td>bind/connect</td><td>排他的1:1ペア</td></tr>
+<tr><td><code>REQ</code></td><td>NIXL ハンドシェイクclient</td><td>connect</td><td>同期的リクエスト/レスポンス</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="参照"><a class="header" href="#参照">参照</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>行</th><th>内容</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L510-514</td><td>Frontend側ZMQソケット作成（ROUTER/PULL）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L539-549</td><td>ROUTER初期メッセージ待ち（poll + タイムアウト）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L581-587</td><td>MessageTracker管理（ゼロコピー参照保持）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L684-720</td><td>SyncMPClientの出力処理スレッド（Poller + PAIR shutdown）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L877-901</td><td>AsyncMPClientの出力処理タスク</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core_client.py</code></td><td>L1080-1186</td><td>DPClient統計購読（XSUB + PAIR first_req）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td>L870-920</td><td>EngineCore側ハンドシェイク（DEALER→ROUTER）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td>L1186-1265</td><td>EngineCore入力スレッド（DEALER + XSUB + Poller）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/core.py</code></td><td>L1267-1335</td><td>EngineCore出力スレッド（PUSH, tracker, linger=4000）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/coordinator.py</code></td><td>L113-395</td><td>DPCoordinator（XPUB×2 + PULL, Wave調整）</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/utils.py</code></td><td>L937-1091</td><td>ハンドシェイクプロトコル（HELLO→metadata→READY）</td></tr>
+<tr><td><code>target/vllm/vllm/utils/network_utils.py</code></td><td>L260-313</td><td>make_zmq_socket（HWM=0, buf_size, IPv6対応）</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td>L280-403</td><td>MessageQueue（XPUB/SUB, ShmRingBufferフォールバック）</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_broadcast.py</code></td><td>L571-594</td><td>enqueue（オーバーフロー判定→ZMQ送信）</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/kv_events.py</code></td><td>L270-400</td><td>ZmqEventPublisher（PUB + ROUTER replay）</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/nixl_connector.py</code></td><td>L615-618</td><td>NIXL ROUTER（RCVTIMEO=1000ms）</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_engine.py</code></td><td>L124-130</td><td>P2P NCCL ROUTER/DEALER</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="関連ドキュメント"><a class="header" href="#関連ドキュメント">関連ドキュメント</a></h2>
+<ul>
+<li><a href="process-architecture.html">プロセスアーキテクチャ（TP=2構成）</a> — ShmRingBuffer、通信方式選択理由の詳細</li>
+<li><a href="../components/executor/summary.html">Executorコンポーネント</a> — MessageQueue、WorkerProc busy loop</li>
+<li><a href="../components/engine-core-client/summary.html">EngineCoreClientコンポーネント</a> — Frontend側の通信クライアント階層</li>
+<li><a href="../components/kv-transfer/summary.html">KV Transferコンポーネント</a> — KVConnectorBase_V1、各コネクタの概要</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../vllm/investigations/process-architecture.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../vllm/glossary.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../vllm/investigations/process-architecture.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../vllm/glossary.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
