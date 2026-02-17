@@ -24,7 +24,7 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | KV Transfer/LMCache | [MEDIUM] | 2026-02-15 | `docs/src/components/kv-transfer/summary.md` + `docs/src/investigations/lmcache-integration.md` + `docs/src/investigations/cacheblend-implementation.md` |
 | EncoderCache | [MEDIUM] | 2026-02-14 | `docs/src/components/encoder-cache/summary.md` |
 | ECConnector (Encoder Cache Transfer) | [MEDIUM] | 2026-02-14 | `docs/src/components/ec-connector/summary.md` + investigations 2件 |
-| マルチモーダル | [MEDIUM] | 2026-02-11 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
+| マルチモーダル | [MEDIUM→DEEP(§3)] | 2026-02-17 | `docs/src/components/multimodal/summary.md` + 3 サブドキュメント |
 
 ## セッション履歴
 
@@ -46,3 +46,4 @@ Phase 2: コンポーネント別深堀り（KVCacheManager DEEP完了、マル�
 | 2026-02-15 | 2f | GPUModelRunner深堀り。KVCache-GPU Interface（ブロックID取込→BlockTable→slot_mapping→DMA→AttentionMetadata 4段変換）、InputBatch永続バッチ（CachedRequestState/InputBatch/MultiGroupBlockTable/CpuGpuBuffer/condense）、CUDAGraph統合（3モード/CudagraphDispatcher/パディング）。summary.md [SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260215-phase2f-gpu-model-runner.md` |
 | 2026-02-15 | 2g | KV Transfer / LMCache調査。KVConnectorBase_V1（7 abstract、2ロール分離）、KVConnectorFactory（10コネクタ）、Scheduler統合（WAITING_FOR_REMOTE_KVS）、Worker/Mixin統合、KV Cache Events、LMCacheチャンク単位保存・3層ストレージ・vLLMアダプタ。[SHALLOW]→[MEDIUM] 昇格 | `.state/sessions/20260215-phase2g-kv-transfer-lmcache.md` |
 | 2026-02-15 | 2g+ | CacheBlend実装調査。独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（RoPE補正+パイプライン）、vLLM本体パッチ必須（VLLMModelTracker登録）、対応モデル3種のみ、BlendServer段落分割、制約多数 | `.state/sessions/20260215-phase2g+-cacheblend.md` |
+| 2026-02-17 | 2h | mm_hash計算方法調査。hash_kwargs()/serialize_item()/iter_item_to_bytes()の3層構造、画像3シリアライズパス（EXIF UUID/MediaWithBytes/ピクセル）、_hash_mm_items()のmm_uuids分岐、identifier vs mm_hashの使い分け、プレフィックスキャッシュextra_keys連携、Gemma3はデフォルト実装。mm-processing.md §3を[MEDIUM]→[DEEP]昇格 | `.state/sessions/20260217-phase2h-mm-hash.md` |

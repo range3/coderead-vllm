@@ -34,7 +34,7 @@
 - [マルチモーダル処理パイプライン サマリー](vllm/components/multimodal/summary.md)
   - [Gemma3 ビジョンエンコーダと画像処理 [MEDIUM] [VERIFIED]](vllm/components/multimodal/gemma3-vision.md)
   - [バックエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]](vllm/components/multimodal/mm-engine-gpu.md)
-  - [フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]](vllm/components/multimodal/mm-processing.md)
+  - [フロントエンド マルチモーダル処理パス [MEDIUM→DEEP(§3)] [VERIFIED]](vllm/components/multimodal/mm-processing.md)
 - [OutputProcessor](vllm/components/output-processor/summary.md)
 - [Scheduler サマリー](vllm/components/scheduler/summary.md)
 

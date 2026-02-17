@@ -89,7 +89,7 @@ P0（フロントエンド）               P1（Scheduler）              P1（
 
 | ドキュメント | 内容 |
 |------------|------|
-| [mm-processing.md](mm-processing.md) | フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ、プロセッサキャッシュ4種、ZMQ送信データ |
+| [mm-processing.md](mm-processing.md) | フロントエンド: チャットテンプレート、プレースホルダー、MMハッシュ[DEEP]（hash_kwargs/serialize_item/iter_item_to_bytes詳細、identifier vs mm_hash使い分け、プレフィックスキャッシュ連携）、プロセッサキャッシュ4種、ZMQ送信データ |
 | [mm-engine-gpu.md](mm-engine-gpu.md) | バックエンド: EncoderCacheManager、Schedulerエンコーダ予算、GPUModelRunnerエンコーダ実行・キャッシュ・埋め込みマージ |
 | [gemma3-vision.md](gemma3-vision.md) | Gemma3: SiglipVisionModel、MultiModalProjector、Pan-and-Scan、masked_scatter_マージ |
 

@@ -1,6 +1,6 @@
-# フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]
+# フロントエンド マルチモーダル処理パス [MEDIUM→DEEP(§3)] [VERIFIED]
 
-> **最終更新**: 2026-02-11
+> **最終更新**: 2026-02-17
 
 APIリクエストに含まれる画像データが、フロントエンドプロセス（P0）でどのように処理され、EngineCoreRequest として ZMQ 経由でバックエンド（P1）へ送信されるかを追跡する。テキスト推論パスとの差分を中心に記述する。
 
@@ -146,39 +146,142 @@ HFプロセッサの出力:
 - `pixel_values`: `(total_patches, 3, image_size, image_size)` — 全パッチのピクセルテンソル
 - `num_patches`: `(num_images,)` — 画像ごとのパッチ数（= num_crops + 1）
 
-## 3. MMハッシュ
+## 3. MMハッシュ [DEEP] [VERIFIED]
 
-### MultiModalHasher
+マルチモーダル入力の同一性を判定するためのコンテンツベースハッシュ。2つの用途がある:
 
-**参照**: `target/vllm/vllm/multimodal/hasher.py:50-162`
+1. **ProcessorCache** — HFプロセッサの処理結果キャッシュ（同じ画像の再処理回避）
+2. **プレフィックスキャッシュのextra_keys** — KVキャッシュブロックハッシュ計算時にブロック内のMMトークンを識別
 
-マルチモーダルデータのコンテンツベースハッシュを計算する。
+### 3.1 ハッシュ計算の全体フロー
 
-| データ型 | シリアライズ方法 |
-|---------|----------------|
-| PIL Image | ExifTags.ImageID (UUID型の場合) → 16バイト。なければ mode + pixel data (numpy配列) |
-| MediaWithBytes(Image) | ExifTags.ImageID → 16バイト。なければ original_bytes |
-| torch.Tensor | numpy変換 → dtype+shape+バイト列。bfloat16は uint8 view 経由 |
-| np.ndarray | dtype.str + shape + contiguous バイト列 |
-| その他 | pickle フォールバック（警告あり） |
+```mermaid
+graph TD
+    A["BaseMultiModalProcessor<br>apply() / _cached_apply_hf_processor()"] --> B["_hash_mm_items()"]
+    B --> C{"mm_uuids<br>提供?"}
+    C -->|"あり + kwargs空"| D["item_uuid をそのまま使用"]
+    C -->|"なし or kwargs非空"| E["MultiModalHasher.hash_kwargs()"]
+    E --> F["kwargs をキー名でソート"]
+    F --> G["iter_item_to_bytes() で再帰的バイト変換"]
+    G --> H["serialize_item() で型別シリアライズ"]
+    H --> I["hasher.update() に逐次投入"]
+    I --> J["hasher.hexdigest() → mm_hash"]
+```
 
-**ハッシュアルゴリズム**: `VLLM_MM_HASHER_ALGORITHM` 環境変数で設定
+### 3.2 `_hash_mm_items()` — ハッシュ入力の構成
+
+**参照**: `target/vllm/vllm/multimodal/processing/processor.py:1300-1364`
+
+各モダリティ（画像の場合 `"image"`）ごとに、アイテム1つずつハッシュを計算する。
+
+```python
+MultiModalHasher.hash_kwargs(
+    model_id=model_id,         # e.g. "google/gemma-3-27b-it"
+    image=item,                # PIL.Image.Image or MediaWithBytes
+    **hf_processor_mm_kwargs,  # HFプロセッサに渡すkwargs（PaS設定等）
+    **tokenization_kwargs,     # トークナイザkwargs
+)
+```
+
+**重要**: ハッシュ入力は `model_id` + モダリティ名付きの画像データ + プロセッサkwargs + トークナイザkwargs。同じ画像でもプロセッサkwargsが異なればハッシュが変わる。
+
+#### mm_uuids による分岐
+
+`_hash_mm_items()` はアイテムごとに3つのパスを持つ:
+
+| 条件 | 動作 |
+|------|------|
+| `item_uuid` が `None` | 画像データから `hash_kwargs()` を計算 |
+| `item_uuid` あり + `hf_processor_mm_kwargs` or `tokenization_kwargs` が非空 | `item_uuid` 文字列を item として `hash_kwargs()` に投入（画像デコード回避） |
+| `item_uuid` あり + kwargs 空 | `item_uuid` をそのまま mm_hash として使用（ハッシュ計算スキップ） |
+
+2番目のパスは最適化: UUID文字列のハッシュは画像ピクセルのハッシュより高速だが、kwargsとの組み合わせで一意性を保つ必要がある。
+
+#### `get_item_for_hash()` — ハッシュ用アイテムの取得
+
+**参照**: `target/vllm/vllm/multimodal/parse.py:118-120`
+
+`ProcessorBatchItems.get_item_for_hash()` は `get()` と異なり、`MediaWithBytes` ラッパーを**剥がさずにそのまま返す**。
+
+```python
+# get() → self._unwrap(self.data[index])  → PIL.Image（ラッパー除去）
+# get_item_for_hash() → self.data[index]  → MediaWithBytes[PIL.Image]（ラッパー保持）
+```
+
+これにより `serialize_item()` で元のバイト列（JPEG/PNG等）からハッシュを計算でき、PIL画像のピクセルデコードを回避できる。
+
+### 3.3 `MultiModalHasher.hash_kwargs()` — ハッシュ関数本体
+
+**参照**: `target/vllm/vllm/multimodal/hasher.py:154-162`
+
+```python
+@classmethod
+def hash_kwargs(cls, **kwargs: object) -> str:
+    hasher = _get_hasher_factory(envs.VLLM_MM_HASHER_ALGORITHM)()
+    for k, v in sorted(kwargs.items(), key=lambda kv: kv[0]):  # キー名でソート
+        for bytes_ in cls.iter_item_to_bytes(k, v):
+            hasher.update(bytes_)
+    return hasher.hexdigest()
+```
+
+**ハッシュアルゴリズム**: `VLLM_MM_HASHER_ALGORITHM` 環境変数で設定（`target/vllm/vllm/envs.py:73,793`）
 - `blake3`（デフォルト）: 高速
-- `sha256` / `sha512`: FIPS準拠用
+- `sha256` / `sha512`: FIPS準拠用（政府・企業デプロイメント向け）
 
-**hash_kwargs()** はキーをソートしてから全データを逐次ハッシュに投入する（決定的）。
+### 3.4 `iter_item_to_bytes()` — 再帰的バイト変換
 
-### UUIDオーバーライド
+**参照**: `target/vllm/vllm/multimodal/hasher.py:134-151`
+
+dict/list/tupleを再帰的に展開し、**キー名のバイト列 + 値のバイト列** を交互にyieldする。
+
+```python
+# 例: image=PIL.Image(mode="RGB", data=...) の場合
+# iter_item_to_bytes("image", {"mode": "RGB", "data": <numpy>})
+#   → "image.mode".encode() + "RGB".encode()
+#   → "image.data".encode() + <numpy raw bytes>
+```
+
+キー名がプレフィックスとして含まれるため、**異なるkwargsキーの値が衝突しない**（例: `model_id` の値と `image` の一部が同じバイト列でも区別される）。
+
+### 3.5 `serialize_item()` — 型別シリアライズ
+
+**参照**: `target/vllm/vllm/multimodal/hasher.py:52-131`
+
+| データ型 | シリアライズ方法 | 備考 |
+|---------|----------------|------|
+| `bytes` / `memoryview` | そのまま返す | |
+| `str` | UTF-8エンコード | model_id 等 |
+| `int` / `float` | `np.array(obj).tobytes()` | |
+| `PIL.Image` (EXIF UUID) | `exif[ImageID].bytes` (16バイト) | 高速パス |
+| `PIL.Image` (通常) | `{"mode": mode, "data": np.asarray(obj)}` + palette | 全ピクセル読み込み |
+| `MediaWithBytes(Image)` (EXIF UUID) | 同上の高速パス | |
+| `MediaWithBytes(Image)` (通常) | `original_bytes` | **エンコード済みバイト列。デコード不要で高速** |
+| `torch.Tensor` | numpy変換。bfloat16は `view(uint8)` 経由 | `{"original_dtype", "original_shape", "data"}` |
+| `np.ndarray` | `{"dtype": str, "shape": tuple, "data": raw}` | C-contiguous なら zero-copy |
+| その他 | `pickle.dumps()` (警告ログ) | フォールバック |
+
+#### 画像の3つのシリアライズパス
+
+```mermaid
+graph TD
+    A["serialize_item(obj)"] --> B{"EXIF ImageID<br>UUID?"}
+    B -->|Yes| C["UUID.bytes (16バイト)<br>最速"]
+    B -->|No| D{"MediaWithBytes?"}
+    D -->|Yes| E["original_bytes<br>(JPEG/PNG等エンコード済み)<br>高速"]
+    D -->|No| F["mode + np.asarray(obj)<br>(全ピクセル展開)<br>低速"]
+```
+
+### 3.6 UUIDオーバーライド
 
 キャッシュとプレフィックスキャッシュの両方が無効な場合、コンテンツハッシュの代わりに `{request_id}-{modality}-{index}` 形式のUUIDを使用する（ハッシュ計算コストの回避）。
 
 **参照**: `target/vllm/vllm/v1/engine/input_processor.py:551-574`
 
-### LoRA対応のidentifier
+### 3.7 LoRA対応のidentifier
 
 LoRAのtower_connector_loraが有効な場合、同じ画像でもLoRAによって埋め込みが変わるため、`identifier` に LoRA名をプレフィックスとして付加する。
 
-**参照**: `target/vllm/vllm/v1/engine/input_processor.py:490-506`
+**参照**: `target/vllm/vllm/v1/engine/input_processor.py:273-289`
 
 ```python
 def _get_mm_identifier(self, mm_hash, lora_request):
@@ -186,6 +289,57 @@ def _get_mm_identifier(self, mm_hash, lora_request):
         return mm_hash
     return f"{lora_request.lora_name}:{mm_hash}"
 ```
+
+### 3.8 mm_hash vs identifier — 2つのハッシュ値の使い分け
+
+| 属性 | `mm_hash` | `identifier` |
+|------|-----------|-------------|
+| 定義場所 | `MultiModalFeatureSpec.mm_hash` | `MultiModalFeatureSpec.identifier` |
+| LoRAプレフィックス | なし | あり（`enable_tower_connector_lora`時） |
+| 主な用途 | ProcessorCache のキー | EncoderCache / プレフィックスキャッシュのキー |
+| 理由 | ProcessorCacheはLoRA非依存（ピクセルデータのみ） | エンコーダ出力・KVキャッシュはLoRAに依存 |
+
+### 3.9 プレフィックスキャッシュでの使用
+
+**参照**: `target/vllm/vllm/v1/core/kv_cache_utils.py:388-444`
+
+ブロックハッシュ計算時に、ブロックのトークン範囲にMMプレースホルダが含まれる場合、`mm_feature.identifier` がextra_keysとして追加される。
+
+```python
+def _gen_mm_extra_hash_keys(request, start_token_idx, end_token_idx, start_mm_idx):
+    # ブロック範囲とMMプレースホルダ範囲の重なりをチェック
+    while curr_mm_idx < len(mm_features):
+        mm_feature = mm_features[curr_mm_idx]
+        offset = mm_feature.mm_position.offset
+        length = mm_feature.mm_position.length
+        if end_token_idx > offset:
+            extra_keys.append(mm_feature.identifier)  # ★ identifierを追加
+            ...
+```
+
+これにより、**同じトークン列でも異なる画像が挿入されたブロック**は別のハッシュを持つ。逆に、同じ画像（同じidentifier）であればKVキャッシュのプレフィックスヒットが可能。
+
+### 3.10 Gemma3における具体例
+
+Gemma3は `_hash_mm_items()` を**オーバーライドしていない**。`BaseMultiModalProcessor` のデフォルト実装がそのまま使われる。
+
+```
+ハッシュ入力例:
+  model_id = "google/gemma-3-27b-it"
+  image = <MediaWithBytes[PIL.Image]>  (元のJPEGバイト列)
+  ※ hf_processor_mm_kwargs, tokenization_kwargs は通常空
+
+→ hash_kwargs() 内部:
+  sorted keys: ["image", "model_id"]
+  1. "image" → iter_item_to_bytes("image", MediaWithBytes)
+     → serialize_item() → original_bytes (JPEG/PNGバイト列)
+  2. "model_id" → iter_item_to_bytes("model_id", "google/gemma-3-27b-it")
+     → "model_id".encode() + "google/gemma-3-27b-it".encode()
+
+→ blake3.hexdigest() → "a1b2c3..." (mm_hash)
+```
+
+**Pan-and-Scan（PaS）との関係**: PaSによる画像分割はHFプロセッサ内で行われるため、**ハッシュ計算の後**に実行される。同じ画像 + 同じmodel_id + 同じkwargs → 同じmm_hash（PaS分割後の結果もキャッシュされる）。
 
 ## 4. プロセッサキャッシュ（P0側）
 
