@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED] - コードリーディング: vLLM &amp; LMCache</title>
+        <title>フロントエンド マルチモーダル処理パス [MEDIUM→DEEP(§3)] [VERIFIED] - コードリーディング: vLLM &amp; LMCache</title>
 
 
         <!-- Custom HTML head -->
@@ -36,10 +36,10 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-39a278f6.js";
+            window.path_to_searchindex_js = "../../../searchindex-65de9fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../../toc-6c732275.js"></script>
+        <script src="../../../toc-52d8545c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -175,9 +175,9 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="フロントエンド-マルチモーダル処理パス-medium-verified"><a class="header" href="#フロントエンド-マルチモーダル処理パス-medium-verified">フロントエンド マルチモーダル処理パス [MEDIUM] [VERIFIED]</a></h1>
+                        <h1 id="フロントエンド-マルチモーダル処理パス-mediumdeep3-verified"><a class="header" href="#フロントエンド-マルチモーダル処理パス-mediumdeep3-verified">フロントエンド マルチモーダル処理パス [MEDIUM→DEEP(§3)] [VERIFIED]</a></h1>
 <blockquote>
-<p><strong>最終更新</strong>: 2026-02-11</p>
+<p><strong>最終更新</strong>: 2026-02-17</p>
 </blockquote>
 <p>APIリクエストに含まれる画像データが、フロントエンドプロセス（P0）でどのように処理され、EngineCoreRequest として ZMQ 経由でバックエンド（P1）へ送信されるかを追跡する。テキスト推論パスとの差分を中心に記述する。</p>
 <h2 id="全体フロー"><a class="header" href="#全体フロー">全体フロー</a></h2>
@@ -281,41 +281,168 @@ processed_outputs["num_patches"] = torch.tensor(num_crops) + 1  # +1 for origina
 <li><code>pixel_values</code>: <code>(total_patches, 3, image_size, image_size)</code> — 全パッチのピクセルテンソル</li>
 <li><code>num_patches</code>: <code>(num_images,)</code> — 画像ごとのパッチ数（= num_crops + 1）</li>
 </ul>
-<h2 id="3-mmハッシュ"><a class="header" href="#3-mmハッシュ">3. MMハッシュ</a></h2>
-<h3 id="multimodalhasher"><a class="header" href="#multimodalhasher">MultiModalHasher</a></h3>
-<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:50-162</code></p>
-<p>マルチモーダルデータのコンテンツベースハッシュを計算する。</p>
+<h2 id="3-mmハッシュ-deep-verified"><a class="header" href="#3-mmハッシュ-deep-verified">3. MMハッシュ [DEEP] [VERIFIED]</a></h2>
+<p>マルチモーダル入力の同一性を判定するためのコンテンツベースハッシュ。2つの用途がある:</p>
+<ol>
+<li><strong>ProcessorCache</strong> — HFプロセッサの処理結果キャッシュ（同じ画像の再処理回避）</li>
+<li><strong>プレフィックスキャッシュのextra_keys</strong> — KVキャッシュブロックハッシュ計算時にブロック内のMMトークンを識別</li>
+</ol>
+<h3 id="31-ハッシュ計算の全体フロー"><a class="header" href="#31-ハッシュ計算の全体フロー">3.1 ハッシュ計算の全体フロー</a></h3>
+<pre class="mermaid">graph TD
+    A["BaseMultiModalProcessor&lt;br&gt;apply() / _cached_apply_hf_processor()"] --&gt; B["_hash_mm_items()"]
+    B --&gt; C{"mm_uuids&lt;br&gt;提供?"}
+    C --&gt;|"あり + kwargs空"| D["item_uuid をそのまま使用"]
+    C --&gt;|"なし or kwargs非空"| E["MultiModalHasher.hash_kwargs()"]
+    E --&gt; F["kwargs をキー名でソート"]
+    F --&gt; G["iter_item_to_bytes() で再帰的バイト変換"]
+    G --&gt; H["serialize_item() で型別シリアライズ"]
+    H --&gt; I["hasher.update() に逐次投入"]
+    I --&gt; J["hasher.hexdigest() → mm_hash"]
+</pre>
+
+<h3 id="32-_hash_mm_items--ハッシュ入力の構成"><a class="header" href="#32-_hash_mm_items--ハッシュ入力の構成">3.2 <code>_hash_mm_items()</code> — ハッシュ入力の構成</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/processing/processor.py:1300-1364</code></p>
+<p>各モダリティ（画像の場合 <code>"image"</code>）ごとに、アイテム1つずつハッシュを計算する。</p>
+<pre><code class="language-python">MultiModalHasher.hash_kwargs(
+    model_id=model_id,         # e.g. "google/gemma-3-27b-it"
+    image=item,                # PIL.Image.Image or MediaWithBytes
+    **hf_processor_mm_kwargs,  # HFプロセッサに渡すkwargs（PaS設定等）
+    **tokenization_kwargs,     # トークナイザkwargs
+)
+</code></pre>
+<p><strong>重要</strong>: ハッシュ入力は <code>model_id</code> + モダリティ名付きの画像データ + プロセッサkwargs + トークナイザkwargs。同じ画像でもプロセッサkwargsが異なればハッシュが変わる。</p>
+<h4 id="mm_uuids-による分岐"><a class="header" href="#mm_uuids-による分岐">mm_uuids による分岐</a></h4>
+<p><code>_hash_mm_items()</code> はアイテムごとに3つのパスを持つ:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>データ型</th><th>シリアライズ方法</th></tr>
+<tr><th>条件</th><th>動作</th></tr>
 </thead>
 <tbody>
-<tr><td>PIL Image</td><td>ExifTags.ImageID (UUID型の場合) → 16バイト。なければ mode + pixel data (numpy配列)</td></tr>
-<tr><td>MediaWithBytes(Image)</td><td>ExifTags.ImageID → 16バイト。なければ original_bytes</td></tr>
-<tr><td>torch.Tensor</td><td>numpy変換 → dtype+shape+バイト列。bfloat16は uint8 view 経由</td></tr>
-<tr><td>np.ndarray</td><td>dtype.str + shape + contiguous バイト列</td></tr>
-<tr><td>その他</td><td>pickle フォールバック（警告あり）</td></tr>
+<tr><td><code>item_uuid</code> が <code>None</code></td><td>画像データから <code>hash_kwargs()</code> を計算</td></tr>
+<tr><td><code>item_uuid</code> あり + <code>hf_processor_mm_kwargs</code> or <code>tokenization_kwargs</code> が非空</td><td><code>item_uuid</code> 文字列を item として <code>hash_kwargs()</code> に投入（画像デコード回避）</td></tr>
+<tr><td><code>item_uuid</code> あり + kwargs 空</td><td><code>item_uuid</code> をそのまま mm_hash として使用（ハッシュ計算スキップ）</td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>ハッシュアルゴリズム</strong>: <code>VLLM_MM_HASHER_ALGORITHM</code> 環境変数で設定</p>
+<p>2番目のパスは最適化: UUID文字列のハッシュは画像ピクセルのハッシュより高速だが、kwargsとの組み合わせで一意性を保つ必要がある。</p>
+<h4 id="get_item_for_hash--ハッシュ用アイテムの取得"><a class="header" href="#get_item_for_hash--ハッシュ用アイテムの取得"><code>get_item_for_hash()</code> — ハッシュ用アイテムの取得</a></h4>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/parse.py:118-120</code></p>
+<p><code>ProcessorBatchItems.get_item_for_hash()</code> は <code>get()</code> と異なり、<code>MediaWithBytes</code> ラッパーを<strong>剥がさずにそのまま返す</strong>。</p>
+<pre><code class="language-python"># get() → self._unwrap(self.data[index])  → PIL.Image（ラッパー除去）
+# get_item_for_hash() → self.data[index]  → MediaWithBytes[PIL.Image]（ラッパー保持）
+</code></pre>
+<p>これにより <code>serialize_item()</code> で元のバイト列（JPEG/PNG等）からハッシュを計算でき、PIL画像のピクセルデコードを回避できる。</p>
+<h3 id="33-multimodalhasherhash_kwargs--ハッシュ関数本体"><a class="header" href="#33-multimodalhasherhash_kwargs--ハッシュ関数本体">3.3 <code>MultiModalHasher.hash_kwargs()</code> — ハッシュ関数本体</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:154-162</code></p>
+<pre><code class="language-python">@classmethod
+def hash_kwargs(cls, **kwargs: object) -&gt; str:
+    hasher = _get_hasher_factory(envs.VLLM_MM_HASHER_ALGORITHM)()
+    for k, v in sorted(kwargs.items(), key=lambda kv: kv[0]):  # キー名でソート
+        for bytes_ in cls.iter_item_to_bytes(k, v):
+            hasher.update(bytes_)
+    return hasher.hexdigest()
+</code></pre>
+<p><strong>ハッシュアルゴリズム</strong>: <code>VLLM_MM_HASHER_ALGORITHM</code> 環境変数で設定（<code>target/vllm/vllm/envs.py:73,793</code>）</p>
 <ul>
 <li><code>blake3</code>（デフォルト）: 高速</li>
-<li><code>sha256</code> / <code>sha512</code>: FIPS準拠用</li>
+<li><code>sha256</code> / <code>sha512</code>: FIPS準拠用（政府・企業デプロイメント向け）</li>
 </ul>
-<p><strong>hash_kwargs()</strong> はキーをソートしてから全データを逐次ハッシュに投入する（決定的）。</p>
-<h3 id="uuidオーバーライド"><a class="header" href="#uuidオーバーライド">UUIDオーバーライド</a></h3>
+<h3 id="34-iter_item_to_bytes--再帰的バイト変換"><a class="header" href="#34-iter_item_to_bytes--再帰的バイト変換">3.4 <code>iter_item_to_bytes()</code> — 再帰的バイト変換</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:134-151</code></p>
+<p>dict/list/tupleを再帰的に展開し、<strong>キー名のバイト列 + 値のバイト列</strong> を交互にyieldする。</p>
+<pre><code class="language-python"># 例: image=PIL.Image(mode="RGB", data=...) の場合
+# iter_item_to_bytes("image", {"mode": "RGB", "data": &lt;numpy&gt;})
+#   → "image.mode".encode() + "RGB".encode()
+#   → "image.data".encode() + &lt;numpy raw bytes&gt;
+</code></pre>
+<p>キー名がプレフィックスとして含まれるため、<strong>異なるkwargsキーの値が衝突しない</strong>（例: <code>model_id</code> の値と <code>image</code> の一部が同じバイト列でも区別される）。</p>
+<h3 id="35-serialize_item--型別シリアライズ"><a class="header" href="#35-serialize_item--型別シリアライズ">3.5 <code>serialize_item()</code> — 型別シリアライズ</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/hasher.py:52-131</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>データ型</th><th>シリアライズ方法</th><th>備考</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bytes</code> / <code>memoryview</code></td><td>そのまま返す</td><td></td></tr>
+<tr><td><code>str</code></td><td>UTF-8エンコード</td><td>model_id 等</td></tr>
+<tr><td><code>int</code> / <code>float</code></td><td><code>np.array(obj).tobytes()</code></td><td></td></tr>
+<tr><td><code>PIL.Image</code> (EXIF UUID)</td><td><code>exif[ImageID].bytes</code> (16バイト)</td><td>高速パス</td></tr>
+<tr><td><code>PIL.Image</code> (通常)</td><td><code>{"mode": mode, "data": np.asarray(obj)}</code> + palette</td><td>全ピクセル読み込み</td></tr>
+<tr><td><code>MediaWithBytes(Image)</code> (EXIF UUID)</td><td>同上の高速パス</td><td></td></tr>
+<tr><td><code>MediaWithBytes(Image)</code> (通常)</td><td><code>original_bytes</code></td><td><strong>エンコード済みバイト列。デコード不要で高速</strong></td></tr>
+<tr><td><code>torch.Tensor</code></td><td>numpy変換。bfloat16は <code>view(uint8)</code> 経由</td><td><code>{"original_dtype", "original_shape", "data"}</code></td></tr>
+<tr><td><code>np.ndarray</code></td><td><code>{"dtype": str, "shape": tuple, "data": raw}</code></td><td>C-contiguous なら zero-copy</td></tr>
+<tr><td>その他</td><td><code>pickle.dumps()</code> (警告ログ)</td><td>フォールバック</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="画像の3つのシリアライズパス"><a class="header" href="#画像の3つのシリアライズパス">画像の3つのシリアライズパス</a></h4>
+<pre class="mermaid">graph TD
+    A["serialize_item(obj)"] --&gt; B{"EXIF ImageID&lt;br&gt;UUID?"}
+    B --&gt;|Yes| C["UUID.bytes (16バイト)&lt;br&gt;最速"]
+    B --&gt;|No| D{"MediaWithBytes?"}
+    D --&gt;|Yes| E["original_bytes&lt;br&gt;(JPEG/PNG等エンコード済み)&lt;br&gt;高速"]
+    D --&gt;|No| F["mode + np.asarray(obj)&lt;br&gt;(全ピクセル展開)&lt;br&gt;低速"]
+</pre>
+
+<h3 id="36-uuidオーバーライド"><a class="header" href="#36-uuidオーバーライド">3.6 UUIDオーバーライド</a></h3>
 <p>キャッシュとプレフィックスキャッシュの両方が無効な場合、コンテンツハッシュの代わりに <code>{request_id}-{modality}-{index}</code> 形式のUUIDを使用する（ハッシュ計算コストの回避）。</p>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:551-574</code></p>
-<h3 id="lora対応のidentifier"><a class="header" href="#lora対応のidentifier">LoRA対応のidentifier</a></h3>
+<h3 id="37-lora対応のidentifier"><a class="header" href="#37-lora対応のidentifier">3.7 LoRA対応のidentifier</a></h3>
 <p>LoRAのtower_connector_loraが有効な場合、同じ画像でもLoRAによって埋め込みが変わるため、<code>identifier</code> に LoRA名をプレフィックスとして付加する。</p>
-<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:490-506</code></p>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:273-289</code></p>
 <pre><code class="language-python">def _get_mm_identifier(self, mm_hash, lora_request):
     if lora_request is None or not enable_tower_connector_lora:
         return mm_hash
     return f"{lora_request.lora_name}:{mm_hash}"
 </code></pre>
+<h3 id="38-mm_hash-vs-identifier--2つのハッシュ値の使い分け"><a class="header" href="#38-mm_hash-vs-identifier--2つのハッシュ値の使い分け">3.8 mm_hash vs identifier — 2つのハッシュ値の使い分け</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>属性</th><th><code>mm_hash</code></th><th><code>identifier</code></th></tr>
+</thead>
+<tbody>
+<tr><td>定義場所</td><td><code>MultiModalFeatureSpec.mm_hash</code></td><td><code>MultiModalFeatureSpec.identifier</code></td></tr>
+<tr><td>LoRAプレフィックス</td><td>なし</td><td>あり（<code>enable_tower_connector_lora</code>時）</td></tr>
+<tr><td>主な用途</td><td>ProcessorCache のキー</td><td>EncoderCache / プレフィックスキャッシュのキー</td></tr>
+<tr><td>理由</td><td>ProcessorCacheはLoRA非依存（ピクセルデータのみ）</td><td>エンコーダ出力・KVキャッシュはLoRAに依存</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="39-プレフィックスキャッシュでの使用"><a class="header" href="#39-プレフィックスキャッシュでの使用">3.9 プレフィックスキャッシュでの使用</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/core/kv_cache_utils.py:388-444</code></p>
+<p>ブロックハッシュ計算時に、ブロックのトークン範囲にMMプレースホルダが含まれる場合、<code>mm_feature.identifier</code> がextra_keysとして追加される。</p>
+<pre><code class="language-python">def _gen_mm_extra_hash_keys(request, start_token_idx, end_token_idx, start_mm_idx):
+    # ブロック範囲とMMプレースホルダ範囲の重なりをチェック
+    while curr_mm_idx &lt; len(mm_features):
+        mm_feature = mm_features[curr_mm_idx]
+        offset = mm_feature.mm_position.offset
+        length = mm_feature.mm_position.length
+        if end_token_idx &gt; offset:
+            extra_keys.append(mm_feature.identifier)  # ★ identifierを追加
+            ...
+</code></pre>
+<p>これにより、<strong>同じトークン列でも異なる画像が挿入されたブロック</strong>は別のハッシュを持つ。逆に、同じ画像（同じidentifier）であればKVキャッシュのプレフィックスヒットが可能。</p>
+<h3 id="310-gemma3における具体例"><a class="header" href="#310-gemma3における具体例">3.10 Gemma3における具体例</a></h3>
+<p>Gemma3は <code>_hash_mm_items()</code> を<strong>オーバーライドしていない</strong>。<code>BaseMultiModalProcessor</code> のデフォルト実装がそのまま使われる。</p>
+<pre><code>ハッシュ入力例:
+  model_id = "google/gemma-3-27b-it"
+  image = &lt;MediaWithBytes[PIL.Image]&gt;  (元のJPEGバイト列)
+  ※ hf_processor_mm_kwargs, tokenization_kwargs は通常空
+
+→ hash_kwargs() 内部:
+  sorted keys: ["image", "model_id"]
+  1. "image" → iter_item_to_bytes("image", MediaWithBytes)
+     → serialize_item() → original_bytes (JPEG/PNGバイト列)
+  2. "model_id" → iter_item_to_bytes("model_id", "google/gemma-3-27b-it")
+     → "model_id".encode() + "google/gemma-3-27b-it".encode()
+
+→ blake3.hexdigest() → "a1b2c3..." (mm_hash)
+</code></pre>
+<p><strong>Pan-and-Scan（PaS）との関係</strong>: PaSによる画像分割はHFプロセッサ内で行われるため、<strong>ハッシュ計算の後</strong>に実行される。同じ画像 + 同じmodel_id + 同じkwargs → 同じmm_hash（PaS分割後の結果もキャッシュされる）。</p>
 <h2 id="4-プロセッサキャッシュp0側"><a class="header" href="#4-プロセッサキャッシュp0側">4. プロセッサキャッシュ（P0側）</a></h2>
 <h3 id="キャッシュタイプの選択"><a class="header" href="#キャッシュタイプの選択">キャッシュタイプの選択</a></h3>
 <p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/registry.py:284-320</code></p>
@@ -501,6 +628,22 @@ P1: hash → cache hit  → 共有メモリから読み取り（ringバッファ
         <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
         <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
 
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
 
 
         <script>
