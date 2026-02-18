@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2b27895b.js";
+            window.path_to_searchindex_js = "searchindex-7f63f7be.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-51e995a9.js"></script>
+        <script src="toc-d2e92f25.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -8105,6 +8105,276 @@ class DisaggSpec:
 </table>
 </div>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="mm_cache-内部実装調査-medium-verified"><a class="header" href="#mm_cache-内部実装調査-medium-verified">mm_cache 内部実装調査 [MEDIUM] [VERIFIED]</a></h1>
+<blockquote>
+<p><strong>最終更新</strong>: 2026-02-18</p>
+</blockquote>
+<p>CPU側（フロントエンドプロセス P0）でHugging FaceのPreprocessorが画像等を処理した結果をキャッシュする <code>mm_cache</code> の内部実装・設定・CPU並列化の調査報告。GPU側の <a href="#encodercacheエンコーダキャッシュ">EncoderCache</a>（<code>dict[str, Tensor]</code>）とは完全に別の機構。</p>
+<hr>
+<h2 id="1-mm_cacheとは"><a class="header" href="#1-mm_cacheとは">1. mm_cacheとは</a></h2>
+<pre class="mermaid">graph LR
+    A["API Request\n(画像バイト列)"] --&gt; B["HF Processor\n(リサイズ・正規化・パッチ分割)"]
+    B --&gt; C["pixel_values テンソル\n+ prompt_updates"]
+    C --&gt; D["ProcessorCache\n★CPU側 mm_cache ここ★"]
+    D --&gt; E["EngineCoreRequest\n(ZMQ IPC)"]
+    E --&gt; F["EncoderCache\nGPU側"]
+</pre>
+
+<p><strong>キャッシュキー</strong>: <code>mm_hash</code>（blake3/sha256によるコンテンツハッシュ、<a href="#フロントエンド-マルチモーダル処理パス-mediumdeep3-verified">mm-processing.md §3</a> 参照）</p>
+<p><strong>キャッシュ値</strong>: HF Processor実行結果（<code>pixel_values</code> 等のテンソル群 + <code>prompt_updates</code>）</p>
+<p><strong>キャッシュヒット時にスキップされる処理</strong>:</p>
+<ol>
+<li>HF Processorの実行（画像リサイズ・正規化・パッチ分割）</li>
+<li>テンソルデータのZMQ IPC転送（<code>lru</code>/<code>shm</code>モード時）</li>
+</ol>
+<hr>
+<h2 id="2-config設定項目"><a class="header" href="#2-config設定項目">2. Config設定項目</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/config/multimodal.py:103</code>（<code>MultiModalConfig</code>）</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>フィールド名</th><th>CLIオプション</th><th>デフォルト</th><th>制約</th><th>説明</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mm_processor_cache_gb</code></td><td><code>--mm-processor-cache-gb</code></td><td><strong>4</strong></td><td><code>≥0</code></td><td>キャッシュ容量（GiB）。<code>0</code> で完全無効</td></tr>
+<tr><td><code>mm_processor_cache_type</code></td><td><code>--mm-processor-cache-type</code></td><td><strong>“lru”</strong></td><td><code>"lru"</code> or <code>"shm"</code></td><td>キャッシュ実装タイプ</td></tr>
+<tr><td><code>mm_shm_cache_max_object_size_mb</code></td><td>（直接CLIオプションなし）</td><td><strong>128</strong></td><td><code>≥0</code></td><td>shmモード時の1オブジェクト上限（MiB）。<code>shm</code>専用</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>注意</strong>: キャッシュはプロセスごとに独立して確保される。総メモリ使用量 = <code>mm_processor_cache_gb × (api_server_count + data_parallel_size)</code>。</p>
+</blockquote>
+<h3 id="設定変更例"><a class="header" href="#設定変更例">設定変更例</a></h3>
+<pre><code class="language-bash"># キャッシュを8GBに増量（デフォルト4GB）
+vllm serve &lt;model&gt; --mm-processor-cache-gb 8
+
+# 共有メモリキャッシュに切り替え（マルチworker時に効率的）
+vllm serve &lt;model&gt; --mm-processor-cache-type shm
+
+# キャッシュを無効化
+vllm serve &lt;model&gt; --mm-processor-cache-gb 0
+</code></pre>
+<pre><code class="language-python"># Python APIから
+from vllm import LLM
+llm = LLM(model=..., mm_processor_cache_gb=8)
+</code></pre>
+<hr>
+<h2 id="3-キャッシュタイプの選択ロジック"><a class="header" href="#3-キャッシュタイプの選択ロジック">3. キャッシュタイプの選択ロジック</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/registry.py:281</code>（<code>_get_cache_type()</code>）</p>
+<pre><code>mm_processor_cache_gb &lt;= 0
+  → None（キャッシュ無効）
+
+マルチモーダル非対応モデル
+  → None
+
+IPC非対応（以下のいずれか）:
+  - api_process_count &gt; 1（マルチAPIプロセス）
+  - data_parallel_size &gt; 1 かつ data_parallel_external_lb が False
+  → "processor_only"（P0のみのLRU）
+
+IPC対応:
+  mm_processor_cache_type == "lru" → "lru"（SenderCache + ReceiverCache）
+  mm_processor_cache_type == "shm" → "shm"（共有メモリ）
+</code></pre>
+<blockquote>
+<p><code>processor_only</code> は IPC 不可時の自動フォールバックで、ユーザーが直接指定するオプションではない。</p>
+</blockquote>
+<hr>
+<h2 id="4-キャッシュ実装5クラスの詳細"><a class="header" href="#4-キャッシュ実装5クラスの詳細">4. キャッシュ実装5クラスの詳細</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py</code></p>
+<h3 id="41-p0送信側3実装"><a class="header" href="#41-p0送信側3実装">4.1 P0（送信側）3実装</a></h3>
+<h4 id="multimodalprocessoronlycachel326-processor_only-モード"><a class="header" href="#multimodalprocessoronlycachel326-processor_only-モード"><code>MultiModalProcessorOnlyCache</code>（L326）— processor_only モード</a></h4>
+<p>IPC非対応時に使用。P0プロセス内でHF処理結果を丸ごとLRUに保持し、ZMQ経由で毎回テンソルを送信。</p>
+<pre><code class="language-python">self._cache = LRUCache(
+    GiB_bytes * mm_config.mm_processor_cache_gb,
+    getsizeof=lambda x: MultiModalCache.get_item_size(x)
+)
+# キャッシュ値: MultiModalProcessorCacheItem（item テンソル + prompt_updates）
+</code></pre>
+<h4 id="multimodalprocessorsendercachel379-lru-モード"><a class="header" href="#multimodalprocessorsendercachel379-lru-モード"><code>MultiModalProcessorSenderCache</code>（L379）— lru モード</a></h4>
+<p><strong>P0はサイズメタデータのみ保持</strong>（テンソルはP1側に保存）。IPC経路のメモリ使用を削減。</p>
+<pre><code class="language-python">self._cache = LRUCache(
+    GiB_bytes * mm_config.mm_processor_cache_gb,
+    getsizeof=lambda x: MultiModalCache.get_item_size(x)
+)
+# キャッシュ値: MultiModalProcessorCacheItemMetadata（item_size + prompt_updates）
+# ヒット時: data=None で ZMQ 送信（テンソル転送スキップ）
+</code></pre>
+<h4 id="shmobjectstoresendercachel437-shm-モード"><a class="header" href="#shmobjectstoresendercachel437-shm-モード"><code>ShmObjectStoreSenderCache</code>（L437）— shm モード</a></h4>
+<p><strong>テンソルを共有メモリに書き込み</strong>、Worker は直接共有メモリから読む（ZMQ 経由のコピー不要）。</p>
+<pre><code class="language-python">ring_buffer = SingleWriterShmRingBuffer(
+    data_buffer_size=int(mm_config.mm_processor_cache_gb * GiB_bytes),
+    name=envs.VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME,
+    create=True,  # P0がWriter
+)
+self._shm_cache = SingleWriterShmObjectStorage(
+    max_object_size=mm_config.mm_shm_cache_max_object_size_mb * MiB_bytes,
+    n_readers=self.world_size,
+    ring_buffer=ring_buffer,
+    serde_class=MsgpackSerde,
+)
+# P0-private dict に prompt_updates のみ別途保管
+self._p0_cache: dict[str, Sequence[ResolvedPromptUpdate]] = {}
+</code></pre>
+<ul>
+<li>エビクション: <strong>FIFO</strong>（LRUではない）</li>
+<li>1オブジェクト上限を超えると <code>ValueError</code>/<code>MemoryError</code> → フォールバックで元の mm_input をそのまま返す</li>
+</ul>
+<h3 id="42-p1受信側2実装"><a class="header" href="#42-p1受信側2実装">4.2 P1（受信側）2実装</a></h3>
+<h4 id="multimodalreceivercachel614-lru-モード時-enginecore"><a class="header" href="#multimodalreceivercachel614-lru-モード時-enginecore"><code>MultiModalReceiverCache</code>（L614）— lru モード時 EngineCore</a></h4>
+<p>P1でテンソルをLRU保持。P0のSenderCacheと<strong>同じEviction順序を維持</strong>することでキャッシュ状態を同期。</p>
+<pre><code class="language-python">self._cache = LRUCache(
+    GiB_bytes * mm_config.mm_processor_cache_gb,
+    getsizeof=lambda x: MultiModalCache.get_item_size(x)
+)
+# キャッシュ値: MultiModalKwargsItem（テンソルデータそのもの）
+</code></pre>
+<h4 id="shmobjectstorereceivercachel662-shm-モード時-worker"><a class="header" href="#shmobjectstorereceivercachel662-shm-モード時-worker"><code>ShmObjectStoreReceiverCache</code>（L662）— shm モード時 Worker</a></h4>
+<p>共有メモリ上のアドレスからテンソルを直接読み取る。<code>reader_lock</code>（<code>multiprocessing.Lock</code>）で参照カウントを保護。</p>
+<hr>
+<h2 id="5-lruキャッシュの内部実装"><a class="header" href="#5-lruキャッシュの内部実装">5. LRUキャッシュの内部実装</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/utils/cache.py:51</code>（<code>vllm.utils.cache.LRUCache</code>）</p>
+<p><code>cachetools.LRUCache</code> を継承したサイズベースのLRU実装:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>機能</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td>容量</td><td><code>maxsize = GiB_bytes * mm_processor_cache_gb</code>（バイト数）</td></tr>
+<tr><td>サイズ計算</td><td><code>getsizeof()</code> コールバック経由で <code>tensor.nbytes</code> を再帰的に合計</td></tr>
+<tr><td>Eviction</td><td>最低使用時間（LRU）順。ピン済みエントリはスキップ</td></tr>
+<tr><td>ヒット統計</td><td><code>stat(delta=True)</code> でインターバル別 hits/total を取得可能</td></tr>
+<tr><td>ピン機能</td><td><code>pin(key)</code> でEviction対象外にできる</td></tr>
+<tr><td><code>touch()</code></td><td>Eviction順序を更新（P0-P1同期用）</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>サイズ計算の詳細</strong>（<code>MultiModalCache.get_item_size()</code>）:</p>
+<pre><code class="language-python"># json_map_leaves + json_reduce_leaves で再帰的にリーフ要素のサイズを合計
+# leaf ごと: torch.Tensor → tensor.nbytes, str → sys.getsizeof, etc.
+</code></pre>
+<hr>
+<h2 id="6-shmキャッシュsinglewritershmringbufferの内部実装"><a class="header" href="#6-shmキャッシュsinglewritershmringbufferの内部実装">6. SHMキャッシュ（SingleWriterShmRingBuffer）の内部実装</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/distributed/device_communicators/shm_object_storage.py:22</code></p>
+<h3 id="リングバッファ構造"><a class="header" href="#リングバッファ構造">リングバッファ構造</a></h3>
+<pre><code>バッファ全体 (mm_processor_cache_gb GiB)
+┌─────────────────────────────────────────────────┐
+│ [4B id][4B size][data...] [4B id][4B size][data..] │
+│ ^start                     ↑                    ^end│
+└─────────────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>シングルライター</strong>: P0のみが書き込み（<code>allocate_buf</code>）</li>
+<li><strong>マルチリーダー</strong>: Worker×TP数が読み取り可能（<code>access_buf</code>）</li>
+<li><strong>FIFOエビクション</strong>: 最も古い（start側の）オブジェクトから解放</li>
+<li><strong>参照カウント</strong>: 全リーダーが解放を確認してからGC（ライターが管理）</li>
+<li><strong>ラップアラウンド</strong>: バッファ末尾に達したら先頭に折り返す</li>
+</ul>
+<h3 id="singlewritershmobjectstorage-の付加機能"><a class="header" href="#singlewritershmobjectstorage-の付加機能"><code>SingleWriterShmObjectStorage</code> の付加機能</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>機能</th><th>実装</th></tr>
+</thead>
+<tbody>
+<tr><td>キー管理</td><td><code>key_index: dict[str, (address, monotonic_id)]</code>（ライター側のみ）</td></tr>
+<tr><td>重複キー</td><td>既存キーはデータ再書き込みなし（アドレス再参照）</td></tr>
+<tr><td>シリアライズ</td><td><code>MsgpackSerde</code>（デフォルト）</td></tr>
+<tr><td>上限超過</td><td><code>ValueError</code>/<code>MemoryError</code> → SenderCacheがフォールバック</td></tr>
+<tr><td>上限チェック</td><td><code>put()</code> 時に <code>max_object_size</code> と比較。超えたらエラー</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>メモリレイアウト（オブジェクト単位）</strong>:</p>
+<pre><code>[4-byte ref_count][metadata_size][serialized_object_data]
+</code></pre>
+<hr>
+<h2 id="7-p0p1-キャッシュ整合性の設計"><a class="header" href="#7-p0p1-キャッシュ整合性の設計">7. P0–P1 キャッシュ整合性の設計</a></h2>
+<p><strong>参照</strong>: <code>target/vllm/vllm/multimodal/cache.py:175</code>（<code>BaseMultiModalCache</code> docstring）</p>
+<pre><code>P0: From API --&gt; is_cached() × N --&gt; get_and_update() --&gt; To P1
+P1: From P0  --&gt; get_and_update()                     --&gt; To model
+</code></pre>
+<p><strong>核心</strong>: <code>get_and_update()</code> は P0 と P1 で<strong>必ず同じ順序</strong>で呼ばれる必要がある。これにより、P0のキャッシュ状態だけを参照してP1のキャッシュ状態を推定でき、IPC通信なしでキャッシュヒット確認が可能。</p>
+<ul>
+<li><code>is_cached()</code>: Eviction順序を変えない（P0のみ参照）</li>
+<li><code>get_and_update()</code>: Eviction順序を更新（P0・P1で順番に呼ぶ）</li>
+<li><code>touch_sender_cache_item()</code>: Sender側のEviction順序を手動更新（LoRA切り替え等で使用）</li>
+</ul>
+<hr>
+<h2 id="8-cpu並列処理"><a class="header" href="#8-cpu並列処理">8. CPU並列処理</a></h2>
+<h3 id="intra-request-並列化1リクエスト内"><a class="header" href="#intra-request-並列化1リクエスト内">intra-request 並列化（1リクエスト内）</a></h3>
+<p><strong>参照</strong>: <code>target/vllm/vllm/v1/engine/input_processor.py:363</code></p>
+<pre><code class="language-python">with set_request_id(request_id), set_default_torch_num_threads():
+    processed_inputs = self.input_preprocessor.preprocess(...)
+</code></pre>
+<p><code>set_default_torch_num_threads()</code>（<code>target/vllm/vllm/utils/torch_utils.py:106</code>）:</p>
+<pre><code class="language-python"># OMP_NUM_THREADS 環境変数を読んで torch.set_num_threads() を設定
+# 未設定時のデフォルト: 1
+num_threads = int(os.environ.get("OMP_NUM_THREADS", 1))
+torch.set_num_threads(num_threads)
+</code></pre>
+<p>HF Processorの実行（<code>apply()</code> → <code>_cached_apply_hf_processor()</code> → <code>_call_hf_processor()</code>）はすべて同期処理。<code>OMP_NUM_THREADS</code> を増やすとTorchのOpenMP並列化（行列演算等）が有効になる。</p>
+<pre><code class="language-bash">OMP_NUM_THREADS=4 vllm serve &lt;model&gt;  # 1画像あたりのCPU処理を4スレッド化
+</code></pre>
+<h3 id="inter-request-並列化複数リクエスト間"><a class="header" href="#inter-request-並列化複数リクエスト間">inter-request 並列化（複数リクエスト間）</a></h3>
+<p><strong>vLLMには複数リクエストを同時にHF Processorで処理する機構はない。</strong></p>
+<ul>
+<li><code>process_inputs()</code> は <strong>同期呼び出し</strong>（async/await なし）</li>
+<li>AsyncLLMの <code>add_request()</code> 内で呼ばれ、asyncioイベントループで逐次実行される</li>
+<li>並列化する唯一の手段: <strong>複数のAPIサーバープロセスを立ち上げる</strong>
+<ul>
+<li>ただし各プロセスが独立して <code>mm_processor_cache_gb</code> GiBを確保する</li>
+<li>IPC非対応になり <code>processor_only</code> モードに自動フォールバック</li>
+</ul>
+</li>
+</ul>
+<h3 id="mm_cacheによる実質的な高速化"><a class="header" href="#mm_cacheによる実質的な高速化">mm_cacheによる実質的な高速化</a></h3>
+<p>同一画像が何度も送られる場合（例: 同じシステム画像を全リクエストで使用）、キャッシュヒット時は HF Processor の実行を完全にスキップできるため、事実上の並列化効果が得られる。</p>
+<hr>
+<h2 id="9-キャッシュモード別データフロー比較"><a class="header" href="#9-キャッシュモード別データフロー比較">9. キャッシュモード別データフロー比較</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>processor_only</th><th>lru</th><th>shm</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>P0保持</strong></td><td>テンソル + prompt_updates</td><td>サイズメタデータ + prompt_updates</td><td>SHMアドレス + prompt_updates（P0-private dict）</td></tr>
+<tr><td><strong>P1保持</strong></td><td>なし</td><td>テンソル（LRU）</td><td>共有メモリ上のテンソル</td></tr>
+<tr><td><strong>エビクション</strong></td><td>LRU</td><td>LRU（P0/P1連動）</td><td>FIFO</td></tr>
+<tr><td><strong>IPCヒット時</strong></td><td>テンソルをZMQ送信</td><td>data=None 送信（テンソル省略）</td><td>data=None 送信（SHMアドレスのみ）</td></tr>
+<tr><td><strong>MissのZMQ転送</strong></td><td>テンソル全体</td><td>テンソル全体</td><td>data=None（SHM経由）</td></tr>
+<tr><td><strong>適用場面</strong></td><td>マルチAPIプロセス / DP≥2</td><td>単一APIプロセス + 単一DP（デフォルト）</td><td>同左（マルチWorkerで転送削減）</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="関連ドキュメント-14"><a class="header" href="#関連ドキュメント-14">関連ドキュメント</a></h2>
+<ul>
+<li><a href="#フロントエンド-マルチモーダル処理パス-mediumdeep3-verified">マルチモーダル処理パイプライン（§3 MMハッシュ DEEP）</a> — ProcessorCacheのキー計算</li>
+<li><a href="#マルチモーダル処理パイプライン-サマリー">マルチモーダル処理パイプライン概要</a> — 3層キャッシュ構造図</li>
+<li><a href="#encodercacheエンコーダキャッシュ">EncoderCache（GPU側）</a> — GPU側の別キャッシュ機構</li>
+<li><a href="#gemma3-ビジョンパイプライン-キャッシュ機構-medium-verified">Gemma3ビジョンパイプラインのキャッシュ機構</a> — 3層キャッシュの具体例</li>
+</ul>
+<h2 id="主要ファイル-9"><a class="header" href="#主要ファイル-9">主要ファイル</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ファイル</th><th>主要クラス/関数</th><th>行</th></tr>
+</thead>
+<tbody>
+<tr><td><code>target/vllm/vllm/config/multimodal.py</code></td><td><code>MultiModalConfig</code>（mm_processor_cache_gb等）</td><td>L103</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/cache.py</code></td><td><code>MultiModalProcessorOnlyCache</code>, <code>SenderCache</code>, <code>ShmObjectStoreSenderCache</code>, <code>ReceiverCache</code>, <code>ShmObjectStoreReceiverCache</code></td><td>L326, L379, L437, L614, L662</td></tr>
+<tr><td><code>target/vllm/vllm/multimodal/registry.py</code></td><td><code>_get_cache_type()</code>, <code>processor_cache_from_config()</code>, <code>engine_receiver_cache_from_config()</code>, <code>worker_receiver_cache_from_config()</code></td><td>L281, L307, L335, L348</td></tr>
+<tr><td><code>target/vllm/vllm/utils/cache.py</code></td><td><code>LRUCache</code>（cachetools継承、サイズベース、ピン機能）</td><td>L51</td></tr>
+<tr><td><code>target/vllm/vllm/distributed/device_communicators/shm_object_storage.py</code></td><td><code>SingleWriterShmRingBuffer</code>, <code>SingleWriterShmObjectStorage</code></td><td>L22, L412</td></tr>
+<tr><td><code>target/vllm/vllm/v1/engine/input_processor.py</code></td><td><code>process_inputs()</code>（<code>set_default_torch_num_threads</code>呼び出し）</td><td>L363</td></tr>
+<tr><td><code>target/vllm/vllm/utils/torch_utils.py</code></td><td><code>set_default_torch_num_threads()</code>（OMP_NUM_THREADS読み取り）</td><td>L106</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="プロセスアーキテクチャtp2構成"><a class="header" href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a></h1>
 <blockquote>
 <p><strong>深度</strong>: [DEEP]
@@ -8462,7 +8732,7 @@ class DisaggSpec:
 </table>
 </div>
 <p><strong>参照</strong>: <code>target/vllm/vllm/v1/executor/uniproc_executor.py:26</code> (UniProcExecutor)</p>
-<h2 id="主要ファイル-9"><a class="header" href="#主要ファイル-9">主要ファイル</a></h2>
+<h2 id="主要ファイル-10"><a class="header" href="#主要ファイル-10">主要ファイル</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -8800,7 +9070,7 @@ socket.setsockopt(zmq.SNDBUF, buf_size)  # 0.5GB or system default
 </tbody>
 </table>
 </div>
-<h2 id="関連ドキュメント-14"><a class="header" href="#関連ドキュメント-14">関連ドキュメント</a></h2>
+<h2 id="関連ドキュメント-15"><a class="header" href="#関連ドキュメント-15">関連ドキュメント</a></h2>
 <ul>
 <li><a href="#プロセスアーキテクチャtp2構成">プロセスアーキテクチャ（TP=2構成）</a> — ShmRingBuffer、通信方式選択理由の詳細</li>
 <li><a href="#executor">Executorコンポーネント</a> — MessageQueue、WorkerProc busy loop</li>
