@@ -47,6 +47,7 @@
 - [Gemma3 ビジョンパイプライン: キャッシュ機構 [MEDIUM] [VERIFIED]](vllm/investigations/gemma3-vision-caches.md)
 - [Gemma3 27B ビジョンパイプライン: 形状フローと数値まとめ](vllm/investigations/gemma3-vision-pipeline.md)
 - [LMCache 統合調査報告 [MEDIUM] [VERIFIED]](vllm/investigations/lmcache-integration.md)
+- [mm_cache 内部実装調査 [MEDIUM] [VERIFIED]](vllm/investigations/mm-cache-internals.md)
 - [プロセスアーキテクチャ（TP=2構成）](vllm/investigations/process-architecture.md)
 - [ZMQ 通信パターンと信頼性分析](vllm/investigations/zmq-communication-patterns.md)
 

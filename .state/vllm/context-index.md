@@ -48,6 +48,7 @@
 | `docs/src/investigations/lmcache-integration.md` | LMCache統合調査。チャンク単位KV保存（256トークン/チャンク）、CacheEngineKey（プレフィックスハッシュ）、3層ストレージ階層（CPU/Disk/Remote）、15+リモートコネクタ。vLLMアダプタ（native/latest 2パス分岐）、RequestTracker/ReqMeta/LoadSpec/SaveSpec、GPUConnector 3種、KV形状、セーブ判定ロジック、Disaggregated Serving、設定体系、CacheBlend概要（詳細は別ドキュメント） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 | `docs/src/investigations/cacheblend-implementation.md` | CacheBlend実装調査。vLLM本体パッチ必須（VLLMModelTracker登録）、独自forward path（LMCBaseModel.compute_layer）、重要token同定（K差分L2ノルムtopk）、VLLMBufferLayerwiseGPUConnector（中間バッファ+RoPE補正+パイプライン）、対応モデル3種（Llama/Qwen2/Qwen3）、BlendServer（段落分割+段落単位KV保存/ルックアップ）、制約多数（TP/PP未対応、プレフィックスキャッシュ非互換、バッチサイズ1） | [MEDIUM] | [VERIFIED] | 2026-02-15 |
 | `docs/src/investigations/zmq-communication-patterns.md` | ZMQ通信パターン横断調査。16ファイル5カテゴリ（Frontend↔EngineCore ROUTER/DEALER+PUSH/PULL、DPCoordinator XPUB/XSUB+PULL、ShmRingBufferフォールバック XPUB/SUB、KV Events PUB+ROUTER replay、KV Transfer ROUTER/DEALER）。10種ソケットタイプ使用一覧。信頼性分析: HWM=0+IPC+プロセス監視でコア通信は実質喪失なし、KV Eventsはリプレイ、KV Transferはタイムアウト+リトライ | [MEDIUM] | [VERIFIED] | 2026-02-18 |
+| `docs/src/investigations/mm-cache-internals.md` | mm_cache（CPU側ProcessorCache）内部実装調査。MultiModalConfig 3設定項目（mm_processor_cache_gb=4GB/mm_processor_cache_type="lru"/mm_shm_cache_max_object_size_mb=128MB）、キャッシュタイプ選択ロジック（None/processor_only/lru/shm）、5クラス詳細（LRU 3種+SHM 2種）、LRUCache実装（cachetools継承、サイズベース、ピン機能）、SingleWriterShmRingBuffer（FIFO、マルチリーダー、参照カウントGC）、CPU並列化（OMP_NUM_THREADS=intra-request、inter-requestは機構なし） | [MEDIUM] | [VERIFIED] | 2026-02-18 |
 
 ## 外部リソース (target/ 内参照用)
 
