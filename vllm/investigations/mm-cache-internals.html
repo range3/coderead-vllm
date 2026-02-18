@@ -36,7 +36,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-7f63f7be.js";
+            window.path_to_searchindex_js = "../../searchindex-baa455d0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-d2e92f25.js"></script>
@@ -183,11 +183,11 @@
 <hr>
 <h2 id="1-mm_cacheとは"><a class="header" href="#1-mm_cacheとは">1. mm_cacheとは</a></h2>
 <pre class="mermaid">graph LR
-    A["API Request\n(画像バイト列)"] --&gt; B["HF Processor\n(リサイズ・正規化・パッチ分割)"]
-    B --&gt; C["pixel_values テンソル\n+ prompt_updates"]
-    C --&gt; D["ProcessorCache\n★CPU側 mm_cache ここ★"]
-    D --&gt; E["EngineCoreRequest\n(ZMQ IPC)"]
-    E --&gt; F["EncoderCache\nGPU側"]
+    A["API Request&lt;br&gt;(画像バイト列)"] --&gt; B["HF Processor&lt;br&gt;(リサイズ・正規化・パッチ分割)"]
+    B --&gt; C["pixel_values テンソル&lt;br&gt;+ prompt_updates"]
+    C --&gt; D["ProcessorCache&lt;br&gt;★CPU側 mm_cache ここ★"]
+    D --&gt; E["EngineCoreRequest&lt;br&gt;(ZMQ IPC)"]
+    E --&gt; F["EncoderCache&lt;br&gt;GPU側"]
 </pre>
 
 <p><strong>キャッシュキー</strong>: <code>mm_hash</code>（blake3/sha256によるコンテンツハッシュ、<a href="../components/multimodal/mm-processing.html">mm-processing.md §3</a> 参照）</p>
