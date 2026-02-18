@@ -10,11 +10,11 @@ CPU側（フロントエンドプロセス P0）でHugging FaceのPreprocessor�
 
 ```mermaid
 graph LR
-    A["API Request\n(画像バイト列)"] --> B["HF Processor\n(リサイズ・正規化・パッチ分割)"]
-    B --> C["pixel_values テンソル\n+ prompt_updates"]
-    C --> D["ProcessorCache\n★CPU側 mm_cache ここ★"]
-    D --> E["EngineCoreRequest\n(ZMQ IPC)"]
-    E --> F["EncoderCache\nGPU側"]
+    A["API Request<br>(画像バイト列)"] --> B["HF Processor<br>(リサイズ・正規化・パッチ分割)"]
+    B --> C["pixel_values テンソル<br>+ prompt_updates"]
+    C --> D["ProcessorCache<br>★CPU側 mm_cache ここ★"]
+    D --> E["EngineCoreRequest<br>(ZMQ IPC)"]
+    E --> F["EncoderCache<br>GPU側"]
 ```
 
 **キャッシュキー**: `mm_hash`（blake3/sha256によるコンテンツハッシュ、[mm-processing.md §3](../components/multimodal/mm-processing.md) 参照）
