@@ -2,7 +2,7 @@
 
 ## 現在のフェーズ
 
-Phase 2 進行中（セッション1完了）
+Phase 2 進行中（セッション2完了）
 
 ## カバレッジマップ
 
@@ -20,7 +20,7 @@ Phase 2 進行中（セッション1完了）
 | CachePolicy(Eviction) | [DEEP] | 2026-02-16 | components/storage-manager/cache-policy.md |
 | LocalDiskBackend | [DEEP] | 2026-02-16 | components/storage-manager/local-disk-backend.md |
 | MemoryManagement | [SHALLOW] | 2026-02-16 | overview.md内 |
-| CacheBlend | [SHALLOW] | 2026-02-16 | overview.md内 |
+| CacheBlend | [MEDIUM] | 2026-02-19 | investigations/cacheblend.md |
 | MultiProcess Server | [SHALLOW] | 2026-02-16 | overview.md内 |
 | CacheController | [SHALLOW] | 2026-02-16 | overview.md内 |
 | Disaggregated Prefill | [SHALLOW] | 2026-02-16 | overview.md内 |
@@ -34,3 +34,4 @@ Phase 2 進行中（セッション1完了）
 | 2026-02-16 | 1-s1 | Store パス垂直スライス | sessions/20260216-phase1-store-path.md |
 | 2026-02-16 | 1-s2 | Retrieve パス垂直スライス | sessions/20260216-phase1-retrieve-path.md |
 | 2026-02-16 | 2-s1 | StorageManager+LocalCPUBackend DEEP化 | sessions/20260216-phase2-storage-deep.md |
+| 2026-02-19 | 2-s2 | CacheBlend MEDIUM化（vLLM連携方法含む） | sessions/20260219-phase2-cacheblend.md |

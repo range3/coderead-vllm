@@ -78,6 +78,10 @@
 - [TokenDatabase（ChunkedTokenDatabase）](lmcache/components/token-database/summary.md)
 - [vLLM統合（LMCacheConnector）](lmcache/components/vllm-integration/summary.md)
 
+# LMCache: 調査報告
+
+- [CacheBlend: 非プレフィックスKVキャッシュ再利用](lmcache/investigations/cacheblend.md)
+
 # LMCache: 付録
 
 - [用語集](lmcache/glossary.md)

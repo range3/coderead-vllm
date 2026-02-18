@@ -16,5 +16,8 @@
 - **storage-manager/cache-policy.md** — BaseCachePolicy 4メソッド、FIFO(dict先頭)、LRU(OrderedDict+move_to_end+再利用時間追跡)、LFU(SortedDict freq管理)、MRU(OrderedDict末尾)。Eviction発動フロー、can_evict条件(not pinned && ref_count==1) [DEEP] [VERIFIED]
 - **storage-manager/local-disk-backend.md** — LocalDiskBackend L2永続化。AsyncPQThreadPoolExecutor(優先度:prefetch>delete>put)、O_DIRECT対応、容量Eviction、DiskCacheMetadata、独自バックエンドStoragePluginInterface実装ガイド(必須/オプション全メソッド一覧) [DEEP] [VERIFIED]
 
+## investigations/
+- **investigations/cacheblend.md** — CacheBlend（非プレフィックスKV再利用）。LMCBlender(process_qkv重要token同定・K差分topk)、LMCBaseModel.compute_layer(独自forward Generator)、SegmentTokenDatabase(セパレータ分割独立ハッシュ)、BlendEngine(MultiProcessモード、BLEND_HASH_PREFIX=0xB1ED)。vLLMパッチ方法・設定パラメータ全一覧・プロンプト設計ガイド付き。対応モデル:Llama/Qwen2/Qwen3のみ [MEDIUM] [VERIFIED]
+
 ## glossary.md
 - 用語集: CacheEngineKey, LayerCacheEngineKey, MemoryObj, MemoryFormat, TokenDatabase, StorageManager, GPUConnector, NONE_HASH, store_mask, slot_mapping, hot_cache, LookupClient, LookupServer, EventManager, token_mask, ret_mask, write-back, get_block_mapping, load_stream, fused_rotary_emb等。設定キー一覧あり [VERIFIED]
